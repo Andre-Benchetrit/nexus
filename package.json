@@ -1,0 +1,26 @@
+{
+  "name": "nexus",
+  "version": "1.0.0",
+  "description": "Hub de ingestão e organização de dados para o data lake Nexus",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "exportar": "node scripts/exportar.js",
+    "consultar": "node scripts/consultar-bronze.js",
+    "agente:bronze": "node agentes/consultor_bronze.js",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^2.11.0",
+    "dotenv": "^17.4.2",
+    "duckdb": "^1.4.4",
+    "fast-csv": "^5.0.7",
+    "openai": "^6.46.0",
+    "pg": "^8.22.0"
+  }
+}

@@ -1,0 +1,266 @@
+COLA PARA CRIAR ENTIDADES DO POSTGRES
+=====================================
+
+MODELO RECOMENDADO (TABELA GRANDE)
+----------------------------------
+
+module.exports = {
+  nome: 'nota_saida',
+  fonte: 'postgres',
+  schema: 'sysemp',
+  tabela: 'nota_saida',
+
+  destino: {
+    camada: 'bronze'
+  },
+
+  extracao: {
+    modo: 'incremental_data',
+    cursor: 'dt_alteracao',
+    chavePrimaria: 'id_nota_saida',
+    colunas: ['*']
+  }
+};
+
+
+O QUE É CADA CAMPO
+------------------
+
+nome
+  Nome da entidade dentro do Nexus e da pasta no lake.
+  Use letras, números e underscore. Exemplo: 'nota_saida'.
+  Não precisa ser igual ao nome da tabela, mas normalmente é melhor que seja.
+
+fonte
+  Sistema de onde vêm os dados.
+  Atualmente o exportador implementado aceita: 'postgres'.
+
+schema
+  Schema da tabela no PostgreSQL.
+  Exemplos: 'public', 'sysemp'.
+
+tabela
+  Nome exato da tabela no PostgreSQL.
+
+destino.camada
+  Camada do lake onde o arquivo será salvo.
+  Para cópias vindas diretamente da fonte, use sempre 'bronze'.
+
+extracao.modo
+  Define como os dados serão buscados.
+
+  'incremental_data'
+    Recomendado para tabelas grandes.
+    Exige --inicio e --fim e consulta somente aquela janela do cursor.
+
+  'snapshot'
+    Copia a tabela inteira em toda execução.
+    Use somente para tabelas pequenas e estáveis.
+    Cuidado: não existe limite automático de linhas.
+
+extracao.cursor
+  Coluna usada para saber quais registros entraram ou mudaram no período.
+  Melhor opção: updated_at, dt_alteracao, modified_at etc.
+  Uma data de criação/pedido só captura registros novos; não captura mudanças antigas.
+  A coluna não deveria ser nula.
+
+extracao.chavePrimaria
+  Coluna que identifica unicamente um registro.
+  Será usada para deduplicar e escolher a versão mais recente na camada silver.
+  Atualmente o Nexus aceita uma coluna simples, não chave composta.
+
+extracao.colunas
+  Colunas que serão copiadas.
+
+  ['*']
+    Copia todas. É prático no início, mas mudanças na tabela mudam o Parquet.
+
+  ['id', 'nome', 'dt_alteracao']
+    Mais seguro: cria um contrato explícito e evita colunas pesadas/desnecessárias.
+    Os nomes devem ser colunas simples; expressões e aliases ainda não entram aqui.
+
+
+COMO ESCOLHER A CHAVE PRIMÁRIA
+------------------------------
+
+Pergunta principal:
+  "Qual coluna nunca se repete e identifica esta linha?"
+
+Consulta no PostgreSQL para descobrir a chave primária:
+
+SELECT
+  kcu.column_name
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kcu
+  ON tc.constraint_name = kcu.constraint_name
+ AND tc.table_schema = kcu.table_schema
+WHERE tc.constraint_type = 'PRIMARY KEY'
+  AND tc.table_schema = 'sysemp'
+  AND tc.table_name = 'nota_saida'
+ORDER BY kcu.ordinal_position;
+
+Se retornar mais de uma coluna, a chave é composta. O exportador ainda precisa ser
+evoluído antes de cadastrar essa entidade como incremental.
+
+Nunca escolha como chave apenas porque "parece única". Confirme no banco:
+
+SELECT id_nota_saida, COUNT(*)
+FROM sysemp.nota_saida
+GROUP BY id_nota_saida
+HAVING COUNT(*) > 1
+LIMIT 10;
+
+Se não retornar linhas, não há duplicidade atualmente. A constraint PRIMARY KEY
+continua sendo a garantia mais confiável.
+
+
+COMO ESCOLHER O CURSOR
+----------------------
+
+Ordem de preferência:
+
+1. Coluna de última alteração: dt_alteracao, updated_at, modified_at.
+2. Coluna de criação: created_at, data_pedido (somente se registros não mudam).
+3. ID crescente: possível, mas só captura inserções e exige outro modo no futuro.
+
+Confirme se o cursor possui nulos:
+
+SELECT COUNT(*) AS sem_cursor
+FROM sysemp.nota_saida
+WHERE dt_alteracao IS NULL;
+
+Confira o período disponível:
+
+SELECT
+  MIN(dt_alteracao) AS primeira_alteracao,
+  MAX(dt_alteracao) AS ultima_alteracao,
+  COUNT(*) AS total
+FROM sysemp.nota_saida;
+
+Se o cursor for nulo em registros antigos, será necessária uma carga inicial
+separada para esses registros.
+
+
+EXEMPLO: TABELA GRANDE INCREMENTAL
+---------------------------------
+
+module.exports = {
+  nome: 'clientes',
+  fonte: 'postgres',
+  schema: 'public',
+  tabela: 'clientes',
+  destino: { camada: 'bronze' },
+  extracao: {
+    modo: 'incremental_data',
+    cursor: 'updated_at',
+    chavePrimaria: 'id_cliente',
+    colunas: ['id_cliente', 'nome', 'email', 'updated_at']
+  }
+};
+
+Execução de um dia (fim é exclusivo):
+
+npm.cmd run exportar -- clientes --inicio 2026-07-01 --fim 2026-07-02
+
+Simulação sem acessar o banco:
+
+npm.cmd run exportar -- clientes --inicio 2026-07-01 --fim 2026-07-02 --dry-run
+
+
+EXEMPLO: TABELA PEQUENA EM SNAPSHOT
+----------------------------------
+
+module.exports = {
+  nome: 'tipo_documento',
+  fonte: 'postgres',
+  schema: 'public',
+  tabela: 'tipo_documento',
+  destino: { camada: 'bronze' },
+  extracao: {
+    modo: 'snapshot',
+    colunas: ['id_tipo_documento', 'descricao', 'ativo']
+  }
+};
+
+Snapshot não usa --inicio e --fim:
+
+npm.cmd run exportar -- tipo_documento
+
+
+JOINS: ONDE DEVEM SER FEITOS?
+-----------------------------
+
+Regra recomendada:
+
+  BRONZE = uma cópia fiel de cada tabela da fonte.
+  SILVER = limpeza, deduplicação e joins entre tabelas.
+
+Exemplo:
+  1. Exporte nota_saida para bronze/postgres/nota_saida.
+  2. Exporte cliente para bronze/postgres/cliente.
+  3. Na silver, faça o JOIN entre os dois Parquets.
+
+Isso evita:
+  - Repetir os dados do cliente em todas as notas.
+  - Consultas pesadas com JOIN no PostgreSQL de produção.
+  - Perder a cópia original de cada fonte.
+  - Misturar ingestão com regra de negócio.
+
+Existe suporte interno inicial para extracao.sql, mas ele ainda não recebe a janela
+--inicio/--fim com segurança. Portanto, NÃO use extracao.sql para incremental ou
+joins em produção neste momento. Quando uma consulta específica for realmente
+necessária, o suporte deve ser evoluído e testado antes.
+
+
+DEPOIS DE CRIAR O ARQUIVO
+-------------------------
+
+1. Salve em:
+   exportadores/postgres/entidades/nome_da_entidade.js
+
+2. Registre em:
+   exportadores/catalogo.js
+
+   Exemplo:
+
+   const clientes = require('./postgres/entidades/clientes');
+
+   const entidades = {
+     nota_saida: notaSaida,
+     clientes
+   };
+
+3. Confirme que aparece:
+
+   npm.cmd run exportar -- --listar
+
+4. Faça primeiro o dry-run.
+
+5. Para tabela grande, teste uma janela de apenas um dia.
+
+
+CHECKLIST RÁPIDO
+---------------
+
+[ ] Sei o schema e o nome exato da tabela.
+[ ] Confirmei a PRIMARY KEY no PostgreSQL.
+[ ] A chave é simples (uma coluna).
+[ ] Escolhi uma coluna de última alteração como cursor.
+[ ] Verifiquei se o cursor possui valores nulos.
+[ ] Escolhi somente as colunas realmente necessárias, quando possível.
+[ ] Usei camada bronze para a cópia da fonte.
+[ ] Registrei a entidade no catalogo.js.
+[ ] Rodei --dry-run antes da extração real.
+[ ] Para tabela grande, comecei com uma janela pequena.
+
+
+O QUE AINDA NÃO ESTÁ IMPLEMENTADO
+---------------------------------
+
+- Chave primária composta.
+- Incremental automático sem informar --inicio e --fim.
+- Deduplicação física na camada silver.
+- Joins parametrizados pelo exportador.
+- Incremental por ID numérico.
+- Cursores com precisão de hora informada pela CLI.
+- Adaptadores para APIs, CSV e outros bancos.

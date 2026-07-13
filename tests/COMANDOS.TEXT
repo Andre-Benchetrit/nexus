@@ -1,0 +1,11 @@
+# Listar entidades
+npm.cmd run exportar -- --listar
+
+# Simular sem acessar o banco
+npm.cmd run exportar -- nota_saida --dry-run
+
+# Exportar de verdade
+npm.cmd run exportar -- nota_saida
+
+# Rodar testes
+npm.cmd test

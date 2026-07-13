@@ -1,0 +1,20 @@
+# Dependências e artefatos gerados
+node_modules/
+dist/
+lake/
+
+# Credenciais e configurações locais
+# A regra sem barra também cobre, por exemplo, agentes/.env.
+.env
+.env.*
+!.env.example
+
+# Bancos locais e arquivos temporários
+*.duckdb
+*.wal
+.tmp/
+*.log
+npm-debug.log*
+
+# Preferências locais do editor
+.vscode/
