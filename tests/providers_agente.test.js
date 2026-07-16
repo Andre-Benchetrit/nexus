@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { definicaoConsultarBronze } = require('../tools/consultar_bronze');
+const { definicaoAgregarBronze } = require('../tools/agregar_bronze');
 const { criarProviderOpenAI } = require('../agentes/providers/openai');
 const {
   criarProviderGemini,
@@ -112,6 +113,46 @@ test('provider Gemini devolve a resposta da tool com o ID correto', async () => 
   );
 });
 
+test('provider OpenAI roteia múltiplas tools pelo nome', async () => {
+  const cliente = {
+    responses: {
+      async create() {
+        return {
+          id: 'resp_multi',
+          output_text: '',
+          output: [{
+            type: 'function_call',
+            name: 'agregar_bronze',
+            call_id: 'call_multi',
+            arguments: '{}'
+          }]
+        };
+      }
+    }
+  };
+  let chamada = false;
+  const provider = criarProviderOpenAI({ cliente, modelo: 'openai-teste' });
+  await assert.rejects(
+    provider.executar({
+      pergunta: 'Agrupe por UF',
+      instrucoes: 'Use tools.',
+      tools: [
+        { definicao: definicaoConsultarBronze, executar: async () => '{}' },
+        {
+          definicao: definicaoAgregarBronze,
+          executar: async () => {
+            chamada = true;
+            throw new Error('parar-teste');
+          }
+        }
+      ],
+      maxRodadas: 1
+    }),
+    /excedeu 1 rodadas/
+  );
+  assert.equal(chamada, true);
+});
+
 test('converte o schema estrito para o formato opcional do Gemini', () => {
   const tool = converterToolParaGemini(definicaoConsultarBronze);
   assert.deepEqual(tool.parameters.required, ['operacao']);
@@ -119,6 +160,9 @@ test('converte o schema estrito para o formato opcional do Gemini', () => {
   assert.equal(tool.parameters.properties.entidade.type, 'STRING');
   assert.ok(!tool.parameters.properties.entidade.enum.includes(null));
   assert.equal(tool.parameters.properties.colunas.type, 'ARRAY');
+
+  const agregacao = converterToolParaGemini(definicaoAgregarBronze);
+  assert.deepEqual(agregacao.parameters.required, ['entidade', 'calculos']);
 });
 
 test('seleciona provider explicitamente e rejeita nome desconhecido', () => {

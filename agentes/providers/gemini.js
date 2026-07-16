@@ -31,9 +31,11 @@ function converterSchemaGemini(schema) {
 
 function converterToolParaGemini(definicaoTool) {
   const parameters = converterSchemaGemini(definicaoTool.parameters);
-  // No Gemini, os campos opcionais podem simplesmente ser omitidos. Somente a
-  // operação é universalmente obrigatória para esta tool.
-  parameters.required = ['operacao'];
+  // No Gemini, campos opcionais podem ser omitidos. Mantemos somente os campos
+  // essenciais que realmente existem no contrato de cada tool.
+  parameters.required = parameters.properties?.operacao
+    ? ['operacao']
+    : ['entidade', 'calculos'].filter((campo) => parameters.properties?.[campo]);
   return {
     name: definicaoTool.name,
     description: definicaoTool.description,
@@ -66,16 +68,25 @@ function criarProviderGemini(opcoes = {}) {
   async function executar({
     pergunta,
     instrucoes,
+    tools,
     definicaoTool,
     executarTool,
     maxRodadas
   }) {
     const client = await obterCliente();
-    const declaracao = converterToolParaGemini(definicaoTool);
+    const ferramentas = tools?.length
+      ? tools
+      : [{ definicao: definicaoTool, executar: executarTool }];
+    const ferramentasPorNome = new Map(
+      ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
+    );
+    const declaracoes = ferramentas.map((ferramenta) => (
+      converterToolParaGemini(ferramenta.definicao)
+    ));
     const contents = [{ role: 'user', parts: [{ text: pergunta }] }];
     const config = {
       systemInstruction: instrucoes,
-      tools: [{ functionDeclarations: [declaracao] }],
+      tools: [{ functionDeclarations: declaracoes }],
       toolConfig: {
         functionCallingConfig: { mode: 'VALIDATED' }
       }
@@ -105,10 +116,9 @@ function criarProviderGemini(opcoes = {}) {
       for (const chamada of chamadas) {
         let output;
         try {
-          if (chamada.name !== definicaoTool.name) {
-            throw new Error(`Tool desconhecida: ${chamada.name}`);
-          }
-          output = await executarTool(chamada.args || {});
+          const ferramenta = ferramentasPorNome.get(chamada.name);
+          if (!ferramenta) throw new Error(`Tool desconhecida: ${chamada.name}`);
+          output = await ferramenta.executar(chamada.args || {});
         } catch (erro) {
           output = JSON.stringify({ erro: erro.message });
         }

@@ -8,6 +8,14 @@ const RAIZ_LAKE_PADRAO = path.resolve(__dirname, '..', 'lake');
 const IDENTIFICADOR_SEGURO = /^[a-zA-Z_][a-zA-Z0-9_$]*$/;
 const LIMITE_PADRAO = 50;
 const LIMITE_MAXIMO = 500;
+const OPERADORES_SQL = Object.freeze({
+  igual: '=',
+  diferente: '<>',
+  maior_que: '>',
+  maior_ou_igual: '>=',
+  menor_que: '<',
+  menor_ou_igual: '<='
+});
 
 function citarIdentificador(valor) {
   if (!IDENTIFICADOR_SEGURO.test(valor || '')) {
@@ -121,6 +129,14 @@ function normalizarLimite(limite = LIMITE_PADRAO) {
   return numero;
 }
 
+function normalizarDeslocamento(deslocamento = 0) {
+  const numero = Number(deslocamento);
+  if (!Number.isInteger(numero) || numero < 0 || numero > 10000) {
+    throw new Error('deslocamento deve ser um inteiro entre 0 e 10000.');
+  }
+  return numero;
+}
+
 function criarLeitorBronze(opcoes = {}) {
   const raizLake = path.resolve(opcoes.raizLake || RAIZ_LAKE_PADRAO);
   const catalogo = opcoes.catalogo || catalogoPadrao;
@@ -184,7 +200,8 @@ function criarLeitorBronze(opcoes = {}) {
       viewHistorica,
       viewAtual,
       schema,
-      colunas: new Set(schema.map((coluna) => coluna.column_name))
+      colunas: new Set(schema.map((coluna) => coluna.column_name)),
+      tipos: new Map(schema.map((coluna) => [coluna.column_name, coluna.column_type]))
     };
     entidadesPreparadas.set(nome, contexto);
     return contexto;
@@ -210,6 +227,56 @@ function criarLeitorBronze(opcoes = {}) {
     return valor.replace(/[\\%_]/g, '\\$&');
   }
 
+  function normalizarData(valor, coluna) {
+    const brasileira = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(valor);
+    const iso = brasileira
+      ? `${brasileira[3]}-${brasileira[2]}-${brasileira[1]}`
+      : valor;
+    const partes = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    if (!partes) {
+      throw new Error(`Data inválida para ${coluna}. Use DD/MM/AAAA ou AAAA-MM-DD.`);
+    }
+    const data = new Date(Date.UTC(Number(partes[1]), Number(partes[2]) - 1, Number(partes[3])));
+    if (
+      data.getUTCFullYear() !== Number(partes[1]) ||
+      data.getUTCMonth() !== Number(partes[2]) - 1 ||
+      data.getUTCDate() !== Number(partes[3])
+    ) {
+      throw new Error(`Data inválida para ${coluna}: ${valor}`);
+    }
+    return iso;
+  }
+
+  function normalizarValorFiltro(contexto, coluna, operador, valor) {
+    const tipo = contexto.tipos.get(coluna) || '';
+    if (operador !== 'contem' && typeof valor === 'string' && tipo.startsWith('DATE')) {
+      return normalizarData(valor, coluna);
+    }
+    return valor;
+  }
+
+  function montarOrdenacao(contexto, ordenacao) {
+    if (!ordenacao) return { sql: '', ordenacao: null };
+    const { campo, direcao = 'asc' } = ordenacao;
+    if (!contexto.colunas.has(campo)) {
+      throw new Error(`Coluna de ordenação não encontrada em ${contexto.entidade.nome}: ${campo}`);
+    }
+    if (!['asc', 'desc'].includes(direcao)) {
+      throw new Error('direcao da ordenação deve ser asc ou desc.');
+    }
+
+    const direcaoSql = direcao.toUpperCase();
+    const partes = [`${citarIdentificador(campo)} ${direcaoSql} NULLS LAST`];
+    const chavePrimaria = contexto.entidade.extracao.chavePrimaria;
+    if (campo !== chavePrimaria && contexto.colunas.has(chavePrimaria)) {
+      partes.push(`${citarIdentificador(chavePrimaria)} ${direcaoSql} NULLS LAST`);
+    }
+    return {
+      sql: ` ORDER BY ${partes.join(', ')}`,
+      ordenacao: { campo, direcao }
+    };
+  }
+
   function montarFiltros(contexto, filtros = {}, combinacao = 'todos') {
     const condicoes = [];
     const parametros = [];
@@ -219,24 +286,55 @@ function criarLeitorBronze(opcoes = {}) {
       }
       const estruturado = filtro && typeof filtro === 'object' && !Array.isArray(filtro);
       const operador = estruturado ? filtro.operador : 'igual';
-      const valor = estruturado ? filtro.valor : filtro;
+      const valorOriginal = estruturado ? filtro.valor : filtro;
+      const valor = normalizarValorFiltro(contexto, coluna, operador, valorOriginal);
+      const valorFinal = estruturado
+        ? normalizarValorFiltro(contexto, coluna, operador, filtro.valorFinal)
+        : undefined;
+      const valores = estruturado && Array.isArray(filtro.valores)
+        ? filtro.valores.map((item) => normalizarValorFiltro(contexto, coluna, operador, item))
+        : null;
 
-      if (!['igual', 'contem'].includes(operador)) {
+      if (![...Object.keys(OPERADORES_SQL), 'contem', 'comeca_com', 'termina_com', 'entre', 'em', 'nao_em', 'esta_vazio', 'nao_esta_vazio'].includes(operador)) {
         throw new Error(`Operador de filtro inválido para ${coluna}: ${operador}`);
       }
-      if (valor === null) {
-        if (operador !== 'igual') {
+      if (operador === 'esta_vazio') {
+        condicoes.push(`(${citarIdentificador(coluna)} IS NULL OR CAST(${citarIdentificador(coluna)} AS VARCHAR) = '')`);
+      } else if (operador === 'nao_esta_vazio') {
+        condicoes.push(`(${citarIdentificador(coluna)} IS NOT NULL AND CAST(${citarIdentificador(coluna)} AS VARCHAR) <> '')`);
+      } else if (operador === 'entre') {
+        if (valor === null || valor === undefined || valorFinal === null || valorFinal === undefined) {
+          throw new Error(`O operador entre exige valor e valorFinal em ${coluna}.`);
+        }
+        condicoes.push(`${citarIdentificador(coluna)} BETWEEN ? AND ?`);
+        parametros.push(valor, valorFinal);
+      } else if (operador === 'em' || operador === 'nao_em') {
+        if (!valores?.length || valores.length > 50) {
+          throw new Error(`O operador ${operador} exige entre 1 e 50 valores em ${coluna}.`);
+        }
+        const placeholders = valores.map(() => '?').join(', ');
+        condicoes.push(`${citarIdentificador(coluna)} ${operador === 'em' ? 'IN' : 'NOT IN'} (${placeholders})`);
+        parametros.push(...valores);
+      } else if (valor === null) {
+        if (operador === 'igual') {
+          condicoes.push(`${citarIdentificador(coluna)} IS NULL`);
+        } else if (operador === 'diferente') {
+          condicoes.push(`${citarIdentificador(coluna)} IS NOT NULL`);
+        } else {
           throw new Error(`O operador ${operador} não aceita valor null.`);
         }
-        condicoes.push(`${citarIdentificador(coluna)} IS NULL`);
-      } else if (operador === 'contem') {
+      } else if (['contem', 'comeca_com', 'termina_com'].includes(operador)) {
         if (typeof valor !== 'string') {
-          throw new Error(`O operador contem exige texto em ${coluna}.`);
+          throw new Error(`O operador ${operador} exige texto em ${coluna}.`);
         }
         condicoes.push(`${citarIdentificador(coluna)} ILIKE ? ESCAPE '\\'`);
-        parametros.push(`%${escaparLike(valor)}%`);
+        const texto = escaparLike(valor);
+        parametros.push(
+          operador === 'comeca_com' ? `${texto}%` :
+            operador === 'termina_com' ? `%${texto}` : `%${texto}%`
+        );
       } else if (['string', 'number', 'boolean', 'bigint'].includes(typeof valor)) {
-        condicoes.push(`${citarIdentificador(coluna)} = ?`);
+        condicoes.push(`${citarIdentificador(coluna)} ${OPERADORES_SQL[operador]} ?`);
         parametros.push(valor);
       } else {
         throw new Error(`Valor de filtro inválido para ${coluna}.`);
@@ -285,6 +383,7 @@ function criarLeitorBronze(opcoes = {}) {
     const contexto = await prepararEntidade(nome);
     const visao = normalizarVisao(opcoesConsulta.visao);
     const limite = normalizarLimite(opcoesConsulta.limite);
+    const deslocamento = normalizarDeslocamento(opcoesConsulta.deslocamento);
     const colunas = validarColunas(contexto, opcoesConsulta.colunas);
     const filtros = opcoesConsulta.filtros || {};
     const { condicoes, parametros, separador } = montarFiltros(
@@ -295,8 +394,10 @@ function criarLeitorBronze(opcoes = {}) {
 
     const view = visao === 'atual' ? contexto.viewAtual : contexto.viewHistorica;
     const where = condicoes.length ? ` WHERE ${condicoes.join(separador)}` : '';
+    const ordenacaoMontada = montarOrdenacao(contexto, opcoesConsulta.ordenacao);
     const sql = `SELECT ${colunas.map(citarIdentificador).join(', ')} ` +
-      `FROM ${citarIdentificador(view)}${where} LIMIT ${limite}`;
+      `FROM ${citarIdentificador(view)}${where}${ordenacaoMontada.sql} ` +
+      `LIMIT ${limite} OFFSET ${deslocamento}`;
     const linhas = await allComParametros(con, sql, parametros);
 
     return {
@@ -304,7 +405,9 @@ function criarLeitorBronze(opcoes = {}) {
       visao,
       colunas,
       filtros,
+      ordenacao: ordenacaoMontada.ordenacao,
       limite,
+      deslocamento,
       totalRetornado: linhas.length,
       ultimaExtracao: contexto.execucoes
         .map(({ manifesto }) => manifesto.fim || manifesto.inicio)
@@ -350,6 +453,116 @@ function criarLeitorBronze(opcoes = {}) {
     };
   }
 
+  async function agregar(nome, opcoesConsulta = {}) {
+    const contexto = await prepararEntidade(nome);
+    const visao = normalizarVisao(opcoesConsulta.visao);
+    const limite = normalizarLimite(opcoesConsulta.limite || 50);
+    const agrupamentos = opcoesConsulta.agrupamentos || [];
+    const calculos = opcoesConsulta.calculos || [];
+    if (!Array.isArray(agrupamentos) || agrupamentos.length > 3) {
+      throw new Error('agrupamentos deve ter no máximo 3 itens.');
+    }
+    if (!Array.isArray(calculos) || calculos.length < 1 || calculos.length > 5) {
+      throw new Error('calculos deve ter entre 1 e 5 itens.');
+    }
+
+    const expressoesGrupo = [];
+    const aliasesGrupo = [];
+    const gruposNormalizados = [];
+    for (const [indice, grupo] of agrupamentos.entries()) {
+      const campo = grupo.campo;
+      const granularidade = grupo.granularidade || 'valor';
+      if (!contexto.colunas.has(campo)) {
+        throw new Error(`Coluna de agrupamento não encontrada em ${nome}: ${campo}`);
+      }
+      if (!['valor', 'dia', 'mes', 'ano'].includes(granularidade)) {
+        throw new Error(`Granularidade inválida: ${granularidade}`);
+      }
+      const tipo = contexto.tipos.get(campo) || '';
+      if (granularidade !== 'valor' && !tipo.startsWith('DATE') && !tipo.startsWith('TIMESTAMP')) {
+        throw new Error(`Granularidade ${granularidade} exige uma coluna de data: ${campo}`);
+      }
+      const alias = `grupo_${indice + 1}`;
+      const campoSql = citarIdentificador(campo);
+      const expressao = granularidade === 'valor'
+        ? campoSql
+        : `date_trunc('${granularidade === 'dia' ? 'day' : granularidade === 'mes' ? 'month' : 'year'}', ${campoSql})`;
+      expressoesGrupo.push(`${expressao} AS ${citarIdentificador(alias)}`);
+      aliasesGrupo.push(alias);
+      gruposNormalizados.push({ alias, campo, granularidade });
+    }
+
+    const expressoesCalculo = [];
+    const calculosNormalizados = [];
+    const tiposNumericos = /^(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|UTINYINT|USMALLINT|UINTEGER|UBIGINT|DECIMAL|NUMERIC|REAL|DOUBLE|FLOAT)/;
+    for (const [indice, calculo] of calculos.entries()) {
+      const operacao = calculo.operacao;
+      const campo = calculo.campo;
+      if (!['contar', 'somar', 'media', 'minimo', 'maximo'].includes(operacao)) {
+        throw new Error(`Operação de cálculo inválida: ${operacao}`);
+      }
+      if (operacao !== 'contar' && !campo) {
+        throw new Error(`A operação ${operacao} exige um campo.`);
+      }
+      if (campo && !contexto.colunas.has(campo)) {
+        throw new Error(`Coluna de cálculo não encontrada em ${nome}: ${campo}`);
+      }
+      if (['somar', 'media'].includes(operacao) && !tiposNumericos.test(contexto.tipos.get(campo) || '')) {
+        throw new Error(`A operação ${operacao} exige uma coluna numérica: ${campo}`);
+      }
+      const funcoes = { contar: 'count', somar: 'sum', media: 'avg', minimo: 'min', maximo: 'max' };
+      const alias = `calculo_${indice + 1}`;
+      const argumento = operacao === 'contar' && !campo ? '*' : citarIdentificador(campo);
+      expressoesCalculo.push(`${funcoes[operacao]}(${argumento}) AS ${citarIdentificador(alias)}`);
+      calculosNormalizados.push({ alias, operacao, campo: campo || null });
+    }
+
+    const filtros = opcoesConsulta.filtros || {};
+    const { condicoes, parametros, separador } = montarFiltros(
+      contexto,
+      filtros,
+      opcoesConsulta.combinacaoFiltros
+    );
+    const view = visao === 'atual' ? contexto.viewAtual : contexto.viewHistorica;
+    const where = condicoes.length ? ` WHERE ${condicoes.join(separador)}` : '';
+    const groupBy = aliasesGrupo.length
+      ? ` GROUP BY ${aliasesGrupo.map(citarIdentificador).join(', ')}`
+      : '';
+    const ordenacao = opcoesConsulta.ordenacao || { tipo: 'calculo', indice: 0, direcao: 'desc' };
+    const aliasesOrdenaveis = ordenacao.tipo === 'agrupamento' ? aliasesGrupo : calculosNormalizados.map(({ alias }) => alias);
+    if (!['agrupamento', 'calculo'].includes(ordenacao.tipo)) {
+      throw new Error('tipo de ordenação da agregação deve ser agrupamento ou calculo.');
+    }
+    if (!Number.isInteger(ordenacao.indice) || !aliasesOrdenaveis[ordenacao.indice]) {
+      throw new Error('indice de ordenação da agregação é inválido.');
+    }
+    if (!['asc', 'desc'].includes(ordenacao.direcao)) {
+      throw new Error('direcao da ordenação deve ser asc ou desc.');
+    }
+    const orderBy = ` ORDER BY ${citarIdentificador(aliasesOrdenaveis[ordenacao.indice])} ${ordenacao.direcao.toUpperCase()} NULLS LAST`;
+    const selecao = [...expressoesGrupo, ...expressoesCalculo].join(', ');
+    const linhas = await allComParametros(
+      con,
+      `SELECT ${selecao} FROM ${citarIdentificador(view)}${where}${groupBy}${orderBy} LIMIT ${limite}`,
+      parametros
+    );
+
+    return {
+      entidade: nome,
+      visao,
+      agrupamentos: gruposNormalizados,
+      calculos: calculosNormalizados,
+      filtros,
+      limite,
+      ultimaExtracao: contexto.execucoes
+        .map(({ manifesto }) => manifesto.fim || manifesto.inicio)
+        .filter(Boolean)
+        .sort()
+        .at(-1) || null,
+      dados: linhas
+    };
+  }
+
   async function fechar() {
     if (fechado) return;
     fechado = true;
@@ -362,6 +575,7 @@ function criarLeitorBronze(opcoes = {}) {
     consultar,
     buscarPorId,
     contar,
+    agregar,
     fechar
   };
 }
@@ -370,5 +584,6 @@ module.exports = {
   criarLeitorBronze,
   descobrirExecucoesValidas,
   LIMITE_PADRAO,
-  LIMITE_MAXIMO
+  LIMITE_MAXIMO,
+  normalizarDeslocamento
 };

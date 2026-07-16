@@ -8,6 +8,23 @@ const OPERACOES = [
   'consultar'
 ];
 
+const OPERADORES_FILTRO = [
+  'igual',
+  'diferente',
+  'contem',
+  'comeca_com',
+  'termina_com',
+  'maior_que',
+  'maior_ou_igual',
+  'menor_que',
+  'menor_ou_igual',
+  'entre',
+  'em',
+  'nao_em',
+  'esta_vazio',
+  'nao_esta_vazio'
+];
+
 const definicaoConsultarBronze = {
   type: 'function',
   name: 'consultar_bronze',
@@ -52,23 +69,58 @@ const definicaoConsultarBronze = {
                 campo: { type: 'string' },
                 operador: {
                   type: 'string',
-                  enum: ['igual', 'contem'],
-                  description: 'Use contem para busca textual parcial, como nomes de clientes.'
+                  enum: OPERADORES_FILTRO,
+                  description: 'Use contem para texto parcial e operadores maior/menor para números ou datas.'
                 },
-                valor: { type: ['string', 'null'] }
+                valor: { type: ['string', 'null'] },
+                valor_final: {
+                  type: ['string', 'null'],
+                  description: 'Fim do intervalo para operador entre; null nos demais operadores.'
+                },
+                valores: {
+                  anyOf: [
+                    { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string' } },
+                    { type: 'null' }
+                  ],
+                  description: 'Lista para os operadores em e nao_em; null nos demais.'
+                }
               },
-              required: ['campo', 'operador', 'valor'],
+              required: ['campo', 'operador', 'valor', 'valor_final', 'valores'],
               additionalProperties: false
             }
           },
           { type: 'null' }
         ],
-        description: 'Filtros seguros. contem ignora maiúsculas/minúsculas e busca o texto em qualquer posição.'
+        description: 'Filtros seguros de igualdade, diferença, comparação e busca textual parcial.'
       },
       combinacao_filtros: {
         type: ['string', 'null'],
         enum: ['todos', 'qualquer', null],
         description: 'todos combina filtros com E; qualquer combina com OU; use qualquer ao buscar um nome em fantasia ou razsocial.'
+      },
+      ordenacao: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              campo: { type: 'string' },
+              direcao: {
+                type: 'string',
+                enum: ['asc', 'desc']
+              }
+            },
+            required: ['campo', 'direcao'],
+            additionalProperties: false
+          },
+          { type: 'null' }
+        ],
+        description: 'Ordenação segura. Para últimos registros, use a data de negócio com direcao desc.'
+      },
+      deslocamento: {
+        type: ['integer', 'null'],
+        minimum: 0,
+        maximum: 10000,
+        description: 'Quantidade de linhas a pular para paginação; use null ou 0 na primeira página.'
       },
       limite: {
         type: ['integer', 'null'],
@@ -77,7 +129,7 @@ const definicaoConsultarBronze = {
         description: 'Máximo de linhas retornadas, entre 1 e 100, ou null para 50.'
       }
     },
-    required: ['operacao', 'entidade', 'visao', 'id', 'colunas', 'filtros', 'combinacao_filtros', 'limite'],
+    required: ['operacao', 'entidade', 'visao', 'id', 'colunas', 'filtros', 'combinacao_filtros', 'ordenacao', 'deslocamento', 'limite'],
     additionalProperties: false
   }
 };
@@ -103,6 +155,11 @@ function validarEstrutura(argumentos) {
   if (argumentos.filtros !== null && argumentos.filtros !== undefined && !Array.isArray(argumentos.filtros)) {
     throw new Error('filtros deve ser uma lista ou null.');
   }
+  if (argumentos.deslocamento !== null && argumentos.deslocamento !== undefined) {
+    if (!Number.isInteger(argumentos.deslocamento) || argumentos.deslocamento < 0 || argumentos.deslocamento > 10000) {
+      throw new Error('deslocamento deve ser um inteiro entre 0 e 10000.');
+    }
+  }
 }
 
 function obterPolitica(entidadeNome) {
@@ -124,15 +181,41 @@ function normalizarFiltros(filtros, permitidas) {
       throw new Error(`Filtro duplicado: ${filtro.campo}`);
     }
     const operador = filtro.operador || 'igual';
-    if (!['igual', 'contem'].includes(operador)) {
+    if (!OPERADORES_FILTRO.includes(operador)) {
       throw new Error(`Operador de filtro inválido: ${operador}`);
     }
-    if (operador === 'contem' && typeof filtro.valor !== 'string') {
-      throw new Error('O operador contem exige um valor de texto.');
+    if (['contem', 'comeca_com', 'termina_com'].includes(operador) && typeof filtro.valor !== 'string') {
+      throw new Error(`O operador ${operador} exige um valor de texto.`);
     }
-    resultado[filtro.campo] = { operador, valor: filtro.valor };
+    if (operador === 'entre' && (filtro.valor === null || filtro.valor === undefined || filtro.valor_final === null || filtro.valor_final === undefined)) {
+      throw new Error('O operador entre exige valor e valor_final.');
+    }
+    if (['em', 'nao_em'].includes(operador) && (!Array.isArray(filtro.valores) || filtro.valores.length < 1 || filtro.valores.length > 50)) {
+      throw new Error(`O operador ${operador} exige entre 1 e 50 valores.`);
+    }
+    const normalizado = {
+      operador,
+      valor: filtro.valor
+    };
+    if (filtro.valor_final !== undefined) normalizado.valorFinal = filtro.valor_final;
+    if (filtro.valores !== undefined) normalizado.valores = filtro.valores;
+    resultado[filtro.campo] = normalizado;
   }
   return resultado;
+}
+
+function normalizarOrdenacao(ordenacao, permitidas) {
+  if (ordenacao === null || ordenacao === undefined) return null;
+  if (!ordenacao || typeof ordenacao !== 'object' || Array.isArray(ordenacao)) {
+    throw new Error('ordenacao deve ser um objeto ou null.');
+  }
+  if (!permitidas.has(ordenacao.campo)) {
+    throw new Error(`Campo de ordenação não permitido para o agente: ${ordenacao.campo}`);
+  }
+  if (!['asc', 'desc'].includes(ordenacao.direcao)) {
+    throw new Error('direcao da ordenação deve ser asc ou desc.');
+  }
+  return { campo: ordenacao.campo, direcao: ordenacao.direcao };
 }
 
 async function executarConsultarBronze(argumentos, dependencias = {}) {
@@ -148,6 +231,7 @@ async function executarConsultarBronze(argumentos, dependencias = {}) {
 
     const { entidade, permitidas } = obterPolitica(argumentos.entidade);
     const filtros = normalizarFiltros(argumentos.filtros, permitidas);
+    const ordenacao = normalizarOrdenacao(argumentos.ordenacao, permitidas);
     const visao = argumentos.visao || 'atual';
     const combinacaoFiltros = argumentos.combinacao_filtros || 'todos';
 
@@ -177,7 +261,9 @@ async function executarConsultarBronze(argumentos, dependencias = {}) {
       visao,
       filtros,
       combinacaoFiltros,
+      ordenacao,
       colunas,
+      deslocamento: argumentos.deslocamento || 0,
       limite: argumentos.limite || 50
     };
     const resultado = argumentos.id === null || argumentos.id === undefined
@@ -195,5 +281,9 @@ async function executarConsultarBronze(argumentos, dependencias = {}) {
 
 module.exports = {
   definicaoConsultarBronze,
-  executarConsultarBronze
+  executarConsultarBronze,
+  OPERADORES_FILTRO,
+  serializar,
+  obterPolitica,
+  normalizarFiltros
 };

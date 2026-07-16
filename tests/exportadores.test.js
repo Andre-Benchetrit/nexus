@@ -8,7 +8,31 @@ const { montarConsultaPostgres, validarEntidade } = require('../exportadores/cor
 test('monta consulta para uma tabela PostgreSQL', () => {
   assert.equal(
     montarConsultaPostgres(notaSaida, { inicio: '2026-07-01', fim: '2026-07-02' }),
-    'SELECT * FROM "pg_db"."sysemp"."nota_saida" WHERE "dt_alteracao" >= DATE \'2026-07-01\' AND "dt_alteracao" < DATE \'2026-07-02\''
+    'SELECT * FROM "pg_db"."sysemp"."nota_saida" WHERE ' +
+      '("dt_alteracao" >= DATE \'2026-07-01\' AND "dt_alteracao" < DATE \'2026-07-02\') OR ' +
+      '("dt_cadastro" >= DATE \'2026-07-01\' AND "dt_cadastro" < DATE \'2026-07-02\')'
+  );
+});
+
+test('monta consulta nativa sem o alias usado pelo DuckDB', () => {
+  assert.match(
+    montarConsultaPostgres(notaSaida, { inicio: '2026-07-01', fim: '2026-07-02' }, null),
+    /^SELECT \* FROM "sysemp"\."nota_saida" WHERE/
+  );
+});
+
+test('mantém um único cursor como padrão para outras entidades', () => {
+  const entidade = {
+    ...notaSaida,
+    nome: 'teste',
+    extracao: {
+      ...notaSaida.extracao,
+      cursoresIncrementais: undefined
+    }
+  };
+  assert.match(
+    montarConsultaPostgres(entidade, { inicio: '2026-07-01', fim: '2026-07-02' }),
+    /WHERE \("dt_alteracao" >=/
   );
 });
 
@@ -30,4 +54,12 @@ test('cria caminho particionado e uma execução única', () => {
 test('rejeita identificadores que poderiam injetar SQL', () => {
   const invalida = { ...notaSaida, tabela: 'nota_saida; DROP TABLE x' };
   assert.throws(() => validarEntidade(invalida), /identificador inválido/);
+});
+
+test('rejeita transporte de extração desconhecido', () => {
+  const invalida = {
+    ...notaSaida,
+    extracao: { ...notaSaida.extracao, transporte: 'sql_livre' }
+  };
+  assert.throws(() => validarEntidade(invalida), /Transporte de extração não suportado/);
 });

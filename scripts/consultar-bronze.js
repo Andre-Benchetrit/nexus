@@ -10,6 +10,8 @@ Uso:
   npm run consultar -- cliente --contar [--visao atual|historico]
   npm run consultar -- cliente [--id 123] [--filtro campo=valor]
                            [--colunas campo1,campo2] [--limite 50]
+                           [--ordenar campo] [--direcao asc|desc]
+                           [--deslocamento 0]
                            [--visao atual|historico]
   `);
 }
@@ -89,6 +91,10 @@ async function main() {
       visao: opcoes.visao,
       limite: opcoes.limite,
       colunas: opcoes.colunas ? opcoes.colunas.split(',').filter(Boolean) : undefined,
+      ordenacao: opcoes.ordenar
+        ? { campo: opcoes.ordenar, direcao: opcoes.direcao || 'asc' }
+        : undefined,
+      deslocamento: opcoes.deslocamento,
       filtros: opcoes.filtros
     };
     const resultado = opcoes.id === undefined

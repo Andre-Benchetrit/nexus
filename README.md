@@ -22,9 +22,6 @@ npm run exportar -- nota_saida --inicio 2026-07-01 --fim 2026-07-02 --dry-run
 # Executar a exportação
 npm run exportar -- nota_saida --inicio 2026-07-01 --fim 2026-07-02
 
-# Compatibilidade com o comando específico
-npm run exportar:nota_saida
-
 # Testes locais
 npm test
 ```
@@ -56,6 +53,9 @@ npm run consultar -- cliente --id 123
 # Selecionar colunas e aplicar filtros de igualdade
 npm run consultar -- nota_saida --colunas id_nota_saida,id_cliente,situacao --filtro situacao=B
 
+# Buscar por data brasileira e ordenar os registros mais recentes
+npm run consultar -- nota_saida --filtro data_pedido=16/07/2026 --ordenar data_pedido --direcao desc --limite 10
+
 # Inspecionar o schema completo
 npm run consultar -- cliente --schema
 ```
@@ -65,6 +65,9 @@ valores de filtros são parametrizados. O limite padrão é 50 e o máximo é 50
 
 ## Tool e agente do bronze
 
+A referência completa de operações, filtros e agregações está em
+[`docs/TOOLS_BRONZE.md`](docs/TOOLS_BRONZE.md).
+
 A tool `consultar_bronze` encapsula o leitor DuckDB e oferece quatro operações
 estruturadas: `listar_entidades`, `descrever_entidade`, `contar` e `consultar`.
 Ela não aceita SQL e limita o agente às colunas aprovadas em
@@ -72,6 +75,21 @@ Ela não aceita SQL e limita o agente às colunas aprovadas em
 Os filtros aceitam igualdade e busca textual parcial (`contem`). Também podem
 ser combinados com `todos` (E) ou `qualquer` (OU), permitindo procurar um nome
 em `fantasia` ou `razsocial` sem expor SQL ao modelo.
+Também estão disponíveis `diferente`, `maior_que`, `maior_ou_igual`,
+`menor_que` e `menor_ou_igual`, sempre com valores parametrizados.
+Consultas também aceitam ordenação por uma coluna aprovada. Datas de colunas
+`DATE` podem ser informadas como `DD/MM/AAAA` ou `AAAA-MM-DD`; internamente são
+normalizadas antes da comparação.
+
+`dt_alteracao` é o cursor técnico da extração incremental: ele decide quais
+linhas precisam ser copiadas novamente. Para perguntas de negócio, prefira
+`data_emissao` para notas emitidas e `data_pedido` para pedidos. A data da última
+extração indica quando o lake foi processado, não a maior data existente nos
+registros.
+
+Em `nota_saida`, a extração usa `dt_alteracao` para capturar atualizações e
+`dt_cadastro` para capturar registros novos cujo `dt_alteracao` ainda é nulo.
+`data_pedido` não é cursor de ingestão: ela permanece como data de negócio.
 
 O agente possui adaptadores separados para Gemini e OpenAI. A tool, as regras de
 acesso e o DuckDB são os mesmos nos dois casos. Para configurá-lo, copie

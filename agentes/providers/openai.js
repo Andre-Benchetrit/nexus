@@ -18,19 +18,26 @@ function criarProviderOpenAI(opcoes = {}) {
   async function executar({
     pergunta,
     instrucoes,
+    tools,
     definicaoTool,
     executarTool,
     maxRodadas
   }) {
     const client = obterCliente();
     const input = [{ role: 'user', content: pergunta }];
+    const ferramentas = tools?.length
+      ? tools
+      : [{ definicao: definicaoTool, executar: executarTool }];
+    const ferramentasPorNome = new Map(
+      ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
+    );
 
     for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
       const resposta = await client.responses.create({
         model: modelo,
         reasoning: { effort: 'low' },
         instructions: instrucoes,
-        tools: [definicaoTool],
+        tools: ferramentas.map((ferramenta) => ferramenta.definicao),
         input,
         store: false
       });
@@ -50,10 +57,9 @@ function criarProviderOpenAI(opcoes = {}) {
       for (const chamada of chamadas) {
         let output;
         try {
-          if (chamada.name !== definicaoTool.name) {
-            throw new Error(`Tool desconhecida: ${chamada.name}`);
-          }
-          output = await executarTool(JSON.parse(chamada.arguments));
+          const ferramenta = ferramentasPorNome.get(chamada.name);
+          if (!ferramenta) throw new Error(`Tool desconhecida: ${chamada.name}`);
+          output = await ferramenta.executar(JSON.parse(chamada.arguments));
         } catch (erro) {
           output = JSON.stringify({ erro: erro.message });
         }

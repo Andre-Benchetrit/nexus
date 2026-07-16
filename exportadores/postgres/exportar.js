@@ -14,6 +14,7 @@ const {
 } = require('../../duckdb/connections');
 const { criarCaminhosExportacao, caminhoParaDuckDB } = require('../core/caminhos');
 const { montarConsultaPostgres, validarEntidade } = require('../core/sql');
+const { exportarConsultaParaCsv, converterCsvParaParquet } = require('./copy_stream');
 
 async function operacaoArquivoComRetentativas(operacao, tentativas = 10) {
   let ultimoErro;
@@ -52,6 +53,7 @@ async function exportarPostgres(entidade, opcoes = {}) {
   const inicio = opcoes.agora || new Date();
   const caminhos = criarCaminhosExportacao(entidade, inicio);
   const consulta = montarConsultaPostgres(entidade, opcoes);
+  const consultaNativa = montarConsultaPostgres(entidade, opcoes, null);
 
   if (opcoes.dryRun) {
     return { entidade: entidade.nome, consulta, caminhos };
@@ -69,21 +71,38 @@ async function exportarPostgres(entidade, opcoes = {}) {
   const con = criarConexaoDuckDB();
   let erroExportacao = null;
   let conexaoFechada = false;
+  const arquivoTemporario = path.join(caminhos.diretorio, 'dados.csv.tmp');
 
   try {
     console.log(`[${entidade.nome}] Preparando conexão...`);
-    await prepararPostgresDuckDB(con);
-    // A cópia binária preserva os bytes da codificação do servidor. Em
-    // bancos WIN1252 isso pode produzir Parquet marcado como UTF-8, mas inválido.
-    // O protocolo textual faz o PostgreSQL aplicar a conversão para UTF-8.
-    await runDuckDB(con, 'SET pg_use_binary_copy=false;');
-    await conectarPostgresNoDuckDB(con);
+    if (entidade.extracao?.transporte !== 'copy_stream') {
+      await prepararPostgresDuckDB(con);
+      // A cópia binária preserva os bytes da codificação do servidor. Em
+      // bancos WIN1252 isso pode produzir Parquet marcado como UTF-8, mas inválido.
+      // O protocolo textual faz o PostgreSQL aplicar a conversão para UTF-8.
+      await runDuckDB(con, 'SET pg_use_binary_copy=false;');
+      await conectarPostgresNoDuckDB(con);
+    }
 
     const arquivoDestino = caminhoParaDuckDB(caminhos.parquet);
-    const sqlCopy = `COPY (${consulta}) TO '${arquivoDestino}' (FORMAT PARQUET, COMPRESSION ZSTD);`;
-
     console.log(`[${entidade.nome}] Exportando snapshot...`);
-    await runDuckDB(con, sqlCopy);
+    if (entidade.extracao?.transporte === 'copy_stream') {
+      console.log(`[${entidade.nome}] Lendo PostgreSQL em streaming...`);
+      await exportarConsultaParaCsv(consultaNativa, arquivoTemporario);
+
+      await converterCsvParaParquet({
+        schema: entidade.schema,
+        tabela: entidade.tabela,
+        csv: arquivoTemporario,
+        parquet: caminhos.parquet
+      });
+      await operacaoArquivoComRetentativas(() => fsp.unlink(arquivoTemporario));
+    } else {
+      await runDuckDB(
+        con,
+        `COPY (${consulta}) TO '${arquivoDestino}' (FORMAT PARQUET, COMPRESSION ZSTD);`
+      );
+    }
 
     // hash(linha) obriga o leitor a decodificar todas as colunas. count(*) sozinho
     // usa os metadados do Parquet e não detecta strings com codificação inválida.
@@ -137,7 +156,14 @@ async function exportarPostgres(entidade, opcoes = {}) {
         erroExportacao.message += ` (arquivo sem manifesto será ignorado: ${erroLimpeza.message})`;
       }
     }
+    if (fs.existsSync(arquivoTemporario)) {
+      try {
+        await operacaoArquivoComRetentativas(() => fsp.unlink(arquivoTemporario));
+      } catch (erroLimpeza) {
+        if (erroExportacao) erroExportacao.message += ` (CSV temporário não removido: ${erroLimpeza.message})`;
+      }
+    }
   }
 }
 
-module.exports = { exportarPostgres };
+module.exports = { exportarPostgres, operacaoArquivoComRetentativas };

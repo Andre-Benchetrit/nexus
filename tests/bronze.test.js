@@ -157,6 +157,88 @@ test('filtra texto parcialmente sem diferenciar maiúsculas e combina com OU', a
   assert.equal(resultado.total, 1n);
 });
 
+test('normaliza data brasileira e ordena resultados de forma determinística', async () => {
+  const filtrado = await leitor.consultar('cliente', {
+    colunas: ['id_cliente', 'dt_alteracao'],
+    filtros: {
+      dt_alteracao: { operador: 'igual', valor: '02/01/2026' }
+    }
+  });
+  assert.equal(filtrado.totalRetornado, 1);
+  assert.equal(filtrado.dados[0].id_cliente, 1);
+
+  const ordenado = await leitor.consultar('cliente', {
+    colunas: ['id_cliente', 'dt_alteracao'],
+    ordenacao: { campo: 'dt_alteracao', direcao: 'desc' }
+  });
+  assert.deepEqual(ordenado.dados.map((linha) => linha.id_cliente), [1, 2]);
+  assert.deepEqual(ordenado.ordenacao, { campo: 'dt_alteracao', direcao: 'desc' });
+});
+
+test('aplica comparações numéricas parametrizadas', async () => {
+  const resultado = await leitor.consultar('cliente', {
+    colunas: ['id_cliente', 'nome'],
+    filtros: {
+      id_cliente: { operador: 'maior_que', valor: '1' }
+    }
+  });
+  assert.deepEqual(resultado.dados, [{ id_cliente: 2, nome: 'Bia' }]);
+});
+
+test('aceita intervalo, campos vazios e paginação', async () => {
+  const intervalo = await leitor.contar('cliente', {
+    filtros: {
+      dt_alteracao: {
+        operador: 'entre',
+        valor: '01/01/2026',
+        valorFinal: '02/01/2026'
+      }
+    }
+  });
+  assert.equal(intervalo.total, 2n);
+
+  const lista = await leitor.contar('cliente', {
+    filtros: {
+      id_cliente: { operador: 'em', valor: null, valores: ['1', '2'] }
+    }
+  });
+  assert.equal(lista.total, 2n);
+
+  const semEmail = await leitor.contar('cliente', {
+    filtros: { email: { operador: 'esta_vazio', valor: null } }
+  });
+  assert.equal(semEmail.total, 1n);
+
+  const pagina = await leitor.consultar('cliente', {
+    colunas: ['id_cliente'],
+    ordenacao: { campo: 'id_cliente', direcao: 'asc' },
+    limite: 1,
+    deslocamento: 1
+  });
+  assert.deepEqual(pagina.dados, [{ id_cliente: 2 }]);
+  assert.equal(pagina.deslocamento, 1);
+});
+
+test('agrega por período com cálculos controlados', async () => {
+  const resultado = await leitor.agregar('cliente', {
+    agrupamentos: [{ campo: 'dt_alteracao', granularidade: 'mes' }],
+    calculos: [
+      { operacao: 'contar', campo: null },
+      { operacao: 'somar', campo: 'id_cliente' }
+    ],
+    ordenacao: { tipo: 'calculo', indice: 0, direcao: 'desc' }
+  });
+
+  assert.equal(resultado.dados.length, 1);
+  assert.equal(resultado.dados[0].calculo_1, 2n);
+  assert.equal(resultado.dados[0].calculo_2, 3n);
+  assert.deepEqual(resultado.agrupamentos[0], {
+    alias: 'grupo_1',
+    campo: 'dt_alteracao',
+    granularidade: 'mes'
+  });
+});
+
 test('rejeita coluna desconhecida e limites excessivos', async () => {
   await assert.rejects(
     leitor.consultar('cliente', { colunas: ['senha'] }),

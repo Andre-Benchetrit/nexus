@@ -20,8 +20,11 @@ test('delega a execução para um provider com contrato comum', async () => {
 
   assert.equal(resultado.texto, 'Resposta do provider');
   assert.equal(contexto.pergunta, 'Quais dados temos?');
-  assert.equal(contexto.executarTool, executarTool);
-  assert.equal(contexto.definicaoTool.name, 'consultar_bronze');
+  assert.equal(contexto.tools[0].executar, executarTool);
+  assert.deepEqual(
+    contexto.tools.map((ferramenta) => ferramenta.definicao.name),
+    ['consultar_bronze', 'agregar_bronze']
+  );
 });
 
 test('lê provider e modelo pela linha de comando', () => {

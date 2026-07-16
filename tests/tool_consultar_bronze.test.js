@@ -15,6 +15,8 @@ function argumentos(sobrescritas = {}) {
     colunas: null,
     filtros: null,
     combinacao_filtros: null,
+    ordenacao: null,
+    deslocamento: null,
     limite: 10,
     ...sobrescritas
   };
@@ -101,6 +103,38 @@ test('aceita busca textual parcial combinada com OU', async () => {
       combinacaoFiltros: 'qualquer'
     }
   ]);
+});
+
+test('valida e encaminha ordenação somente por campo permitido', async () => {
+  const falso = criarLeitorFalso();
+  await executarConsultarBronze(argumentos({
+    ordenacao: { campo: 'razsocial', direcao: 'desc' }
+  }), { criarLeitor: () => falso.leitor });
+
+  assert.deepEqual(falso.chamadas[0][2].ordenacao, {
+    campo: 'razsocial',
+    direcao: 'desc'
+  });
+
+  await assert.rejects(
+    executarConsultarBronze(argumentos({
+      ordenacao: { campo: 'cpf', direcao: 'desc' }
+    }), { criarLeitor: () => falso.leitor }),
+    /Campo de ordenação não permitido/
+  );
+});
+
+test('encaminha comparação numérica segura', async () => {
+  const falso = criarLeitorFalso();
+  await executarConsultarBronze(argumentos({
+    operacao: 'contar',
+    entidade: 'nota_saida',
+    filtros: [{ campo: 'id_nr_nf', operador: 'maior_que', valor: '0' }]
+  }), { criarLeitor: () => falso.leitor });
+
+  assert.deepEqual(falso.chamadas[0][2].filtros, {
+    id_nr_nf: { operador: 'maior_que', valor: '0' }
+  });
 });
 
 test('expõe somente colunas permitidas ao agente', async () => {

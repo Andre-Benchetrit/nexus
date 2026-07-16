@@ -27,7 +27,8 @@ function montarConsultaPostgres(entidade, opcoes = {}, alias = 'pg_db') {
     : colunas.map((coluna) => citarIdentificador(coluna, 'coluna')).join(', ');
 
   const origem = [alias, entidade.schema, entidade.tabela]
-    .map((parte, indice) => citarIdentificador(parte, indice === 0 ? 'alias' : 'tabela'))
+    .filter(Boolean)
+    .map((parte, indice) => citarIdentificador(parte, alias && indice === 0 ? 'alias' : 'tabela'))
     .join('.');
 
   let consulta = `SELECT ${selecao} FROM ${origem}`;
@@ -39,8 +40,14 @@ function montarConsultaPostgres(entidade, opcoes = {}, alias = 'pg_db') {
       throw new Error('inicio deve ser anterior a fim.');
     }
 
-    const cursor = citarIdentificador(extracao.cursor, 'cursor');
-    consulta += ` WHERE ${cursor} >= DATE '${opcoes.inicio}' AND ${cursor} < DATE '${opcoes.fim}'`;
+    const cursores = extracao.cursoresIncrementais?.length
+      ? extracao.cursoresIncrementais
+      : [extracao.cursor];
+    const condicoes = cursores.map((nomeCursor) => {
+      const cursor = citarIdentificador(nomeCursor, 'cursor');
+      return `(${cursor} >= DATE '${opcoes.inicio}' AND ${cursor} < DATE '${opcoes.fim}')`;
+    });
+    consulta += ` WHERE ${condicoes.join(' OR ')}`;
   }
 
   return consulta;
@@ -59,6 +66,11 @@ function validarEntidade(entidade) {
     throw new Error(`Fonte ainda não suportada neste exportador: ${entidade.fonte}`);
   }
 
+  const transportesSuportados = ['duckdb', 'copy_stream'];
+  if (entidade.extracao?.transporte && !transportesSuportados.includes(entidade.extracao.transporte)) {
+    throw new Error(`Transporte de extração não suportado: ${entidade.extracao.transporte}`);
+  }
+
   if (!entidade.destino?.camada) {
     throw new Error('Entidade sem destino.camada.');
   }
@@ -72,6 +84,14 @@ function validarEntidade(entidade) {
     if (!entidade.extracao.chavePrimaria) throw new Error('Extração incremental sem chavePrimaria.');
     citarIdentificador(entidade.extracao.cursor, 'cursor');
     citarIdentificador(entidade.extracao.chavePrimaria, 'chavePrimaria');
+    if (entidade.extracao.cursoresIncrementais !== undefined) {
+      if (!Array.isArray(entidade.extracao.cursoresIncrementais) || !entidade.extracao.cursoresIncrementais.length) {
+        throw new Error('cursoresIncrementais deve ser uma lista não vazia.');
+      }
+      for (const cursor of entidade.extracao.cursoresIncrementais) {
+        citarIdentificador(cursor, 'cursor');
+      }
+    }
   }
 }
 
