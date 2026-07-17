@@ -3,7 +3,8 @@ const {
   OPERADORES_FILTRO,
   serializar,
   obterPolitica,
-  normalizarFiltros
+  normalizarFiltros,
+  ENTIDADES_PERMITIDAS_AGENTE
 } = require('./consultar_bronze');
 
 const OPERACOES_CALCULO = ['contar', 'somar', 'media', 'minimo', 'maximo'];
@@ -45,7 +46,7 @@ const definicaoAgregarBronze = {
     properties: {
       entidade: {
         type: 'string',
-        enum: ['cliente', 'nota_saida']
+        enum: ENTIDADES_PERMITIDAS_AGENTE
       },
       visao: {
         type: ['string', 'null'],

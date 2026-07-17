@@ -71,7 +71,10 @@ A referência completa de operações, filtros e agregações está em
 A tool `consultar_bronze` encapsula o leitor DuckDB e oferece quatro operações
 estruturadas: `listar_entidades`, `descrever_entidade`, `contar` e `consultar`.
 Ela não aceita SQL e limita o agente às colunas aprovadas em
-`consulta.colunasPadrao` no catálogo. O limite de retorno da tool é 100 linhas.
+`consulta.colunasAgente` ou `consulta.colunasPadrao` no catálogo. Somente
+entidades com `consulta.habilitadaParaAgente: true` aparecem nas tools; essa
+lista é gerada automaticamente a partir do catálogo. O limite de retorno da
+tool é 100 linhas.
 Os filtros aceitam igualdade e busca textual parcial (`contem`). Também podem
 ser combinados com `todos` (E) ou `qualquer` (OU), permitindo procurar um nome
 em `fantasia` ou `razsocial` sem expor SQL ao modelo.

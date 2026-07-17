@@ -1,5 +1,7 @@
 const { criarLeitorBronze } = require('../duckdb/bronze');
-const { obterEntidade } = require('../exportadores/catalogo');
+const { obterEntidade, listarEntidadesAgente } = require('../exportadores/catalogo');
+
+const ENTIDADES_PERMITIDAS_AGENTE = Object.freeze(listarEntidadesAgente());
 
 const OPERACOES = [
   'listar_entidades',
@@ -40,7 +42,7 @@ const definicaoConsultarBronze = {
       },
       entidade: {
         type: ['string', 'null'],
-        enum: ['cliente', 'nota_saida', null],
+        enum: [...ENTIDADES_PERMITIDAS_AGENTE, null],
         description: 'Entidade do bronze; use null somente ao listar entidades.'
       },
       visao: {
@@ -164,6 +166,9 @@ function validarEstrutura(argumentos) {
 
 function obterPolitica(entidadeNome) {
   const entidade = obterEntidade(entidadeNome);
+  if (entidade.consulta?.habilitadaParaAgente !== true) {
+    throw new Error(`Entidade não permitida para o agente: ${entidadeNome}`);
+  }
   const permitidas = entidade.consulta?.colunasAgente || entidade.consulta?.colunasPadrao || [];
   return { entidade, permitidas: new Set(permitidas) };
 }
@@ -225,7 +230,10 @@ async function executarConsultarBronze(argumentos, dependencias = {}) {
 
   try {
     if (argumentos.operacao === 'listar_entidades') {
-      return serializar(await leitor.listarEntidades());
+      const entidades = await leitor.listarEntidades();
+      return serializar(
+        entidades.filter((item) => ENTIDADES_PERMITIDAS_AGENTE.includes(item.entidade))
+      );
     }
     if (!argumentos.entidade) throw new Error('entidade é obrigatória para esta operação.');
 
@@ -285,5 +293,6 @@ module.exports = {
   OPERADORES_FILTRO,
   serializar,
   obterPolitica,
-  normalizarFiltros
+  normalizarFiltros,
+  ENTIDADES_PERMITIDAS_AGENTE
 };

@@ -18,7 +18,9 @@ linhas.
 
 ### Parâmetros
 
-- `entidade`: `cliente` ou `nota_saida`.
+- `entidade`: uma entidade do catálogo marcada com
+  `consulta.habilitadaParaAgente: true`; atualmente `cliente`, `nota_saida` e
+  `produto` e `marca`.
 - `visao`: `atual` ou `historico`; o padrão é `atual`.
 - `id`: busca direta pela chave primária.
 - `colunas`: campos que devem aparecer no resultado.

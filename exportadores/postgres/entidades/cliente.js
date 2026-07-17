@@ -11,6 +11,7 @@ module.exports = {
     colunas: ['*']
   },
   consulta: {
+    habilitadaParaAgente: true,
     colunasPadrao: [
       'id_cliente',
       'razsocial',

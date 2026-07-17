@@ -5,6 +5,7 @@ const {
   definicaoAgregarBronze,
   executarAgregarBronze
 } = require('../tools/agregar_bronze');
+const { ENTIDADES_PERMITIDAS_AGENTE } = require('../tools/consultar_bronze');
 
 function argumentos(sobrescritas = {}) {
   return {
@@ -43,6 +44,14 @@ test('expõe schema estrito para agregações seguras', () => {
     new Set(definicaoAgregarBronze.parameters.required),
     new Set(Object.keys(definicaoAgregarBronze.parameters.properties))
   );
+});
+
+test('usa as mesmas entidades permitidas pela consulta', () => {
+  assert.deepEqual(
+    definicaoAgregarBronze.parameters.properties.entidade.enum,
+    ENTIDADES_PERMITIDAS_AGENTE
+  );
+  assert.ok(ENTIDADES_PERMITIDAS_AGENTE.includes('produto'));
 });
 
 test('encaminha agrupamentos, cálculos e filtros aprovados', async () => {

@@ -3,8 +3,10 @@ const assert = require('node:assert/strict');
 
 const {
   definicaoConsultarBronze,
-  executarConsultarBronze
+  executarConsultarBronze,
+  ENTIDADES_PERMITIDAS_AGENTE
 } = require('../tools/consultar_bronze');
+const { entidades } = require('../exportadores/catalogo');
 
 function argumentos(sobrescritas = {}) {
   return {
@@ -57,6 +59,19 @@ test('expõe um schema estrito compatível com function calling', () => {
     new Set(definicaoConsultarBronze.parameters.required),
     new Set(Object.keys(definicaoConsultarBronze.parameters.properties))
   );
+});
+
+test('deriva as entidades permitidas diretamente do catálogo', () => {
+  const esperadas = Object.values(entidades)
+    .filter((entidade) => entidade.consulta?.habilitadaParaAgente === true)
+    .map((entidade) => entidade.nome);
+
+  assert.deepEqual(ENTIDADES_PERMITIDAS_AGENTE, esperadas);
+  assert.deepEqual(
+    definicaoConsultarBronze.parameters.properties.entidade.enum,
+    [...esperadas, null]
+  );
+  assert.ok(ENTIDADES_PERMITIDAS_AGENTE.includes('produto'));
 });
 
 test('transforma filtros estruturados e fecha o leitor', async () => {
