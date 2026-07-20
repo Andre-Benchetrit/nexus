@@ -22,11 +22,11 @@ async function exportarConsultaParaCsv(consulta, arquivo, dependencias = {}) {
   }
 }
 
-async function converterCsvParaParquet({ schema, tabela, csv, parquet }, dependencias = {}) {
+async function converterCsvParaParquet({ schema, tabela, csv, parquet, colunas }, dependencias = {}) {
   const executar = dependencias.executarArquivo || executarArquivo;
   const executavel = dependencias.execPath || process.execPath;
   const script = dependencias.script || path.join(__dirname, 'converter_csv.js');
-  await executar(executavel, [script, schema, tabela, csv, parquet], {
+  await executar(executavel, [script, schema, tabela, csv, parquet, JSON.stringify(colunas || ['*'])], {
     env: process.env,
     windowsHide: true,
     maxBuffer: 1024 * 1024

@@ -1,4 +1,4 @@
-const MODELO_PADRAO_GEMINI = 'gemini-3.5-flash';
+const MODELO_PADRAO_GEMINI = 'gemini-3.1-flash-lite';
 
 function converterSchemaGemini(schema) {
   if (!schema || typeof schema !== 'object') return schema;
@@ -10,6 +10,7 @@ function converterSchemaGemini(schema) {
 
   const convertido = {};
   if (schema.type) {
+
     const tipo = Array.isArray(schema.type)
       ? schema.type.find((tipo) => tipo !== 'null')
       : schema.type;
@@ -53,6 +54,7 @@ function interpretarResultadoTool(output) {
 
 function criarProviderGemini(opcoes = {}) {
   const modelo = opcoes.modelo || process.env.GEMINI_MODEL || MODELO_PADRAO_GEMINI;
+  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000);
   let cliente = opcoes.cliente;
 
   async function obterCliente() {
@@ -61,7 +63,13 @@ function criarProviderGemini(opcoes = {}) {
       throw new Error('Provider gemini selecionado, mas GEMINI_API_KEY não foi definida.');
     }
     const { GoogleGenAI } = await import('@google/genai');
-    cliente = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    cliente = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        timeout: timeoutMs,
+        retryOptions: { attempts: 1 }
+      }
+    });
     return cliente;
   }
 
@@ -71,7 +79,8 @@ function criarProviderGemini(opcoes = {}) {
     tools,
     definicaoTool,
     executarTool,
-    maxRodadas
+    maxRodadas,
+    onEvento
   }) {
     const client = await obterCliente();
     const ferramentas = tools?.length
@@ -93,12 +102,14 @@ function criarProviderGemini(opcoes = {}) {
     };
 
     for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
+      onEvento?.(`Gemini: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
       const resposta = await client.models.generateContent({
         model: modelo,
         contents,
         config
       });
       const conteudoModelo = resposta.candidates?.[0]?.content;
+      onEvento?.(`Gemini: rodada ${rodada + 1} recebida.`);
       if (conteudoModelo) contents.push(conteudoModelo);
 
       const chamadas = resposta.functionCalls || [];

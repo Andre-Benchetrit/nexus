@@ -48,7 +48,8 @@ test('executa a conversão isolada com caminhos e opções controlados', async (
     schema: 'public',
     tabela: 'cliente',
     csv: 'entrada.csv',
-    parquet: 'saida.parquet'
+    parquet: 'saida.parquet',
+    colunas: ['id', 'nome']
   }, {
     execPath: 'node-teste',
     script: 'converter-teste.js',
@@ -59,9 +60,10 @@ test('executa a conversão isolada com caminhos e opções controlados', async (
   assert.deepEqual(chamada[1], [
     'converter-teste.js',
     'public',
-    'cliente',
-    'entrada.csv',
-    'saida.parquet'
+      'cliente',
+      'entrada.csv',
+      'saida.parquet',
+      '["id","nome"]'
   ]);
   assert.equal(chamada[2].windowsHide, true);
 });

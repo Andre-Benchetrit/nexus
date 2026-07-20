@@ -134,9 +134,9 @@ Quero soma, média, mínimo ou máximo          → agregar_bronze
 Quero comparar dois períodos                 → duas chamadas de agregar_bronze
 ```
 
-Ainda não há joins livres entre entidades. Relacionamentos frequentes devem ser
-modelados depois na camada Silver, onde os nomes e regras de negócio ficam mais
-estáveis.
+Não há joins livres entre entidades no Bronze. A `dim_produto` já oferece no
+Silver os relacionamentos de produto com grupo, subgrupo, marca e categoria.
+Para esses dados, o agente deve preferir `consultar_silver` e `agregar_silver`.
 
 ## Regra de negócio: pedido versus nota emitida
 

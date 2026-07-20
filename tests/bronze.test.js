@@ -249,3 +249,12 @@ test('rejeita coluna desconhecida e limites excessivos', async () => {
     /limite deve ser/
   );
 });
+
+test('normaliza timestamp ISO recebido como filtro de data', async () => {
+  const resultado = await leitor.contar('cliente', {
+    filtros: {
+      dt_alteracao: { operador: 'igual', valor: '2026-01-02T03:00:00.000Z' }
+    }
+  });
+  assert.equal(resultado.total, 1n);
+});

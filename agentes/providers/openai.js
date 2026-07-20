@@ -4,6 +4,7 @@ const MODELO_PADRAO_OPENAI = 'gpt-5.6-luna';
 
 function criarProviderOpenAI(opcoes = {}) {
   const modelo = opcoes.modelo || process.env.OPENAI_MODEL || MODELO_PADRAO_OPENAI;
+  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000);
   let cliente = opcoes.cliente;
 
   function obterCliente() {
@@ -11,7 +12,11 @@ function criarProviderOpenAI(opcoes = {}) {
     if (!process.env.OPENAI_API_KEY) {
       throw new Error('Provider openai selecionado, mas OPENAI_API_KEY não foi definida.');
     }
-    cliente = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    cliente = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: timeoutMs,
+      maxRetries: 0
+    });
     return cliente;
   }
 
@@ -21,7 +26,8 @@ function criarProviderOpenAI(opcoes = {}) {
     tools,
     definicaoTool,
     executarTool,
-    maxRodadas
+    maxRodadas,
+    onEvento
   }) {
     const client = obterCliente();
     const input = [{ role: 'user', content: pergunta }];
@@ -33,6 +39,7 @@ function criarProviderOpenAI(opcoes = {}) {
     );
 
     for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
+      onEvento?.(`OpenAI: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
       const resposta = await client.responses.create({
         model: modelo,
         reasoning: { effort: 'low' },
@@ -43,6 +50,7 @@ function criarProviderOpenAI(opcoes = {}) {
       });
 
       input.push(...resposta.output);
+      onEvento?.(`OpenAI: rodada ${rodada + 1} recebida.`);
       const chamadas = resposta.output.filter((item) => item.type === 'function_call');
       if (!chamadas.length) {
         return {

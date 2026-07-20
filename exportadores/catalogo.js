@@ -6,8 +6,9 @@ const subgrupo = require('./postgres/entidades/subgrupo');
 const marca = require('./postgres/entidades/marca');
 const categoria = require('./postgres/entidades/categoria');
 const tipoPedido = require('./postgres/entidades/tipo_pedido');
-const transportadora = require('./postgres/entidades/transportadora');
+const transporteRegras = require('./postgres/entidades/transporte_regras');
 const plataformaEcommerce = require('./postgres/entidades/plataforma_ecommerce');
+const notaSaidaItens = require('./postgres/entidades/nota_saida_itens');
 
 const entidades = {
   nota_saida: notaSaida,
@@ -18,8 +19,9 @@ const entidades = {
   marca: marca,
   categoria: categoria,
   tipo_pedido: tipoPedido,
-  transportadora: transportadora,
-  plataforma_ecommerce: plataformaEcommerce
+  transporte_regras: transporteRegras,
+  plataforma_ecommerce: plataformaEcommerce,
+  nota_saida_itens: notaSaidaItens
 };
 
 function obterEntidade(nome) {

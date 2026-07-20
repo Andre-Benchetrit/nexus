@@ -7,6 +7,7 @@ module.exports = {
   extracao: {
     modo: 'incremental_data',
     cursor: 'dt_alteracao',
+    cursoresIncrementais: ['dt_alteracao', 'dt_cadastro'],
     chavePrimaria: 'id_cliente',
     colunas: ['*']
   },

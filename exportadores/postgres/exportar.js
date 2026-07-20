@@ -94,7 +94,8 @@ async function exportarPostgres(entidade, opcoes = {}) {
         schema: entidade.schema,
         tabela: entidade.tabela,
         csv: arquivoTemporario,
-        parquet: caminhos.parquet
+        parquet: caminhos.parquet,
+        colunas: entidade.extracao?.colunas || ['*']
       });
       await operacaoArquivoComRetentativas(() => fsp.unlink(arquivoTemporario));
     } else {

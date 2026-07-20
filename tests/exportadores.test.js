@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const notaSaida = require('../exportadores/postgres/entidades/nota_saida');
+const notaSaidaItens = require('../exportadores/postgres/entidades/nota_saida_itens');
+const cliente = require('../exportadores/postgres/entidades/cliente');
 const { criarCaminhosExportacao } = require('../exportadores/core/caminhos');
 const { montarConsultaPostgres, validarEntidade } = require('../exportadores/core/sql');
 
@@ -19,6 +21,16 @@ test('monta consulta nativa sem o alias usado pelo DuckDB', () => {
     montarConsultaPostgres(notaSaida, { inicio: '2026-07-01', fim: '2026-07-02' }, null),
     /^SELECT \* FROM "sysemp"\."nota_saida" WHERE/
   );
+});
+
+test('captura clientes novos mesmo quando dt_alteracao ainda e nulo', () => {
+  const consulta = montarConsultaPostgres(cliente, {
+    inicio: '2025-01-01',
+    fim: '2026-01-01'
+  });
+  assert.match(consulta, /"dt_alteracao" >=/);
+  assert.match(consulta, /"dt_cadastro" >=/);
+  assert.match(consulta, / OR /);
 });
 
 test('mantém um único cursor como padrão para outras entidades', () => {
@@ -62,4 +74,21 @@ test('rejeita transporte de extração desconhecido', () => {
     extracao: { ...notaSaida.extracao, transporte: 'sql_livre' }
   };
   assert.throws(() => validarEntidade(invalida), /Transporte de extração não suportado/);
+});
+
+test('aceita chave primaria composta em entidade incremental', () => {
+  assert.doesNotThrow(() => validarEntidade(notaSaidaItens));
+  assert.deepEqual(notaSaidaItens.extracao.chavePrimaria, ['id_nota_saida', 'item']);
+  assert.match(
+    montarConsultaPostgres(notaSaidaItens, { inicio: '2026-07-16', fim: '2026-07-17' }),
+    /"dthr_atualizacao" >= DATE '2026-07-16'/
+  );
+});
+
+test('rejeita identificador invalido dentro de chave composta', () => {
+  const invalida = {
+    ...notaSaidaItens,
+    extracao: { ...notaSaidaItens.extracao, chavePrimaria: ['id_nota_saida', 'item; drop'] }
+  };
+  assert.throws(() => validarEntidade(invalida), /identificador inválido/);
 });

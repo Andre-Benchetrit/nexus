@@ -2,6 +2,7 @@ const fs = require('fs/promises');
 const path = require('path');
 
 const { entidades: catalogoPadrao, obterEntidade } = require('../exportadores/catalogo');
+const { normalizarChavesPrimarias } = require('../exportadores/core/sql');
 const { criarConexaoDuckDB, fecharConexaoDuckDB, runDuckDB } = require('./connections');
 
 const RAIZ_LAKE_PADRAO = path.resolve(__dirname, '..', 'lake');
@@ -159,10 +160,10 @@ function criarLeitorBronze(opcoes = {}) {
       .join(', ');
     const viewHistorica = nomeViewHistorica(entidade);
     const viewAtual = nomeViewAtual(entidade);
-    const chavePrimaria = entidade.extracao?.chavePrimaria;
+    const chavesPrimarias = normalizarChavesPrimarias(entidade.extracao?.chavePrimaria);
     const cursor = entidade.extracao?.cursor;
 
-    if (!chavePrimaria || !cursor) {
+    if (!chavesPrimarias.length || !cursor) {
       throw new Error(`Entidade ${nome} precisa de chavePrimaria e cursor para consulta atual.`);
     }
 
@@ -182,7 +183,7 @@ function criarLeitorBronze(opcoes = {}) {
       SELECT *
       FROM ${citarIdentificador(viewHistorica)}
       QUALIFY row_number() OVER (
-        PARTITION BY ${citarIdentificador(chavePrimaria)}
+        PARTITION BY ${chavesPrimarias.map(citarIdentificador).join(', ')}
         ORDER BY
           ${citarIdentificador(cursor)} DESC NULLS LAST,
           ${citarIdentificador('execucao')} DESC NULLS LAST,
@@ -201,7 +202,8 @@ function criarLeitorBronze(opcoes = {}) {
       viewAtual,
       schema,
       colunas: new Set(schema.map((coluna) => coluna.column_name)),
-      tipos: new Map(schema.map((coluna) => [coluna.column_name, coluna.column_type]))
+      tipos: new Map(schema.map((coluna) => [coluna.column_name, coluna.column_type])),
+      chavesPrimarias
     };
     entidadesPreparadas.set(nome, contexto);
     return contexto;
@@ -211,7 +213,7 @@ function criarLeitorBronze(opcoes = {}) {
     const solicitadas = colunas?.length
       ? colunas
       : contexto.entidade.consulta?.colunasPadrao || [
-        contexto.entidade.extracao.chavePrimaria,
+        ...contexto.chavesPrimarias,
         contexto.entidade.extracao.cursor
       ];
 
@@ -228,23 +230,26 @@ function criarLeitorBronze(opcoes = {}) {
   }
 
   function normalizarData(valor, coluna) {
-    const brasileira = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(valor);
-    const iso = brasileira
-      ? `${brasileira[3]}-${brasileira[2]}-${brasileira[1]}`
-      : valor;
-    const partes = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    const texto = String(valor).trim();
+    const horario = '(?:[T ]\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?(?:Z|[+-]\\d{2}:?\\d{2})?)?';
+    const brasileira = new RegExp(`^(\\d{2})/(\\d{2})/(\\d{4})${horario}$`).exec(texto);
+    const internacional = new RegExp(`^(\\d{4})-(\\d{2})-(\\d{2})${horario}$`).exec(texto);
+    const partes = brasileira
+      ? [brasileira[3], brasileira[2], brasileira[1]]
+      : internacional?.slice(1, 4);
     if (!partes) {
       throw new Error(`Data inválida para ${coluna}. Use DD/MM/AAAA ou AAAA-MM-DD.`);
     }
-    const data = new Date(Date.UTC(Number(partes[1]), Number(partes[2]) - 1, Number(partes[3])));
+    const [ano, mes, dia] = partes.map(Number);
+    const data = new Date(Date.UTC(ano, mes - 1, dia));
     if (
-      data.getUTCFullYear() !== Number(partes[1]) ||
-      data.getUTCMonth() !== Number(partes[2]) - 1 ||
-      data.getUTCDate() !== Number(partes[3])
+      data.getUTCFullYear() !== ano ||
+      data.getUTCMonth() !== mes - 1 ||
+      data.getUTCDate() !== dia
     ) {
       throw new Error(`Data inválida para ${coluna}: ${valor}`);
     }
-    return iso;
+    return `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
   }
 
   function normalizarValorFiltro(contexto, coluna, operador, valor) {
@@ -267,9 +272,10 @@ function criarLeitorBronze(opcoes = {}) {
 
     const direcaoSql = direcao.toUpperCase();
     const partes = [`${citarIdentificador(campo)} ${direcaoSql} NULLS LAST`];
-    const chavePrimaria = contexto.entidade.extracao.chavePrimaria;
-    if (campo !== chavePrimaria && contexto.colunas.has(chavePrimaria)) {
-      partes.push(`${citarIdentificador(chavePrimaria)} ${direcaoSql} NULLS LAST`);
+    for (const chavePrimaria of contexto.chavesPrimarias) {
+      if (campo !== chavePrimaria && contexto.colunas.has(chavePrimaria)) {
+        partes.push(`${citarIdentificador(chavePrimaria)} ${direcaoSql} NULLS LAST`);
+      }
     }
     return {
       sql: ` ORDER BY ${partes.join(', ')}`,
@@ -420,11 +426,24 @@ function criarLeitorBronze(opcoes = {}) {
 
   async function buscarPorId(nome, id, opcoesConsulta = {}) {
     const entidade = obterConfiguracaoEntidade(nome, catalogo);
+    const chavesPrimarias = normalizarChavesPrimarias(entidade.extracao.chavePrimaria);
+    let filtrosChave;
+    if (chavesPrimarias.length === 1) {
+      filtrosChave = { [chavesPrimarias[0]]: id };
+    } else {
+      if (!id || typeof id !== 'object' || Array.isArray(id)) {
+        throw new Error(`A busca por ID de ${nome} exige as chaves: ${chavesPrimarias.join(', ')}.`);
+      }
+      filtrosChave = Object.fromEntries(chavesPrimarias.map((chave) => {
+        if (id[chave] === undefined) throw new Error(`Chave ausente na busca por ID: ${chave}`);
+        return [chave, id[chave]];
+      }));
+    }
     return consultar(nome, {
       ...opcoesConsulta,
       filtros: {
         ...(opcoesConsulta.filtros || {}),
-        [entidade.extracao.chavePrimaria]: id
+        ...filtrosChave
       }
     });
   }
@@ -570,6 +589,7 @@ function criarLeitorBronze(opcoes = {}) {
   }
 
   return {
+    prepararEntidade,
     listarEntidades,
     descreverEntidade,
     consultar,

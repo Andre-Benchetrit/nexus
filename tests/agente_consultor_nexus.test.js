@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { executarAgente, lerArgumentos } = require('../agentes/consultor_bronze');
+const { executarAgente, lerArgumentos } = require('../agentes/consultor_nexus');
 
 test('delega a execução para um provider com contrato comum', async () => {
   let contexto;
@@ -23,7 +23,7 @@ test('delega a execução para um provider com contrato comum', async () => {
   assert.equal(contexto.tools[0].executar, executarTool);
   assert.deepEqual(
     contexto.tools.map((ferramenta) => ferramenta.definicao.name),
-    ['consultar_bronze', 'agregar_bronze']
+    ['consultar_bronze', 'agregar_bronze', 'consultar_silver', 'agregar_silver']
   );
 });
 

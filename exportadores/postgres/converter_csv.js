@@ -17,8 +17,13 @@ function citarIdentificador(valor) {
 }
 
 async function main() {
-  const [, , schema, tabela, csv, parquet] = process.argv;
+  const [, , schema, tabela, csv, parquet, colunasJson] = process.argv;
   if (!schema || !tabela || !csv || !parquet) throw new Error('Argumentos de conversão incompletos.');
+  const colunas = JSON.parse(colunasJson || '["*"]');
+  if (!Array.isArray(colunas) || !colunas.length) throw new Error('Lista de colunas de conversão inválida.');
+  const selecao = colunas.length === 1 && colunas[0] === '*'
+    ? '*'
+    : colunas.map(citarIdentificador).join(', ');
 
   const con = criarConexaoDuckDB();
   try {
@@ -29,7 +34,7 @@ async function main() {
     const origem = `pg_db.${citarIdentificador(schema)}.${citarIdentificador(tabela)}`;
     const arquivoCsv = caminhoParaDuckDB(csv);
     const arquivoParquet = caminhoParaDuckDB(parquet);
-    await runDuckDB(con, `CREATE TEMP TABLE staging AS SELECT * FROM ${origem} LIMIT 0;`);
+    await runDuckDB(con, `CREATE TEMP TABLE staging AS SELECT ${selecao} FROM ${origem} LIMIT 0;`);
     await runDuckDB(con, `COPY staging FROM '${arquivoCsv}' (FORMAT CSV, HEADER true, NULL '\\N');`);
     await runDuckDB(con, `COPY staging TO '${arquivoParquet}' (FORMAT PARQUET, COMPRESSION ZSTD);`);
   } finally {

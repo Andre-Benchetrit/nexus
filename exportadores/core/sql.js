@@ -14,6 +14,11 @@ function validarDataISO(valor, campo) {
   }
 }
 
+function normalizarChavesPrimarias(valor) {
+  if (Array.isArray(valor)) return valor;
+  return valor ? [valor] : [];
+}
+
 function montarConsultaPostgres(entidade, opcoes = {}, alias = 'pg_db') {
   const extracao = entidade.extracao || {};
 
@@ -83,7 +88,9 @@ function validarEntidade(entidade) {
     if (!entidade.extracao.cursor) throw new Error('Extração incremental sem cursor.');
     if (!entidade.extracao.chavePrimaria) throw new Error('Extração incremental sem chavePrimaria.');
     citarIdentificador(entidade.extracao.cursor, 'cursor');
-    citarIdentificador(entidade.extracao.chavePrimaria, 'chavePrimaria');
+    const chavesPrimarias = normalizarChavesPrimarias(entidade.extracao.chavePrimaria);
+    if (!chavesPrimarias.length) throw new Error('chavePrimaria deve possuir ao menos uma coluna.');
+    for (const chave of chavesPrimarias) citarIdentificador(chave, 'chavePrimaria');
     if (entidade.extracao.cursoresIncrementais !== undefined) {
       if (!Array.isArray(entidade.extracao.cursoresIncrementais) || !entidade.extracao.cursoresIncrementais.length) {
         throw new Error('cursoresIncrementais deve ser uma lista não vazia.');
@@ -97,5 +104,6 @@ function validarEntidade(entidade) {
 
 module.exports = {
   montarConsultaPostgres,
-  validarEntidade
+  validarEntidade,
+  normalizarChavesPrimarias
 };
