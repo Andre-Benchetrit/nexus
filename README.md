@@ -137,6 +137,17 @@ validação não acionam fallback. Use `--no-fallback` para desativá-lo em uma 
 O agente usa a visão atual por padrão, informa a última extração
 quando disponível e nunca executa SQL produzido pelo modelo.
 
+Para reduzir custo e erros, um roteador local envia somente as tools relevantes
+para cada pergunta. Vendas e catalogo possuem fachadas compactas; consultas
+avancadas ainda podem usar os perfis Silver ou Bronze:
+
+```powershell
+npm run agente:nexus -- --perfil vendas "Qual marca mais vendeu hoje?"
+npm run agente:contexto
+```
+
+O desenho completo esta em [docs/ARQUITETURA.md](docs/ARQUITETURA.md).
+
 ### Exemplo do fluxo completo
 
 Ao executar:

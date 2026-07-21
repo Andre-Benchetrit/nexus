@@ -1,5 +1,7 @@
 const { criarLeitorBronze } = require('../duckdb/bronze');
 const { obterEntidade, listarEntidadesAgente } = require('../exportadores/catalogo');
+const { OPERADORES_FILTRO, criarSchemaFiltros } = require('./core/contratos');
+const { normalizarFiltros, serializar, validarObjeto } = require('./core/validacao');
 
 const ENTIDADES_PERMITIDAS_AGENTE = Object.freeze(listarEntidadesAgente());
 
@@ -8,23 +10,6 @@ const OPERACOES = [
   'descrever_entidade',
   'contar',
   'consultar'
-];
-
-const OPERADORES_FILTRO = [
-  'igual',
-  'diferente',
-  'contem',
-  'comeca_com',
-  'termina_com',
-  'maior_que',
-  'maior_ou_igual',
-  'menor_que',
-  'menor_ou_igual',
-  'entre',
-  'em',
-  'nao_em',
-  'esta_vazio',
-  'nao_esta_vazio'
 ];
 
 const definicaoConsultarBronze = {
@@ -61,40 +46,7 @@ const definicaoConsultarBronze = {
         ],
         description: 'Colunas aprovadas a retornar, ou null para as colunas padrão.'
       },
-      filtros: {
-        anyOf: [
-          {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                campo: { type: 'string' },
-                operador: {
-                  type: 'string',
-                  enum: OPERADORES_FILTRO,
-                  description: 'Use contem para texto parcial e operadores maior/menor para números ou datas.'
-                },
-                valor: { type: ['string', 'null'] },
-                valor_final: {
-                  type: ['string', 'null'],
-                  description: 'Fim do intervalo para operador entre; null nos demais operadores.'
-                },
-                valores: {
-                  anyOf: [
-                    { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string' } },
-                    { type: 'null' }
-                  ],
-                  description: 'Lista para os operadores em e nao_em; null nos demais.'
-                }
-              },
-              required: ['campo', 'operador', 'valor', 'valor_final', 'valores'],
-              additionalProperties: false
-            }
-          },
-          { type: 'null' }
-        ],
-        description: 'Filtros seguros de igualdade, diferença, comparação e busca textual parcial.'
-      },
+      filtros: criarSchemaFiltros(),
       combinacao_filtros: {
         type: ['string', 'null'],
         enum: ['todos', 'qualquer', null],
@@ -136,16 +88,8 @@ const definicaoConsultarBronze = {
   }
 };
 
-function serializar(valor) {
-  return JSON.stringify(valor, (_, item) => (
-    typeof item === 'bigint' ? item.toString() : item
-  ));
-}
-
 function validarEstrutura(argumentos) {
-  if (!argumentos || typeof argumentos !== 'object' || Array.isArray(argumentos)) {
-    throw new Error('Argumentos da tool devem ser um objeto.');
-  }
+  validarObjeto(argumentos);
   if (!OPERACOES.includes(argumentos.operacao)) {
     throw new Error(`Operação inválida: ${argumentos.operacao}`);
   }
@@ -171,42 +115,6 @@ function obterPolitica(entidadeNome) {
   }
   const permitidas = entidade.consulta?.colunasAgente || entidade.consulta?.colunasPadrao || [];
   return { entidade, permitidas: new Set(permitidas) };
-}
-
-function normalizarFiltros(filtros, permitidas) {
-  const resultado = {};
-  for (const filtro of filtros || []) {
-    if (!filtro || typeof filtro.campo !== 'string') {
-      throw new Error('Cada filtro precisa de campo e valor.');
-    }
-    if (!permitidas.has(filtro.campo)) {
-      throw new Error(`Campo não permitido para o agente: ${filtro.campo}`);
-    }
-    if (Object.hasOwn(resultado, filtro.campo)) {
-      throw new Error(`Filtro duplicado: ${filtro.campo}`);
-    }
-    const operador = filtro.operador || 'igual';
-    if (!OPERADORES_FILTRO.includes(operador)) {
-      throw new Error(`Operador de filtro inválido: ${operador}`);
-    }
-    if (['contem', 'comeca_com', 'termina_com'].includes(operador) && typeof filtro.valor !== 'string') {
-      throw new Error(`O operador ${operador} exige um valor de texto.`);
-    }
-    if (operador === 'entre' && (filtro.valor === null || filtro.valor === undefined || filtro.valor_final === null || filtro.valor_final === undefined)) {
-      throw new Error('O operador entre exige valor e valor_final.');
-    }
-    if (['em', 'nao_em'].includes(operador) && (!Array.isArray(filtro.valores) || filtro.valores.length < 1 || filtro.valores.length > 50)) {
-      throw new Error(`O operador ${operador} exige entre 1 e 50 valores.`);
-    }
-    const normalizado = {
-      operador,
-      valor: filtro.valor
-    };
-    if (filtro.valor_final !== undefined) normalizado.valorFinal = filtro.valor_final;
-    if (filtro.valores !== undefined) normalizado.valores = filtro.valores;
-    resultado[filtro.campo] = normalizado;
-  }
-  return resultado;
 }
 
 function normalizarOrdenacao(ordenacao, permitidas) {

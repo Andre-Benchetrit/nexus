@@ -1,10 +1,7 @@
 const { criarLeitorSilver } = require('../duckdb/silver');
 const { obterObjeto, listarObjetosAgente } = require('../silver/catalogo');
-const {
-  OPERADORES_FILTRO,
-  serializar,
-  normalizarFiltros
-} = require('./consultar_bronze');
+const { criarSchemaFiltros } = require('./core/contratos');
+const { normalizarFiltros, serializar, validarObjeto } = require('./core/validacao');
 
 const OBJETOS_PERMITIDOS_AGENTE = Object.freeze(listarObjetosAgente());
 const OPERACOES = ['listar_objetos', 'descrever_objeto', 'contar', 'consultar'];
@@ -27,31 +24,7 @@ const definicaoConsultarSilver = {
           { type: 'null' }
         ]
       },
-      filtros: {
-        anyOf: [
-          {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                campo: { type: 'string' },
-                operador: { type: 'string', enum: OPERADORES_FILTRO },
-                valor: { type: ['string', 'null'] },
-                valor_final: { type: ['string', 'null'] },
-                valores: {
-                  anyOf: [
-                    { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string' } },
-                    { type: 'null' }
-                  ]
-                }
-              },
-              required: ['campo', 'operador', 'valor', 'valor_final', 'valores'],
-              additionalProperties: false
-            }
-          },
-          { type: 'null' }
-        ]
-      },
+      filtros: criarSchemaFiltros(),
       combinacao_filtros: { type: ['string', 'null'], enum: ['todos', 'qualquer', null] },
       ordenacao: {
         anyOf: [
@@ -97,9 +70,7 @@ function normalizarOrdenacao(ordenacao, permitidas) {
 }
 
 async function executarConsultarSilver(argumentos, dependencias = {}) {
-  if (!argumentos || typeof argumentos !== 'object' || Array.isArray(argumentos)) {
-    throw new Error('Argumentos da tool devem ser um objeto.');
-  }
+  validarObjeto(argumentos);
   if (!OPERACOES.includes(argumentos.operacao)) throw new Error(`Operacao invalida: ${argumentos.operacao}`);
   if (argumentos.limite != null && (!Number.isInteger(argumentos.limite) || argumentos.limite < 1 || argumentos.limite > 100)) {
     throw new Error('limite da tool deve estar entre 1 e 100.');

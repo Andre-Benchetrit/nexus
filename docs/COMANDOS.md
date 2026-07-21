@@ -156,14 +156,39 @@ npm run agente:nexus -- --provider gemini --fallback-provider groq "Quantos clie
 npm run agente:nexus -- --provider gemini --no-fallback "Quantos clientes temos?"
 ```
 
+O agente seleciona automaticamente um perfil compacto de tools. Para forcar um
+perfil durante diagnostico:
+
+```powershell
+npm run agente:nexus -- --perfil vendas "Qual marca mais vendeu hoje?"
+npm run agente:nexus -- --perfil catalogo "Quais grupos predominam no catalogo?"
+npm run agente:nexus -- --perfil silver "Quantos clientes existem?"
+npm run agente:nexus -- --perfil bronze "Liste os dados brutos disponiveis"
+npm run agente:nexus -- --perfil completo "Quais dados temos?"
+```
+
+Perfis disponiveis: `automatico`, `vendas`, `catalogo`, `negocio`, `silver`,
+`bronze` e `completo`.
+
+Datas informadas apenas como `DD/MM` recebem automaticamente o ano da data de
+referencia da FID (`America/Sao_Paulo`). Em rankings de transportadora, a tool
+agrupa por `id_transportadora` e exclui registros sem transportadora informada.
+
+Para medir o contexto fixo sem consumir API:
+
+```powershell
+npm run agente:contexto
+```
+
 O comando antigo continua como alias compativel:
 
 ```powershell
 npm run agente:bronze -- --provider gemini --model gemini-3.1-flash-lite "Quantos clientes temos?"
 ```
 
-O agente escolhe entre `consultar_bronze`, `agregar_bronze`,
-`consultar_silver` e `agregar_silver`.
+Para perguntas comuns, o agente usa `analisar_vendas` ou `analisar_catalogo`.
+As tools genericas `consultar_bronze`, `agregar_bronze`, `consultar_silver` e
+`agregar_silver` continuam disponiveis nos perfis tecnicos.
 
 Configuracao recomendada em `agentes/.env`:
 

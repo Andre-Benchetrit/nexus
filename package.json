@@ -2,7 +2,6 @@
   "name": "nexus",
   "version": "1.0.0",
   "description": "Hub de ingestão e organização de dados para o data lake Nexus",
-  "main": "index.js",
   "directories": {
     "doc": "docs"
   },
@@ -14,6 +13,7 @@
     "agregar:silver": "node scripts/agregar-silver.js",
     "agente:nexus": "node agentes/consultor_nexus.js",
     "agente:bronze": "node agentes/consultor_nexus.js",
+    "agente:contexto": "node scripts/medir-contexto-agente.js",
     "test": "node --test"
   },
   "keywords": [],

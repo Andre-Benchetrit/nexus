@@ -1,7 +1,7 @@
 const { criarLeitorSilver } = require('../duckdb/silver');
-const { OPERADORES_FILTRO, serializar, normalizarFiltros } = require('./consultar_bronze');
-const { OPERACOES_CALCULO, GRANULARIDADES } = require('./agregar_bronze');
 const { obterPoliticaSilver, OBJETOS_PERMITIDOS_AGENTE } = require('./consultar_silver');
+const { GRANULARIDADES, OPERACOES_CALCULO, criarSchemaFiltros } = require('./core/contratos');
+const { normalizarFiltros, serializar, validarObjeto } = require('./core/validacao');
 
 const definicaoAgregarSilver = {
   type: 'function',
@@ -45,31 +45,7 @@ const definicaoAgregarSilver = {
           additionalProperties: false
         }
       },
-      filtros: {
-        anyOf: [
-          {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                campo: { type: 'string' },
-                operador: { type: 'string', enum: OPERADORES_FILTRO },
-                valor: { type: ['string', 'null'] },
-                valor_final: { type: ['string', 'null'] },
-                valores: {
-                  anyOf: [
-                    { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string' } },
-                    { type: 'null' }
-                  ]
-                }
-              },
-              required: ['campo', 'operador', 'valor', 'valor_final', 'valores'],
-              additionalProperties: false
-            }
-          },
-          { type: 'null' }
-        ]
-      },
+      filtros: criarSchemaFiltros(),
       combinacao_filtros: { type: ['string', 'null'], enum: ['todos', 'qualquer', null] },
       ordenacao: {
         anyOf: [
@@ -97,9 +73,7 @@ const definicaoAgregarSilver = {
 };
 
 async function executarAgregarSilver(argumentos, dependencias = {}) {
-  if (!argumentos || typeof argumentos !== 'object' || Array.isArray(argumentos)) {
-    throw new Error('Argumentos da tool devem ser um objeto.');
-  }
+  validarObjeto(argumentos);
   if (!argumentos.objeto) throw new Error('objeto e obrigatorio.');
   const { permitidas } = obterPoliticaSilver(argumentos.objeto);
   const agrupamentos = argumentos.agrupamentos || [];

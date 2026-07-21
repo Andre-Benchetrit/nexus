@@ -1,40 +1,10 @@
 const { criarLeitorBronze } = require('../duckdb/bronze');
 const {
-  OPERADORES_FILTRO,
-  serializar,
   obterPolitica,
-  normalizarFiltros,
   ENTIDADES_PERMITIDAS_AGENTE
 } = require('./consultar_bronze');
-
-const OPERACOES_CALCULO = ['contar', 'somar', 'media', 'minimo', 'maximo'];
-const GRANULARIDADES = ['valor', 'dia', 'mes', 'ano'];
-
-const schemaFiltros = {
-  anyOf: [
-    {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          campo: { type: 'string' },
-          operador: { type: 'string', enum: OPERADORES_FILTRO },
-          valor: { type: ['string', 'null'] },
-          valor_final: { type: ['string', 'null'] },
-          valores: {
-            anyOf: [
-              { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string' } },
-              { type: 'null' }
-            ]
-          }
-        },
-        required: ['campo', 'operador', 'valor', 'valor_final', 'valores'],
-        additionalProperties: false
-      }
-    },
-    { type: 'null' }
-  ]
-};
+const { GRANULARIDADES, OPERACOES_CALCULO, criarSchemaFiltros } = require('./core/contratos');
+const { normalizarFiltros, serializar, validarLista, validarObjeto } = require('./core/validacao');
 
 const definicaoAgregarBronze = {
   type: 'function',
@@ -92,7 +62,7 @@ const definicaoAgregarBronze = {
           additionalProperties: false
         }
       },
-      filtros: schemaFiltros,
+      filtros: criarSchemaFiltros(),
       combinacao_filtros: {
         type: ['string', 'null'],
         enum: ['todos', 'qualquer', null]
@@ -133,16 +103,8 @@ const definicaoAgregarBronze = {
   }
 };
 
-function validarLista(valor, nome, minimo, maximo) {
-  if (!Array.isArray(valor) || valor.length < minimo || valor.length > maximo) {
-    throw new Error(`${nome} deve ter entre ${minimo} e ${maximo} itens.`);
-  }
-}
-
 async function executarAgregarBronze(argumentos, dependencias = {}) {
-  if (!argumentos || typeof argumentos !== 'object' || Array.isArray(argumentos)) {
-    throw new Error('Argumentos da tool devem ser um objeto.');
-  }
+  validarObjeto(argumentos);
   if (!argumentos.entidade) throw new Error('entidade é obrigatória.');
 
   const { permitidas } = obterPolitica(argumentos.entidade);

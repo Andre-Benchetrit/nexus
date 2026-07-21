@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { definicaoConsultarBronze } = require('../tools/consultar_bronze');
 const { definicaoAgregarBronze } = require('../tools/agregar_bronze');
+const { definicaoAnalisarVendas } = require('../tools/analisar_vendas');
 const { criarProviderOpenAI } = require('../agentes/providers/openai');
 const {
   criarProviderGemini,
@@ -163,6 +164,9 @@ test('converte o schema estrito para o formato opcional do Gemini', () => {
 
   const agregacao = converterToolParaGemini(definicaoAgregarBronze);
   assert.deepEqual(agregacao.parameters.required, ['entidade', 'calculos']);
+
+  const vendas = converterToolParaGemini(definicaoAnalisarVendas);
+  assert.deepEqual(vendas.parameters.required, ['operacao', 'nivel', 'metricas', 'limite']);
 });
 
 test('seleciona provider explicitamente e rejeita nome desconhecido', () => {

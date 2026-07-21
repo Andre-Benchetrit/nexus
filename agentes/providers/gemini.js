@@ -32,11 +32,17 @@ function converterSchemaGemini(schema) {
 
 function converterToolParaGemini(definicaoTool) {
   const parameters = converterSchemaGemini(definicaoTool.parameters);
-  // No Gemini, campos opcionais podem ser omitidos. Mantemos somente os campos
-  // essenciais que realmente existem no contrato de cada tool.
-  parameters.required = parameters.properties?.operacao
-    ? ['operacao']
-    : ['entidade', 'calculos'].filter((campo) => parameters.properties?.[campo]);
+  // O schema do Gemini nao representa null da mesma forma que o JSON Schema.
+  // Campos anulaveis ficam opcionais; os demais preservam o contrato original.
+  const aceitaNulo = (schema) => (
+    schema?.type === 'null'
+    || (Array.isArray(schema?.type) && schema.type.includes('null'))
+    || schema?.enum?.includes(null)
+    || schema?.anyOf?.some(aceitaNulo)
+  );
+  parameters.required = (definicaoTool.parameters.required || []).filter((campo) => (
+    !aceitaNulo(definicaoTool.parameters.properties?.[campo])
+  ));
   return {
     name: definicaoTool.name,
     description: definicaoTool.description,
