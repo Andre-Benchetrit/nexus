@@ -1,4 +1,5 @@
 const OpenAI = require('openai');
+const { normalizarArgumentosPeloSchema } = require('./schema');
 
 const MODELO_PADRAO_OPENAI = 'gpt-5.6-luna';
 
@@ -33,11 +34,12 @@ function criarProviderOpenAI(opcoes = {}) {
     const input = [{ role: 'user', content: pergunta }];
     const ferramentas = tools?.length
       ? tools
-      : [{ definicao: definicaoTool, executar: executarTool }];
+      : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
     const ferramentasPorNome = new Map(
       ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
     );
 
+    let deveFinalizar = false;
     for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
       onEvento?.(`OpenAI: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
       const resposta = await client.responses.create({
@@ -45,6 +47,7 @@ function criarProviderOpenAI(opcoes = {}) {
         reasoning: { effort: 'low' },
         instructions: instrucoes,
         tools: ferramentas.map((ferramenta) => ferramenta.definicao),
+        tool_choice: deveFinalizar ? 'none' : 'auto',
         input,
         store: false
       });
@@ -67,7 +70,11 @@ function criarProviderOpenAI(opcoes = {}) {
         try {
           const ferramenta = ferramentasPorNome.get(chamada.name);
           if (!ferramenta) throw new Error(`Tool desconhecida: ${chamada.name}`);
-          output = await ferramenta.executar(JSON.parse(chamada.arguments));
+          const argumentos = normalizarArgumentosPeloSchema(
+            JSON.parse(chamada.arguments), ferramenta.definicao.parameters
+          );
+          output = await ferramenta.executar(argumentos);
+          if (ferramenta.terminal === true) deveFinalizar = true;
         } catch (erro) {
           output = JSON.stringify({ erro: erro.message });
         }

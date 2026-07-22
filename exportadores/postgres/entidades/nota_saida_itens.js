@@ -24,6 +24,7 @@ module.exports = {
       'qtde_devolvida',
       'valor_bruto',
       'valor_desconto',
+      'vr_desconto_total',
       'desconto_total_item',
       'valor_liquido',
       'valor_total_liquido',

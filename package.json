@@ -11,6 +11,8 @@
     "silver": "node scripts/construir-silver.js",
     "consultar:silver": "node scripts/consultar-silver.js",
     "agregar:silver": "node scripts/agregar-silver.js",
+    "gold": "node scripts/construir-gold.js",
+    "consultar:gold": "node scripts/consultar-gold.js",
     "agente:nexus": "node agentes/consultor_nexus.js",
     "agente:bronze": "node agentes/consultor_nexus.js",
     "agente:contexto": "node scripts/medir-contexto-agente.js",

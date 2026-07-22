@@ -144,7 +144,8 @@ Na entidade `nota_saida`, a existência de uma linha não garante que a nota
 fiscal já foi emitida. Em geral:
 
 - valor de pedidos do dia: filtrar `data_pedido` e somar `total_nota_fiscal`;
-- faturamento fiscal emitido: filtrar `data_emissao` e exigir `id_nr_nf > 0`;
+- faturamento fiscal oficial: usar a Gold; ela exige `data_emissao`, `nfe_cstat = 100`
+  e aplica os filtros de natureza, devolucao, cancelamento e reversa;
 - perguntas com `id_tp_pedido` ou marketplace normalmente se referem ao fluxo de
   pedidos, salvo indicação explícita de emissão.
 

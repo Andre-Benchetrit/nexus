@@ -90,7 +90,7 @@ test('emissao filtra somente notas emitidas e lista pelas mais recentes', async 
   }), { criarLeitor: () => falso.leitor });
 
   const opcoes = falso.chamadas[0][2];
-  assert.deepEqual(opcoes.filtros.nota_emitida, { operador: 'igual', valor: 'true' });
+  assert.deepEqual(opcoes.filtros.faturamento_valido, { operador: 'igual', valor: 'true' });
   assert.deepEqual(opcoes.ordenacao, { campo: 'data_emissao', direcao: 'desc' });
 });
 

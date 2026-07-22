@@ -1,5 +1,5 @@
 const MODELO_PADRAO_GEMINI = 'gemini-3.1-flash-lite';
-const { aceitaNulo } = require('./schema');
+const { aceitaNulo, normalizarArgumentosPeloSchema } = require('./schema');
 
 function converterSchemaGemini(schema) {
   if (!schema || typeof schema !== 'object') return schema;
@@ -27,7 +27,9 @@ function converterSchemaGemini(schema) {
       Object.entries(schema.properties).map(([nome, valor]) => [nome, converterSchemaGemini(valor)])
     );
   }
-  if (schema.required) convertido.required = schema.required;
+  if (schema.required) {
+    convertido.required = schema.required.filter((campo) => !aceitaNulo(schema.properties?.[campo]));
+  }
   return convertido;
 }
 
@@ -86,7 +88,7 @@ function criarProviderGemini(opcoes = {}) {
     const client = await obterCliente();
     const ferramentas = tools?.length
       ? tools
-      : [{ definicao: definicaoTool, executar: executarTool }];
+      : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
     const ferramentasPorNome = new Map(
       ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
     );
@@ -101,8 +103,10 @@ function criarProviderGemini(opcoes = {}) {
         functionCallingConfig: { mode: 'VALIDATED' }
       }
     };
+    let deveFinalizar = false;
 
     for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
+      config.toolConfig.functionCallingConfig.mode = deveFinalizar ? 'NONE' : 'VALIDATED';
       onEvento?.(`Gemini: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
       const resposta = await client.models.generateContent({
         model: modelo,
@@ -130,7 +134,11 @@ function criarProviderGemini(opcoes = {}) {
         try {
           const ferramenta = ferramentasPorNome.get(chamada.name);
           if (!ferramenta) throw new Error(`Tool desconhecida: ${chamada.name}`);
-          output = await ferramenta.executar(chamada.args || {});
+          const argumentos = normalizarArgumentosPeloSchema(
+            chamada.args || {}, ferramenta.definicao.parameters
+          );
+          output = await ferramenta.executar(argumentos);
+          if (ferramenta.terminal === true) deveFinalizar = true;
         } catch (erro) {
           output = JSON.stringify({ erro: erro.message });
         }

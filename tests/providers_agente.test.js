@@ -55,6 +55,8 @@ test('provider OpenAI executa a tool e devolve o resultado ao modelo', async () 
   assert.equal(resultado.texto, 'Entidades disponíveis.');
   assert.equal(resultado.provider, 'openai');
   assert.deepEqual(chamadasTool, [{ operacao: 'listar_entidades' }]);
+  assert.equal(requisicoes[0].tool_choice, 'auto');
+  assert.equal(requisicoes[1].tool_choice, 'none');
   assert.ok(requisicoes[1].input.some((item) => (
     item.type === 'function_call_output' && item.call_id === 'call_1'
   )));
@@ -112,6 +114,10 @@ test('provider Gemini devolve a resposta da tool com o ID correto', async () => 
     respostaTool.functionResponse.response.result,
     [{ entidade: 'cliente' }]
   );
+  assert.equal(
+    requisicoes[1].config.toolConfig.functionCallingConfig.mode,
+    'NONE'
+  );
 });
 
 test('provider OpenAI roteia múltiplas tools pelo nome', async () => {
@@ -167,6 +173,7 @@ test('converte o schema estrito para o formato opcional do Gemini', () => {
 
   const vendas = converterToolParaGemini(definicaoAnalisarVendas);
   assert.deepEqual(vendas.parameters.required, ['operacao', 'nivel', 'limite']);
+  assert.deepEqual(vendas.parameters.properties.filtros.items.required, ['campo', 'operador']);
 });
 
 test('seleciona provider explicitamente e rejeita nome desconhecido', () => {

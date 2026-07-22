@@ -136,11 +136,13 @@ test.before(async () => {
   `);
   await criarBronze('nota_saida', `
     SELECT 500::BIGINT AS id_nota_saida, 10 AS id_cliente, 1 AS id_empresa,
-      3 AS id_tp_pedido, 2 AS id_plataforma, 4 AS id_transportadora,
+      3 AS id_tp_pedido, 19 AS id_nat_operacao, 'PD' AS tipo_documento,
+      2 AS id_plataforma, 4 AS id_transportadora,
       123 AS id_nr_nf, '1' AS serie, DATE '2026-07-16' AS data_pedido,
       DATE '2026-07-16' AS data_emissao, 'F' AS situacao,
       'MKT-500' AS marketplace_pedido, 'RJ' AS entrega_uf,
-      30::DECIMAL(15,4) AS total_nota_fiscal,
+      30::DECIMAL(15,4) AS total_nota_fiscal, 'F' AS nf_cancelada,
+      '100' AS nfe_cstat,
       DATE '2026-07-16' AS dt_cadastro,
       DATE '2026-07-17' AS dt_alteracao
   `);
@@ -148,7 +150,7 @@ test.before(async () => {
     SELECT * FROM (VALUES
       (500::BIGINT, 1, 1, 10, 1, 3, 123, '1', DATE '2026-07-16',
        2::DECIMAL(15,4), 2::DECIMAL(15,4), 0::DECIMAL(15,4),
-       10::DECIMAL(15,4), 0::DECIMAL(15,4), 0::DECIMAL(15,2),
+       10::DECIMAL(15,4), 0::DECIMAL(15,4), 0::DECIMAL(15,2), 0::DECIMAL(15,2),
        10::DECIMAL(15,4), 20::DECIMAL(15,2), 0::DECIMAL(15,2),
        0::DECIMAL(15,2), 0::DECIMAL(15,2), 0::DECIMAL(15,2),
        20::DECIMAL(15,2), 6::DECIMAL(15,4), 6::DECIMAL(15,3),
@@ -156,7 +158,7 @@ test.before(async () => {
        TIMESTAMP '2026-07-16 10:00:00'),
       (500::BIGINT, 2, 1, 10, 1, 3, 123, '1', DATE '2026-07-16',
        1::DECIMAL(15,4), 1::DECIMAL(15,4), 0::DECIMAL(15,4),
-       10::DECIMAL(15,4), 0::DECIMAL(15,4), 0::DECIMAL(15,2),
+       10::DECIMAL(15,4), 0::DECIMAL(15,4), 0::DECIMAL(15,2), 0::DECIMAL(15,2),
        10::DECIMAL(15,4), 10::DECIMAL(15,2), 0::DECIMAL(15,2),
        0::DECIMAL(15,2), 0::DECIMAL(15,2), 0::DECIMAL(15,2),
        10::DECIMAL(15,2), 6::DECIMAL(15,4), 6::DECIMAL(15,3),
@@ -165,7 +167,7 @@ test.before(async () => {
     ) AS dados(
       id_nota_saida, item, id_produto, id_cliente, id_empresa, id_tp_pedido,
       id_nr_nf, serie, data_emissao, qtde, qtde_faturada, qtde_devolvida,
-      valor_bruto, valor_desconto, desconto_total_item, valor_liquido,
+       valor_bruto, valor_desconto, vr_desconto_total, desconto_total_item, valor_liquido,
       valor_total_liquido, vr_frete, vr_seguro, vr_outros, vr_acrescimo,
       vr_financeiro, custo_produto, custo_medio, comissao, valor_comissao_ml,
       movimenta_estoque, gera_financeiro, item_marketplace, dthr_atualizacao
@@ -213,7 +215,8 @@ test('enriquece item com pedido e dimensao de produto', async () => {
     colunas: [
       'id_nota_saida', 'item', 'descricao_produto', 'grupo',
       'data_pedido', 'marketplace_pedido', 'cliente', 'tipo_pedido',
-      'plataforma', 'transporte_regras', 'quantidade', 'valor_total_item'
+      'plataforma', 'transporte_regras', 'quantidade', 'valor_total_item',
+      'faturamento_valido', 'pedido_pago', 'valor_pedido_pago_item'
     ]
   });
   assert.equal(resultado.dados[0].descricao_produto, 'Produto A');
@@ -225,6 +228,9 @@ test('enriquece item com pedido e dimensao de produto', async () => {
   assert.equal(resultado.dados[0].transporte_regras, 'RAPIDA PADRAO');
   assert.equal(resultado.dados[0].quantidade, 2);
   assert.equal(resultado.dados[0].valor_total_item, 20);
+  assert.equal(resultado.dados[0].faturamento_valido, true);
+  assert.equal(resultado.dados[0].pedido_pago, true);
+  assert.equal(resultado.dados[0].valor_pedido_pago_item, 20);
 });
 
 test('soma valor total sem multiplicar novamente o valor unitario', async () => {

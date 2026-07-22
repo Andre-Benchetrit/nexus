@@ -31,6 +31,8 @@ module.exports = {
     'cliente_cidade',
     'id_empresa',
     'id_tp_pedido',
+    'id_nat_operacao',
+    'tipo_documento',
     'tipo_pedido',
     'codigo_tipo_pedido',
     'id_plataforma',
@@ -53,6 +55,7 @@ module.exports = {
     'valor_bruto_unitario',
     'valor_desconto_unitario',
     'desconto_total_item',
+    'desconto_total_rateado_item',
     'valor_liquido_unitario',
     'valor_total_item',
     'frete_item',
@@ -67,6 +70,11 @@ module.exports = {
     'movimenta_estoque',
     'gera_financeiro',
     'nota_emitida',
+    'nota_cancelada',
+    'nfe_cstat',
+    'faturamento_valido',
+    'pedido_pago',
+    'valor_pedido_pago_item',
     'dthr_atualizacao_item',
     'fonte_sistema',
     'processado_em'
@@ -106,6 +114,8 @@ module.exports = {
       'cliente_cidade',
       'id_empresa',
       'id_tp_pedido',
+      'id_nat_operacao',
+      'tipo_documento',
       'tipo_pedido',
       'codigo_tipo_pedido',
       'id_plataforma',
@@ -128,6 +138,7 @@ module.exports = {
       'valor_bruto_unitario',
       'valor_desconto_unitario',
       'desconto_total_item',
+      'desconto_total_rateado_item',
       'valor_liquido_unitario',
       'valor_total_item',
       'frete_item',
@@ -135,7 +146,8 @@ module.exports = {
       'outros_valores_item',
       'acrescimo_item',
       'valor_financeiro_item',
-      'nota_emitida'
+      'nota_emitida', 'nota_cancelada', 'nfe_cstat', 'faturamento_valido',
+      'pedido_pago', 'valor_pedido_pago_item'
     ]
   },
 
@@ -166,6 +178,8 @@ module.exports = {
         v.cliente_cidade,
         coalesce(v.id_empresa, i.id_empresa) AS id_empresa,
         coalesce(v.id_tp_pedido, i.id_tp_pedido) AS id_tp_pedido,
+        v.id_nat_operacao,
+        v.tipo_documento,
         v.tipo_pedido,
         v.codigo_tipo_pedido,
         v.id_plataforma,
@@ -188,6 +202,7 @@ module.exports = {
         i.valor_bruto AS valor_bruto_unitario,
         i.valor_desconto AS valor_desconto_unitario,
         i.desconto_total_item,
+        i.vr_desconto_total AS desconto_total_rateado_item,
         i.valor_liquido AS valor_liquido_unitario,
         CAST(
           coalesce(i.valor_total_liquido, i.valor_liquido * i.qtde)
@@ -212,6 +227,25 @@ module.exports = {
           v.nota_emitida,
           coalesce(i.id_nr_nf, 0) > 0 AND i.data_emissao IS NOT NULL
         ) AS nota_emitida,
+        v.nota_cancelada,
+        v.nfe_cstat,
+        v.faturamento_valido,
+        (
+          upper(trim(coalesce(v.tipo_documento, ''))) = 'PD'
+          AND v.id_tp_pedido IN (1, 3)
+          AND v.id_nat_operacao IN (1, 2, 3, 19)
+          AND NOT starts_with(upper(trim(coalesce(v.tipo_pedido, ''))), 'CANCELADO')
+          AND NOT contains(trim(coalesce(v.marketplace_pedido, '')), '_')
+        ) AS pedido_pago,
+        CAST(
+          (i.qtde * i.valor_bruto)
+          + coalesce(i.vr_frete, 0)
+          + coalesce(i.vr_acrescimo, 0)
+          + coalesce(i.vr_outros, 0)
+          - coalesce(i.vr_desconto_total, 0)
+          - coalesce(i.desconto_total_item, 0)
+          AS DECIMAL(18,2)
+        ) AS valor_pedido_pago_item,
         i.dthr_atualizacao AS dthr_atualizacao_item,
         'postgres.sysemp.nota_saida_itens' AS fonte_sistema,
         CAST(current_timestamp AS TIMESTAMP) AS processado_em

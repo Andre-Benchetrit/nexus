@@ -18,7 +18,7 @@ function medirContexto(perfil) {
 }
 
 function medirTodosPerfis() {
-  return ['vendas', 'catalogo', 'negocio', 'silver', 'bronze', 'completo']
+  return ['indicadores', 'vendas', 'catalogo', 'negocio', 'silver', 'bronze', 'completo']
     .map(medirContexto);
 }
 

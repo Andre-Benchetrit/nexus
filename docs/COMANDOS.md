@@ -85,6 +85,33 @@ npm run silver -- fato_venda_item
 Cada construcao cria um snapshot novo. A consulta atual usa a ultima execucao
 com `manifest.json` de sucesso.
 
+## Construcao da Gold
+
+```powershell
+npm run gold -- --listar
+npm run gold -- --todos
+npm run gold -- kpi_vendas_diario
+npm run gold -- kpi_faturamento_diario
+npm run gold -- painel_executivo_diario
+```
+
+Ao construir um objeto Gold, suas dependencias Gold sao processadas primeiro.
+As fontes sao sempre objetos Silver materializados e aprovados.
+
+## Consulta direta a Gold
+
+```powershell
+npm run consultar:gold -- --listar
+npm run consultar:gold -- painel_executivo_diario --schema
+npm run consultar:gold -- painel_executivo_diario --contar
+npm run consultar:gold -- painel_executivo_diario --ordenar data_referencia --direcao desc --limite 7
+npm run consultar:gold -- kpi_vendas_diario --filtro data_referencia=2026-07-17
+npm run consultar:gold -- kpi_faturamento_diario --filtro data_referencia=2026-07-17
+```
+
+O ultimo dia disponivel e marcado com `dados_parciais=true`. Consulte
+[`GOLD.md`](GOLD.md) para as definicoes oficiais das metricas.
+
 ## Consulta direta ao Silver
 
 ```powershell
@@ -161,14 +188,15 @@ perfil durante diagnostico:
 
 ```powershell
 npm run agente:nexus -- --perfil vendas "Qual marca mais vendeu hoje?"
+npm run agente:nexus -- --perfil indicadores "Compare o faturamento deste mes com o anterior"
 npm run agente:nexus -- --perfil catalogo "Quais grupos predominam no catalogo?"
 npm run agente:nexus -- --perfil silver "Quantos clientes existem?"
 npm run agente:nexus -- --perfil bronze "Liste os dados brutos disponiveis"
 npm run agente:nexus -- --perfil completo "Quais dados temos?"
 ```
 
-Perfis disponiveis: `automatico`, `vendas`, `catalogo`, `negocio`, `silver`,
-`bronze` e `completo`.
+Perfis disponiveis: `automatico`, `indicadores`, `vendas`, `catalogo`, `negocio`,
+`silver`, `bronze` e `completo`.
 
 Datas informadas apenas como `DD/MM` recebem automaticamente o ano da data de
 referencia da FID (`America/Sao_Paulo`). Em rankings de transportadora, a tool

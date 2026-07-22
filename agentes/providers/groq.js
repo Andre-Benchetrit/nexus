@@ -1,5 +1,9 @@
 const OpenAI = require('openai');
-const { flexibilizarCamposNulos } = require('./schema');
+const {
+  flexibilizarCamposNulos,
+  flexibilizarTiposPrimitivos,
+  normalizarArgumentosPeloSchema
+} = require('./schema');
 
 const MODELO_PADRAO = 'llama-3.3-70b-versatile';
 
@@ -9,7 +13,9 @@ function converterTools(definicoes = []) {
     function: {
       name: definicao.name,
       description: definicao.description,
-      parameters: flexibilizarCamposNulos(definicao.parameters)
+      parameters: flexibilizarTiposPrimitivos(
+        flexibilizarCamposNulos(definicao.parameters)
+      )
     }
   }));
 }
@@ -49,15 +55,19 @@ function criarProviderGroq(opcoes = {}) {
       const client = obterCliente();
       const ferramentas = tools?.length
         ? tools
-        : [{ definicao: definicaoTool, executar: executarTool }];
+        : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
       const definicoes = ferramentas.map((tool) => tool.definicao);
-      const executores = new Map(
-        ferramentas.map((tool) => [tool.definicao.name, tool.executar])
+      const ferramentasPorNome = new Map(
+        ferramentas.map((tool) => [tool.definicao.name, tool])
+      );
+      const definicoesPorNome = new Map(
+        ferramentas.map((tool) => [tool.definicao.name, tool.definicao])
       );
       const messages = [
         { role: 'system', content: instrucoes },
         { role: 'user', content: pergunta }
       ];
+      let deveFinalizar = false;
 
       for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
         onEvento?.(`Groq: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
@@ -65,7 +75,7 @@ function criarProviderGroq(opcoes = {}) {
           model: modelo,
           messages,
           tools: converterTools(definicoes),
-          tool_choice: 'auto',
+          tool_choice: deveFinalizar ? 'none' : 'auto',
           temperature: 0.1
         });
         const mensagem = resposta.choices?.[0]?.message;
@@ -92,13 +102,18 @@ function criarProviderGroq(opcoes = {}) {
 
         for (const chamada of chamadas) {
           const nome = chamada.function?.name;
-          const executar = executores.get(nome);
+          const ferramenta = ferramentasPorNome.get(nome);
           let resultado;
 
           try {
-            if (!executar) throw new Error(`Ferramenta desconhecida solicitada pelo Groq: ${nome}`);
-            const argumentos = JSON.parse(chamada.function?.arguments || '{}');
-            resultado = await executar(argumentos);
+            if (!ferramenta) throw new Error(`Ferramenta desconhecida solicitada pelo Groq: ${nome}`);
+            const argumentosRecebidos = JSON.parse(chamada.function?.arguments || '{}');
+            const argumentos = normalizarArgumentosPeloSchema(
+              argumentosRecebidos,
+              definicoesPorNome.get(nome)?.parameters
+            );
+            resultado = await ferramenta.executar(argumentos);
+            if (ferramenta.terminal === true) deveFinalizar = true;
           } catch (erro) {
             resultado = JSON.stringify({ erro: erro.message });
           }

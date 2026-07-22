@@ -49,8 +49,8 @@ async function listarArquivos(diretorio, nomeArquivo) {
   return arquivos;
 }
 
-async function descobrirExecucoesSilver(raizLake, objeto) {
-  const raizObjeto = path.join(raizLake, 'silver', objeto.nome);
+async function descobrirExecucoesSilver(raizLake, objeto, camada = 'silver') {
+  const raizObjeto = path.join(raizLake, camada, objeto.nome);
   const manifestos = await listarArquivos(raizObjeto, 'manifest.json');
   const execucoes = [];
   for (const caminhoManifesto of manifestos) {
@@ -58,7 +58,7 @@ async function descobrirExecucoesSilver(raizLake, objeto) {
     if (manifesto.status !== 'sucesso' || manifesto.objeto !== objeto.nome) continue;
     const nomeArquivo = manifesto.arquivo || 'dados.parquet';
     if (path.basename(nomeArquivo) !== nomeArquivo) {
-      throw new Error(`Manifesto Silver aponta para arquivo invalido: ${caminhoManifesto}`);
+      throw new Error(`Manifesto ${camada} aponta para arquivo invalido: ${caminhoManifesto}`);
     }
     const arquivo = path.join(path.dirname(caminhoManifesto), nomeArquivo);
     try {
@@ -79,26 +79,28 @@ async function descobrirExecucoesSilver(raizLake, objeto) {
 function criarLeitorSilver(opcoes = {}) {
   const raizLake = path.resolve(opcoes.raizLake || RAIZ_LAKE_PADRAO);
   const catalogo = opcoes.catalogo || catalogoPadrao;
+  const camada = opcoes.camada || 'silver';
+  const rotuloCamada = camada.charAt(0).toUpperCase() + camada.slice(1);
   const con = opcoes.conexao || criarConexaoDuckDB();
   const preparados = new Map();
   let fechado = false;
 
   function objetoPorNome(nome) {
     if (catalogo === catalogoPadrao) return obterObjeto(nome);
-    if (!catalogo[nome]) throw new Error(`Objeto Silver nao encontrado: ${nome}`);
+    if (!catalogo[nome]) throw new Error(`Objeto ${rotuloCamada} nao encontrado: ${nome}`);
     return catalogo[nome];
   }
 
   async function prepararObjeto(nome) {
-    if (fechado) throw new Error('O leitor Silver ja foi fechado.');
+    if (fechado) throw new Error(`O leitor ${rotuloCamada} ja foi fechado.`);
     if (preparados.has(nome)) return preparados.get(nome);
     const objeto = objetoPorNome(nome);
-    const execucoes = await descobrirExecucoesSilver(raizLake, objeto);
-    if (!execucoes.length) throw new Error(`Nenhuma execucao Silver valida encontrada para ${nome}.`);
+    const execucoes = await descobrirExecucoesSilver(raizLake, objeto, camada);
+    if (!execucoes.length) throw new Error(`Nenhuma execucao ${rotuloCamada} valida encontrada para ${nome}.`);
 
     const ultima = execucoes.at(-1);
     const viewAtual = `${nome}_atual`;
-    const viewHistorica = `silver_${nome}`;
+    const viewHistorica = `${camada}_${nome}`;
     await runDuckDB(con, `
       CREATE OR REPLACE TEMP VIEW ${citar(viewAtual)} AS
       SELECT * FROM read_parquet(
@@ -244,7 +246,7 @@ function criarLeitorSilver(opcoes = {}) {
   async function listarObjetos() {
     const resultado = [];
     for (const objeto of Object.values(catalogo)) {
-      const execucoes = await descobrirExecucoesSilver(raizLake, objeto);
+      const execucoes = await descobrirExecucoesSilver(raizLake, objeto, camada);
       resultado.push({
         objeto: objeto.nome,
         disponivel: execucoes.length > 0,

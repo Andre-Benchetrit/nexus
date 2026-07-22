@@ -152,7 +152,7 @@ function montarFiltros(argumentos, configuracao) {
       : { operador: 'igual', valor: argumentos.data_inicial };
   }
   if (argumentos.data_campo === 'emissao') {
-    filtros.nota_emitida = { operador: 'igual', valor: 'true' };
+    filtros.faturamento_valido = { operador: 'igual', valor: 'true' };
   }
   return { filtros, dataCampo };
 }

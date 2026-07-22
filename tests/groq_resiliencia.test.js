@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { definicaoConsultarBronze } = require('../tools/consultar_bronze');
 const { definicaoAnalisarVendas } = require('../tools/analisar_vendas');
+const { definicaoAnalisarIndicadores } = require('../tools/analisar_indicadores');
 const { criarProvider } = require('../agentes/providers');
 const { criarProviderGroq, converterTools } = require('../agentes/providers/groq');
 const { criarProviderResiliente } = require('../agentes/providers/resiliente');
@@ -61,19 +62,80 @@ test('provider Groq executa uma tool pelo Chat Completions', async () => {
   assert.equal(resultado.provider, 'groq');
   assert.deepEqual(chamadasTool, [{ operacao: 'listar_entidades' }]);
   assert.equal(requisicoes[0].tools[0].function.name, 'consultar_bronze');
+  assert.equal(requisicoes[0].tool_choice, 'auto');
+  assert.equal(requisicoes[1].tool_choice, 'none');
   assert.equal(requisicoes[1].messages.at(-1).tool_call_id, 'call_groq_1');
 });
 
 test('converte tools para o formato Chat Completions do Groq', () => {
-  const [tool, vendas] = converterTools([
+  const [tool, vendas, indicadores] = converterTools([
     definicaoConsultarBronze,
-    definicaoAnalisarVendas
+    definicaoAnalisarVendas,
+    definicaoAnalisarIndicadores
   ]);
   assert.equal(tool.type, 'function');
   assert.equal(tool.function.name, 'consultar_bronze');
   assert.equal(tool.function.parameters.type, 'object');
   assert.deepEqual(tool.function.parameters.required, ['operacao']);
   assert.deepEqual(vendas.function.parameters.required, ['operacao', 'nivel', 'limite']);
+  assert.deepEqual(
+    vendas.function.parameters.properties.filtros.anyOf[0].items.required,
+    ['campo', 'operador']
+  );
+  assert.deepEqual(
+    indicadores.function.parameters.properties.limite.type,
+    ['integer', 'string']
+  );
+});
+
+test('normaliza numero textual do Groq antes de executar a tool', async () => {
+  const respostas = [
+    {
+      id: 'groq_tipo_1',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: 'call_tipo_1',
+            type: 'function',
+            function: {
+              name: 'analisar_indicadores',
+              arguments: JSON.stringify({
+                operacao: 'comparar',
+                metricas: ['faturamento_emitido'],
+                data_inicial: '2026-06-22',
+                data_final: '2026-07-21',
+                limite: '31'
+              })
+            }
+          }]
+        }
+      }]
+    },
+    {
+      id: 'groq_tipo_2',
+      choices: [{ message: { role: 'assistant', content: 'Comparacao concluida.' } }]
+    }
+  ];
+  const cliente = {
+    chat: { completions: { async create() { return respostas.shift(); } } }
+  };
+  let argumentosExecutados;
+  const provider = criarProviderGroq({ cliente, modelo: 'groq-teste' });
+  await provider.executar({
+    pergunta: 'Compare os periodos.',
+    instrucoes: 'Use a tool.',
+    definicaoTool: definicaoAnalisarIndicadores,
+    executarTool: async (argumentos) => {
+      argumentosExecutados = argumentos;
+      return '{}';
+    },
+    maxRodadas: 2
+  });
+
+  assert.equal(argumentosExecutados.limite, 31);
+  assert.equal(typeof argumentosExecutados.limite, 'number');
 });
 
 test('seleciona Groq explicitamente', () => {

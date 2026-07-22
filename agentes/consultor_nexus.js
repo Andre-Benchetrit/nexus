@@ -41,7 +41,7 @@ async function executarAgente(pergunta, dependencias = {}) {
   const ferramentas = dependencias.tools || obterFerramentasDoPerfil(perfil, dependencias);
   const toolsComProgresso = instrumentarFerramentas(ferramentas, dependencias.onEvento);
   const maxRodadas = dependencias.maxRodadas || (
-    ['vendas', 'catalogo', 'negocio'].includes(perfil)
+    ['indicadores', 'vendas', 'catalogo', 'negocio'].includes(perfil)
       ? MAX_RODADAS_NEGOCIO
       : MAX_RODADAS_GENERICAS
   );

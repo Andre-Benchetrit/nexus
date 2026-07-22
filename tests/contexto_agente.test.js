@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { medirContexto } = require('../agentes/metricas_contexto');
 
 test('mantem perfis comuns abaixo do orcamento fixo de contexto', () => {
+  assert.ok(medirContexto('indicadores').tokensEstimados <= 600);
   assert.ok(medirContexto('vendas').tokensEstimados <= 800);
   assert.ok(medirContexto('catalogo').tokensEstimados <= 600);
   assert.ok(medirContexto('negocio').tokensEstimados <= 1000);

@@ -36,6 +36,8 @@ module.exports = {
     'cliente_cidade',
     'cliente_ativo',
     'id_tp_pedido',
+    'id_nat_operacao',
+    'tipo_documento',
     'tipo_pedido',
     'codigo_tipo_pedido',
     'permite_faturamento',
@@ -55,6 +57,9 @@ module.exports = {
     'entrega_uf',
     'valor_total_venda',
     'nota_emitida',
+    'nota_cancelada',
+    'nfe_cstat',
+    'faturamento_valido',
     'dt_cadastro',
     'dt_alteracao',
     'fonte_sistema',
@@ -69,12 +74,14 @@ module.exports = {
     colunasAgente: [
       'id_nota_saida', 'id_nr_nf', 'serie', 'id_empresa', 'id_cliente',
       'cliente', 'cliente_razao_social', 'cliente_fantasia', 'cliente_cidade',
-      'cliente_ativo', 'id_tp_pedido', 'tipo_pedido', 'codigo_tipo_pedido',
+      'cliente_ativo', 'id_tp_pedido', 'id_nat_operacao', 'tipo_documento',
+      'tipo_pedido', 'codigo_tipo_pedido',
       'permite_faturamento', 'tipo_pedido_bloqueado', 'id_transportadora',
       'transporte_regras', 'ids_transporte_regras', 'quantidade_regras_transporte',
       'id_plataforma', 'plataforma', 'plataforma_descricao', 'plataforma_ativa',
       'data_pedido', 'data_emissao', 'situacao', 'marketplace_pedido',
-      'entrega_uf', 'valor_total_venda', 'nota_emitida', 'dt_cadastro',
+      'entrega_uf', 'valor_total_venda', 'nota_emitida', 'nota_cancelada',
+      'nfe_cstat', 'faturamento_valido', 'dt_cadastro',
       'dt_alteracao'
     ]
   },
@@ -106,6 +113,8 @@ module.exports = {
         c.cliente_cidade,
         c.cliente_ativo,
         n.id_tp_pedido,
+        n.id_nat_operacao,
+        ${texto('n.tipo_documento')} AS tipo_documento,
         tp.tipo_pedido,
         tp.codigo_tipo_pedido,
         tp.permite_faturamento,
@@ -125,6 +134,21 @@ module.exports = {
         ${texto('n.entrega_uf')} AS entrega_uf,
         CAST(n.total_nota_fiscal AS DECIMAL(18,2)) AS valor_total_venda,
         (coalesce(n.id_nr_nf, 0) > 0 AND n.data_emissao IS NOT NULL) AS nota_emitida,
+        (
+          upper(trim(coalesce(n.nf_cancelada, 'F'))) = 'T'
+          OR trim(coalesce(n.nfe_cstat, '')) = '101'
+        ) AS nota_cancelada,
+        ${texto('n.nfe_cstat')} AS nfe_cstat,
+        (
+          coalesce(n.id_nr_nf, 0) > 0
+          AND n.data_emissao IS NOT NULL
+          AND trim(coalesce(n.nfe_cstat, '')) = '100'
+          AND upper(trim(coalesce(n.tipo_documento, ''))) <> 'DV'
+          AND coalesce(n.id_tp_pedido, 0) <> 4
+          AND n.id_nat_operacao IN (1, 2, 3, 19)
+          AND NOT starts_with(upper(trim(coalesce(tp.tipo_pedido, ''))), 'CANCELADO')
+          AND NOT contains(trim(coalesce(n.marketplace_pedido, '')), '_')
+        ) AS faturamento_valido,
         n.dt_cadastro,
         n.dt_alteracao,
         'postgres.sysemp.nota_saida' AS fonte_sistema,

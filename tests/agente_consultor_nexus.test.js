@@ -43,6 +43,22 @@ test('envia somente a fachada de vendas quando a pergunta e sobre venda', async 
   );
 });
 
+test('envia somente indicadores Gold em comparacoes executivas', async () => {
+  let contexto;
+  const provider = {
+    async executar(valor) {
+      contexto = valor;
+      return { texto: 'ok' };
+    }
+  };
+  await executarAgente('Compare o faturamento deste mes com o anterior', { provider });
+  assert.deepEqual(
+    contexto.tools.map(({ definicao }) => definicao.name),
+    ['analisar_indicadores']
+  );
+  assert.equal(contexto.maxRodadas, 3);
+});
+
 test('completa o ano de uma data curta antes de chamar o provider', async () => {
   let contexto;
   const provider = {

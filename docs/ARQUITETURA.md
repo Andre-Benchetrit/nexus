@@ -8,6 +8,8 @@ PostgreSQL
   -> Parquets Bronze + manifestos
   -> modelos Silver + qualidade
   -> Parquets Silver + manifestos
+  -> indicadores Gold + reconciliacao
+  -> Parquets Gold + manifestos
   -> leitores DuckDB
   -> tools seguras
   -> roteador local
@@ -22,7 +24,8 @@ usar o leitor DuckDB.
 
 - `exportadores/`: ingestao fiel da origem e contratos das entidades Bronze.
 - `silver/`: dimensoes, fatos, dependencias e validacoes de qualidade.
-- `duckdb/`: repositorios de consulta somente leitura para Bronze e Silver.
+- `gold/`: metricas oficiais, paineis e comparacoes derivados somente do Silver.
+- `duckdb/`: repositorios de consulta somente leitura para Bronze, Silver e Gold.
 - `tools/core/`: contratos e validacoes compartilhadas, sem depender de camada.
 - `tools/analisar_*.js`: fachadas de negocio com respostas autoexplicativas.
 - `agentes/roteador.js`: escolhe localmente o menor perfil de tools.
@@ -109,10 +112,9 @@ Baseline anterior: aproximadamente 3.721 tokens fixos por rodada.
 5. Acrescente a rota somente quando houver sinais deterministas suficientes.
 6. Teste contrato, validacao, resultado real e orcamento de contexto.
 
-## Preparacao para Gold
+## Camada Gold
 
-A Gold deve fornecer indicadores prontos, sem importar providers ou prompts.
-O caminho recomendado e:
+A Gold fornece indicadores prontos, sem importar providers ou prompts:
 
 ```text
 Silver -> modelos Gold -> leitor Gold -> tools de indicador -> roteador
@@ -120,6 +122,10 @@ Silver -> modelos Gold -> leitor Gold -> tools de indicador -> roteador
 
 Assim, metricas como faturamento, margem, ticket medio e metas ficam definidas
 uma vez no dado, em vez de serem reinterpretadas pelo modelo a cada pergunta.
+
+Os primeiros objetos sao `kpi_vendas_diario`, `kpi_faturamento_diario` e
+`painel_executivo_diario`. As definicoes, cobertura e comandos estao em
+[GOLD.md](GOLD.md).
 
 O marco para evoluir de consultor do lake para agente geral com web, documentos,
 planilhas, automacoes e MCP esta registrado em [ROADMAP.md](ROADMAP.md).

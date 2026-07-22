@@ -22,15 +22,25 @@ const {
   definicaoAnalisarCatalogo,
   executarAnalisarCatalogo
 } = require('../tools/analisar_catalogo');
+const {
+  definicaoAnalisarIndicadores,
+  executarAnalisarIndicadores
+} = require('../tools/analisar_indicadores');
+const {
+  definicaoAnalisarInfluencias,
+  executarAnalisarInfluencias
+} = require('../tools/analisar_influencias');
 
 const PERFIS_TOOLS = Object.freeze({
+  indicadores: ['analisar_indicadores'],
+  influencias: ['analisar_influencias'],
   vendas: ['analisar_vendas'],
   catalogo: ['analisar_catalogo'],
   negocio: ['analisar_vendas', 'analisar_catalogo'],
   silver: ['consultar_silver', 'agregar_silver'],
   bronze: ['consultar_bronze', 'agregar_bronze'],
   completo: [
-    'analisar_vendas', 'analisar_catalogo',
+    'analisar_indicadores', 'analisar_influencias', 'analisar_vendas', 'analisar_catalogo',
     'consultar_silver', 'agregar_silver',
     'consultar_bronze', 'agregar_bronze'
   ]
@@ -38,12 +48,24 @@ const PERFIS_TOOLS = Object.freeze({
 
 function criarRegistroFerramentas(dependencias = {}) {
   return new Map([
+    ['analisar_indicadores', {
+      definicao: definicaoAnalisarIndicadores,
+      terminal: true,
+      executar: dependencias.executarAnalisarIndicadoresTool || executarAnalisarIndicadores
+    }],
+    ['analisar_influencias', {
+      definicao: definicaoAnalisarInfluencias,
+      terminal: true,
+      executar: dependencias.executarAnalisarInfluenciasTool || executarAnalisarInfluencias
+    }],
     ['analisar_vendas', {
       definicao: definicaoAnalisarVendas,
+      terminal: true,
       executar: dependencias.executarAnalisarVendasTool || executarAnalisarVendas
     }],
     ['analisar_catalogo', {
       definicao: definicaoAnalisarCatalogo,
+      terminal: true,
       executar: dependencias.executarAnalisarCatalogoTool || executarAnalisarCatalogo
     }],
     ['consultar_silver', {
