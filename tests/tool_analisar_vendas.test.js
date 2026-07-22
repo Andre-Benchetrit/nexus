@@ -54,6 +54,9 @@ test('expoe contrato compacto e estrito para vendas', () => {
   );
   const filtro = definicaoAnalisarVendas.parameters.properties.filtros.anyOf[0].items;
   assert.deepEqual(filtro.required, ['campo', 'operador', 'valor']);
+  const metricas = definicaoAnalisarVendas.parameters.properties.metricas;
+  assert.equal(metricas.anyOf[0].maxItems, 4);
+  assert.equal(metricas.anyOf[1].type, 'null');
 });
 
 test('traduz ranking de marca para campos de negocio', async () => {
@@ -152,7 +155,12 @@ test('lista ultimos pedidos somente com transportadora registrada', async () => 
   falso.leitor.consultar = async (nome, opcoes) => {
     falso.chamadas.push(['consultar', nome, opcoes]);
     return {
-      dados: [{ marketplace_pedido: 'PED-1', transporte_regras: 'JADLOG' }],
+      dados: [{
+        id_nota_saida: 123,
+        id_nr_nf: 456,
+        marketplace_pedido: 'PED-1',
+        transporte_regras: 'JADLOG'
+      }],
       ultimaConstrucao: 'agora'
     };
   };
@@ -174,5 +182,23 @@ test('lista ultimos pedidos somente com transportadora registrada', async () => 
     campo: 'data_pedido',
     direcao: 'desc'
   });
-  assert.deepEqual(saida.dados, [{ marketplace_pedido: 'PED-1', transportadora: 'JADLOG' }]);
+  assert.deepEqual(saida.dados, [{
+    id_registro_venda: 123,
+    numero_pedido: 'PED-1',
+    numero_nota_fiscal: 456,
+    transportadora: 'JADLOG'
+  }]);
+});
+
+test('aceita todas as metricas conhecidas quando a operacao e listar', async () => {
+  const falso = leitorFalso();
+  await executarAnalisarVendas(argumentos({
+    operacao: 'listar',
+    nivel: 'pedido',
+    agrupar_por: null,
+    metricas: ['pedidos', 'itens', 'quantidade', 'valor'],
+    ordenar_por: 'data_pedido'
+  }), { criarLeitor: () => falso.leitor });
+
+  assert.equal(falso.chamadas[0][0], 'consultar');
 });

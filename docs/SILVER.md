@@ -9,17 +9,21 @@ PostgreSQL estao em:
 
 ```text
 silver/postgres/
-  dim_cliente.js
-  dim_grupo.js
-  dim_subgrupo.js
-  dim_marca.js
-  dim_categoria.js
-  dim_tipo_pedido.js
-  dim_transporte_regra.js
-  dim_plataforma_ecommerce.js
-  dim_produto.js
-  fato_venda.js
-  fato_venda_item.js
+  core/
+    util.js
+  dimensoes/
+    dim_cliente.js
+    dim_grupo.js
+    dim_subgrupo.js
+    dim_marca.js
+    dim_categoria.js
+    dim_tipo_pedido.js
+    dim_transporte_regra.js
+    dim_plataforma_ecommerce.js
+    dim_produto.js
+  fatos/
+    fato_venda.js
+    fato_venda_item.js
 ```
 
 ## Fluxo
@@ -46,9 +50,13 @@ dim_marca ------+
 dim_categoria --/
 ```
 
-- `fato_venda`: uma linha por `id_nota_saida`, ideal para contar pedidos/notas.
+- `fato_venda`: uma linha por registro interno de venda (`id_nota_saida`).
 - `fato_venda_item`: uma linha por `(id_nota_saida, item)`, ideal para produtos,
   quantidades e valores vendidos.
+- No vocabulario de negocio, **numero do pedido** e `marketplace_pedido`; o agente
+  o apresenta como `numero_pedido`. `id_nota_saida` e apenas o identificador
+  interno do registro, apresentado como `id_registro_venda`, e `id_nr_nf` e o
+  numero da nota fiscal.
 - As dimensoes podem ser consultadas sozinhas ou usadas para traduzir IDs em
   nomes nas fatos.
 
@@ -144,7 +152,7 @@ npm run consultar -- transporte_regras --schema
 
 ### 2. A dimensao define seu contrato
 
-`silver/postgres/dim_transporte_regra.js` declara a chave, as colunas finais e a
+`silver/postgres/dimensoes/dim_transporte_regra.js` declara a chave, as colunas finais e a
 politica de consulta. Ela limpa a descricao e preserva os criterios da regra,
 como transportadora associada, plataforma, empresa, serie, UF, CEP e peso.
 

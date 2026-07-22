@@ -120,3 +120,6 @@ Silver -> modelos Gold -> leitor Gold -> tools de indicador -> roteador
 
 Assim, metricas como faturamento, margem, ticket medio e metas ficam definidas
 uma vez no dado, em vez de serem reinterpretadas pelo modelo a cada pergunta.
+
+O marco para evoluir de consultor do lake para agente geral com web, documentos,
+planilhas, automacoes e MCP esta registrado em [ROADMAP.md](ROADMAP.md).

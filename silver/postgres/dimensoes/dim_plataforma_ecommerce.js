@@ -1,4 +1,4 @@
-const { citar, flagBooleano, texto } = require('./util');
+const { citar, flagBooleano, texto } = require('../core/util');
 
 function obterViews(contextosBronze, contextosSilver) {
   return {

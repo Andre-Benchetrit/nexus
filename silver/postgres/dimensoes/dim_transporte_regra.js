@@ -1,4 +1,4 @@
-const { citar, flagBooleano, texto } = require('./util');
+const { citar, flagBooleano, texto } = require('../core/util');
 
 module.exports = {
   nome: 'dim_transporte_regra',

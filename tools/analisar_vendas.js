@@ -64,7 +64,8 @@ const CONFIGURACAO_NIVEL = Object.freeze({
     dataPadrao: 'data_pedido',
     colunasLista: [
       'id_nota_saida', 'item', 'data_pedido', 'descricao_produto', 'marca',
-      'cliente', 'plataforma', 'transporte_regras', 'quantidade', 'valor_total_item'
+      'cliente', 'plataforma', 'transporte_regras', 'marketplace_pedido',
+      'quantidade', 'valor_total_item'
     ],
     metricas: {
       itens: { operacao: 'contar', campo: null, saida: 'quantidade_itens' },
@@ -95,11 +96,19 @@ const definicaoAnalisarVendas = {
         simples: true
       }),
       metricas: {
-        type: 'array',
-        maxItems: 3,
-        items: { type: 'string', enum: METRICAS }
+        anyOf: [
+          {
+            type: 'array',
+            maxItems: METRICAS.length,
+            items: { type: 'string', enum: METRICAS }
+          },
+          { type: 'null' }
+        ]
       },
-      ordenar_por: { type: ['string', 'null'], enum: [...ORDENACOES, null] },
+      ordenar_por: {
+        type: ['string', 'null'],
+        enum: [...ORDENACOES, null]
+      },
       limite: { type: 'integer', minimum: 1, maximum: 20 }
     },
     required: [
@@ -150,10 +159,14 @@ function montarFiltros(argumentos, configuracao) {
 
 function montarMetricas(argumentos, configuracao) {
   const metricasEntrada = argumentos.metricas ?? [];
-  validarLista(metricasEntrada, 'metricas', 0, 3);
-  const nomes = metricasEntrada.length
-    ? [...new Set(metricasEntrada)]
+  validarLista(metricasEntrada, 'metricas', 0, METRICAS.length);
+  const solicitadas = [...new Set(metricasEntrada)];
+  const nomes = solicitadas.length
+    ? solicitadas.filter((nome) => configuracao.metricas[nome])
     : Object.keys(configuracao.metricas);
+  if (!nomes.length) {
+    throw new Error(`Nenhuma metrica informada existe no nivel ${argumentos.nivel}.`);
+  }
   return nomes.map((nome) => {
     const metrica = configuracao.metricas[nome];
     if (!metrica) throw new Error(`A metrica ${nome} nao existe no nivel ${argumentos.nivel}.`);
@@ -179,8 +192,20 @@ function renomearAgregacao(resultado, dimensao, regraDimensao, metricas) {
 
 function renomearLinhasLista(linhas) {
   return linhas.map((linha) => {
-    const { transporte_regras: transportadora, ...demais } = linha;
-    return { ...demais, transportadora };
+    const {
+      id_nota_saida: id_registro_venda,
+      id_nr_nf: numero_nota_fiscal,
+      marketplace_pedido: numero_pedido,
+      transporte_regras: transportadora,
+      ...demais
+    } = linha;
+    return {
+      ...(id_registro_venda !== undefined ? { id_registro_venda } : {}),
+      ...(numero_pedido !== undefined ? { numero_pedido } : {}),
+      ...(numero_nota_fiscal !== undefined ? { numero_nota_fiscal } : {}),
+      ...demais,
+      ...(transportadora !== undefined ? { transportadora } : {})
+    };
   });
 }
 

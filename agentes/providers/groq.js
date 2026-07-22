@@ -1,4 +1,5 @@
 const OpenAI = require('openai');
+const { flexibilizarCamposNulos } = require('./schema');
 
 const MODELO_PADRAO = 'llama-3.3-70b-versatile';
 
@@ -8,7 +9,7 @@ function converterTools(definicoes = []) {
     function: {
       name: definicao.name,
       description: definicao.description,
-      parameters: definicao.parameters
+      parameters: flexibilizarCamposNulos(definicao.parameters)
     }
   }));
 }

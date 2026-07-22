@@ -1,4 +1,4 @@
-const { citar } = require('./util');
+const { citar } = require('../core/util');
 
 module.exports = {
   nome: 'fato_venda_item',

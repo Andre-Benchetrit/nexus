@@ -1,14 +1,14 @@
-const dimCliente = require('./postgres/dim_cliente');
-const dimGrupo = require('./postgres/dim_grupo');
-const dimSubgrupo = require('./postgres/dim_subgrupo');
-const dimMarca = require('./postgres/dim_marca');
-const dimCategoria = require('./postgres/dim_categoria');
-const dimTipoPedido = require('./postgres/dim_tipo_pedido');
-const dimTransporteRegra = require('./postgres/dim_transporte_regra');
-const dimPlataformaEcommerce = require('./postgres/dim_plataforma_ecommerce');
-const dimProduto = require('./postgres/dim_produto');
-const fatoVenda = require('./postgres/fato_venda');
-const fatoVendaItem = require('./postgres/fato_venda_item');
+const dimCliente = require('./postgres/dimensoes/dim_cliente');
+const dimGrupo = require('./postgres/dimensoes/dim_grupo');
+const dimSubgrupo = require('./postgres/dimensoes/dim_subgrupo');
+const dimMarca = require('./postgres/dimensoes/dim_marca');
+const dimCategoria = require('./postgres/dimensoes/dim_categoria');
+const dimTipoPedido = require('./postgres/dimensoes/dim_tipo_pedido');
+const dimTransporteRegra = require('./postgres/dimensoes/dim_transporte_regra');
+const dimPlataformaEcommerce = require('./postgres/dimensoes/dim_plataforma_ecommerce');
+const dimProduto = require('./postgres/dimensoes/dim_produto');
+const fatoVenda = require('./postgres/fatos/fato_venda');
+const fatoVendaItem = require('./postgres/fatos/fato_venda_item');
 
 const objetos = {
   dim_cliente: dimCliente,

@@ -10,11 +10,11 @@ const {
   runDuckDB
 } = require('../duckdb/connections');
 const { criarLeitorSilver } = require('../duckdb/silver');
-const dimGrupo = require('../silver/postgres/dim_grupo');
-const dimSubgrupo = require('../silver/postgres/dim_subgrupo');
-const dimMarca = require('../silver/postgres/dim_marca');
-const dimCategoria = require('../silver/postgres/dim_categoria');
-const dimProduto = require('../silver/postgres/dim_produto');
+const dimGrupo = require('../silver/postgres/dimensoes/dim_grupo');
+const dimSubgrupo = require('../silver/postgres/dimensoes/dim_subgrupo');
+const dimMarca = require('../silver/postgres/dimensoes/dim_marca');
+const dimCategoria = require('../silver/postgres/dimensoes/dim_categoria');
+const dimProduto = require('../silver/postgres/dimensoes/dim_produto');
 const { construirSilver } = require('../silver/core/executar');
 
 const catalogoSilver = {

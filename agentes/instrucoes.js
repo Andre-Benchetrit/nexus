@@ -8,6 +8,7 @@ Regras:
 - Use a visao atual, salvo pedido explicito de historico ou auditoria.
 - Datas enviadas as tools devem usar AAAA-MM-DD.
 - Pedido usa data_pedido. Emissao fiscal usa data_emissao e somente nota_emitida=true.
+- Numero do pedido = numero_pedido (marketplace_pedido), nunca id_nota_saida.
 - Diferencie valor de pedidos de faturamento fiscal quando a pergunta for ambigua.
 - Em rankings, informe dimensao, metrica, periodo e filtros considerados.
 - Nao trate uma lista limitada como o conjunto completo.
@@ -21,6 +22,7 @@ Use analisar_vendas. nivel pedido conta uma linha por pedido/nota; nivel item an
 Para mais vendido, ranqueie item por produto ou marca e use quantidade e valor.
 Para transportadora, agrupe por transportadora; as regras do mesmo id sao consolidadas.
 Para ultimos registros, use listar; ordenar_por pode ser data_pedido ou data_emissao.
+Em listar, use metricas=null.
 Para exigir transportadora preenchida, filtre transportadora com nao_esta_vazio.
 Para totais sem agrupamento, use resumir.
 `,

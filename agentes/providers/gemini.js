@@ -1,4 +1,5 @@
 const MODELO_PADRAO_GEMINI = 'gemini-3.1-flash-lite';
+const { aceitaNulo } = require('./schema');
 
 function converterSchemaGemini(schema) {
   if (!schema || typeof schema !== 'object') return schema;
@@ -34,12 +35,6 @@ function converterToolParaGemini(definicaoTool) {
   const parameters = converterSchemaGemini(definicaoTool.parameters);
   // O schema do Gemini nao representa null da mesma forma que o JSON Schema.
   // Campos anulaveis ficam opcionais; os demais preservam o contrato original.
-  const aceitaNulo = (schema) => (
-    schema?.type === 'null'
-    || (Array.isArray(schema?.type) && schema.type.includes('null'))
-    || schema?.enum?.includes(null)
-    || schema?.anyOf?.some(aceitaNulo)
-  );
   parameters.required = (definicaoTool.parameters.required || []).filter((campo) => (
     !aceitaNulo(definicaoTool.parameters.properties?.[campo])
   ));

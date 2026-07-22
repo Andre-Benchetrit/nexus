@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { definicaoConsultarBronze } = require('../tools/consultar_bronze');
+const { definicaoAnalisarVendas } = require('../tools/analisar_vendas');
 const { criarProvider } = require('../agentes/providers');
 const { criarProviderGroq, converterTools } = require('../agentes/providers/groq');
 const { criarProviderResiliente } = require('../agentes/providers/resiliente');
@@ -64,10 +65,15 @@ test('provider Groq executa uma tool pelo Chat Completions', async () => {
 });
 
 test('converte tools para o formato Chat Completions do Groq', () => {
-  const [tool] = converterTools([definicaoConsultarBronze]);
+  const [tool, vendas] = converterTools([
+    definicaoConsultarBronze,
+    definicaoAnalisarVendas
+  ]);
   assert.equal(tool.type, 'function');
   assert.equal(tool.function.name, 'consultar_bronze');
   assert.equal(tool.function.parameters.type, 'object');
+  assert.deepEqual(tool.function.parameters.required, ['operacao']);
+  assert.deepEqual(vendas.function.parameters.required, ['operacao', 'nivel', 'limite']);
 });
 
 test('seleciona Groq explicitamente', () => {

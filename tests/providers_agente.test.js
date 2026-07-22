@@ -166,7 +166,7 @@ test('converte o schema estrito para o formato opcional do Gemini', () => {
   assert.deepEqual(agregacao.parameters.required, ['entidade', 'calculos']);
 
   const vendas = converterToolParaGemini(definicaoAnalisarVendas);
-  assert.deepEqual(vendas.parameters.required, ['operacao', 'nivel', 'metricas', 'limite']);
+  assert.deepEqual(vendas.parameters.required, ['operacao', 'nivel', 'limite']);
 });
 
 test('seleciona provider explicitamente e rejeita nome desconhecido', () => {

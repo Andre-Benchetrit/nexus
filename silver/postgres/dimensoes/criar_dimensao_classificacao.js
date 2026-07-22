@@ -1,4 +1,4 @@
-const { citar, texto } = require('./util');
+const { citar, texto } = require('../core/util');
 
 function criarDimensaoClassificacao({ nome, entidade, chave, colunaNome }) {
   return {
