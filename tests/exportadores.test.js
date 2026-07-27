@@ -33,6 +33,20 @@ test('captura clientes novos mesmo quando dt_alteracao ainda e nulo', () => {
   assert.match(consulta, / OR /);
 });
 
+test('cliente exporta somente atributos necessarios e classificadores operacionais', () => {
+  const consulta = montarConsultaPostgres(cliente, {
+    inicio: '2026-07-01',
+    fim: '2026-07-02'
+  });
+  assert.match(consulta, /"funcionario_vend"/);
+  assert.match(consulta, /"transportadora"/);
+  assert.match(consulta, /"id_funcao"/);
+  assert.doesNotMatch(consulta, /SELECT \*/);
+  assert.doesNotMatch(consulta, /"cpf"/);
+  assert.doesNotMatch(consulta, /"salario"/);
+  assert.doesNotMatch(consulta, /"conta_1"/);
+});
+
 test('mantém um único cursor como padrão para outras entidades', () => {
   const entidade = {
     ...notaSaida,

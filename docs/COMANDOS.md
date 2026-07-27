@@ -138,6 +138,10 @@ O ultimo dia disponivel e marcado com `dados_parciais=true`. Consulte
 
 ```powershell
 npm run consultar:silver -- --listar
+npm run consultar:silver -- dim_funcionario --contar
+npm run consultar:silver -- dim_funcionario --colunas id_funcionario,funcionario,id_empresa,funcionario_ativo --limite 20
+npm run consultar:silver -- dim_transportadora --contar
+npm run consultar:silver -- dim_transportadora --colunas id_transportadora,transportadora,id_empresa,transportadora_ativa --limite 20
 npm run consultar:silver -- dim_produto --schema
 npm run consultar:silver -- dim_produto --contar
 npm run consultar:silver -- dim_produto --contar --filtro produto_ativo=true
@@ -339,6 +343,43 @@ npm run avaliar:agente -- --executar --provider groq --limite 5
 
 Consulte [`MEMORIA_E_AVALIACAO.md`](MEMORIA_E_AVALIACAO.md) para o contrato de
 seguranca, sessoes e manutencao dos casos.
+
+## Atualizacao automatizada do lake
+
+Revise o plano sem acessar as fontes nem alterar o lake:
+
+```powershell
+npm run lake:plano
+```
+
+Execute Bronze, Silver e Gold usando somente dias completos:
+
+```powershell
+npm run lake:atualizar
+```
+
+Quando precisar consultar dados do dia ainda em andamento, use a carga
+intradiaria com sobreposicao. Ela nao avanca o cursor oficial:
+
+```powershell
+npm run lake:atualizar -- --incluir-hoje
+```
+
+Consulte o estado e a ultima execucao:
+
+```powershell
+npm run lake:status
+```
+
+Tambem e possivel limitar uma execucao:
+
+```powershell
+npm run lake:atualizar -- --camadas bronze --entidades nota_saida,nota_saida_itens
+npm run lake:atualizar -- --camadas silver,gold --silver fato_venda,fato_venda_item
+```
+
+A arquitetura, primeira carga, recuperacao de falhas e instalacao opcional da
+tarefa diaria do Windows estao em [`AUTOMACAO.md`](AUTOMACAO.md).
 
 ## Git e GitLab
 

@@ -1,4 +1,6 @@
 const dimCliente = require('./postgres/dimensoes/dim_cliente');
+const dimFuncionario = require('./postgres/dimensoes/dim_funcionario');
+const dimTransportadora = require('./postgres/dimensoes/dim_transportadora');
 const dimGrupo = require('./postgres/dimensoes/dim_grupo');
 const dimSubgrupo = require('./postgres/dimensoes/dim_subgrupo');
 const dimMarca = require('./postgres/dimensoes/dim_marca');
@@ -18,6 +20,8 @@ const fatoMovimentoEstoque = require('./postgres/fatos/fato_movimento_estoque');
 
 const objetos = {
   dim_cliente: dimCliente,
+  dim_funcionario: dimFuncionario,
+  dim_transportadora: dimTransportadora,
   dim_grupo: dimGrupo,
   dim_subgrupo: dimSubgrupo,
   dim_marca: dimMarca,

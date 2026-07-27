@@ -62,6 +62,8 @@ test('expoe somente objetos Silver aprovados em schema estrito', () => {
   assert.equal(definicaoConsultarSilver.strict, true);
   assert.deepEqual(OBJETOS_PERMITIDOS_AGENTE, [
     'dim_cliente',
+    'dim_funcionario',
+    'dim_transportadora',
     'dim_grupo',
     'dim_subgrupo',
     'dim_marca',

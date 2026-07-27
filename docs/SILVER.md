@@ -14,6 +14,8 @@ silver/postgres/
     util.js
   dimensoes/
     dim_cliente.js
+    dim_funcionario.js
+    dim_transportadora.js
     dim_grupo.js
     dim_subgrupo.js
     dim_marca.js
@@ -36,7 +38,7 @@ silver/postgres/
 ## Fluxo
 
 ```text
-PostgreSQL -> Bronze (copia fiel) -> DuckDB (limpeza e joins)
+PostgreSQL -> Bronze (projecao controlada) -> DuckDB (limpeza e joins)
            -> Silver (Parquet validado) -> tools -> agentes
 ```
 
@@ -247,3 +249,18 @@ Depois do backfill e da reconstrucao, `dim_cliente` ficou com 829.044 chaves
 validas e `vendas_sem_cliente_correspondente` caiu para zero. Esse e o fluxo
 esperado: a metrica detecta a lacuna, corrige-se a ingestao e o Silver e
 reconstruido sem editar Parquet manualmente.
+
+### Clientes, funcionarios e transportadoras
+
+A tabela `sysemp.cliente` tambem armazena pessoas operacionais. O Nexus usa as
+flags nativas da origem, sem restringir `id_empresa`:
+
+- `funcionario_vend = 'T'` alimenta `dim_funcionario`;
+- `transportadora = 'T'` alimenta `dim_transportadora`;
+- `dim_cliente` preserva todas as chaves necessarias para relacionar compradores
+  aos pedidos.
+
+O Bronze de `cliente` possui uma projecao explicita de atributos de negocio.
+CPF, salario, contas bancarias e outros campos pessoais nao entram em novas
+extracoes. As dimensoes operacionais publicam somente nome, empresa, situacao e
+classificadores necessarios.
