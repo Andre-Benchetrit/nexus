@@ -243,6 +243,8 @@ Perfis disponiveis: `automatico`, `indicadores`, `influencias`, `desempenho`,
 `operacao`, `frete`, `estoque`, `vendas`, `catalogo`, `negocio`, `silver`,
 `bronze` e `completo`.
 
+A lista completa das tools e de seus perfis esta em [`TOOLS.md`](TOOLS.md).
+
 Datas informadas apenas como `DD/MM` recebem automaticamente o ano da data de
 referencia da FID (`America/Sao_Paulo`). Em rankings de transportadora, a tool
 agrupa por `id_transportadora` e exclui registros sem transportadora informada.
@@ -308,6 +310,35 @@ npm run agente:nexus -- --provider groq --debug-tools "Qual foi o faturamento de
 
 O modo de diagnostico exibe argumentos estruturados das tools; ele nao mostra
 SQL nem credenciais.
+
+## Memoria e bateria permanente
+
+O agente guarda as tres ultimas interacoes resumidas por sessao:
+
+```powershell
+npm run agente:nexus -- --sessao financeiro "Qual foi o faturamento de julho?"
+npm run agente:nexus -- --sessao financeiro "E no periodo anterior?"
+npm run agente:memoria -- --sessao financeiro --listar-curta
+npm run agente:memoria -- --sessao financeiro --limpar-curta
+```
+
+Gerencie correcoes revisadas da memoria longa:
+
+```powershell
+npm run agente:memoria -- --listar
+npm run agente:memoria -- --lembrar "Numero do pedido significa marketplace_pedido." --categoria vocabulario --gatilhos "numero do pedido,marketplace_pedido"
+npm run agente:memoria -- --esquecer id-do-aprendizado
+```
+
+Valide a bateria sem API ou execute uma amostra real no Groq:
+
+```powershell
+npm run avaliar:agente
+npm run avaliar:agente -- --executar --provider groq --limite 5
+```
+
+Consulte [`MEMORIA_E_AVALIACAO.md`](MEMORIA_E_AVALIACAO.md) para o contrato de
+seguranca, sessoes e manutencao dos casos.
 
 ## Git e GitLab
 

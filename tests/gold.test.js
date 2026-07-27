@@ -477,6 +477,29 @@ test('tool Gold resume varias metricas sem reinterpretar formulas', async () => 
   });
 });
 
+test('resumo com recencia completa exclui o ultimo dia parcial', async () => {
+  const resposta = JSON.parse(await executarAnalisarIndicadores({
+    operacao: 'resumir',
+    metricas: ['faturamento_emitido'],
+    data_inicial: '2026-07-17',
+    data_final: '2026-07-19',
+    recencia: 'mais_recente_completo',
+    limite: 7
+  }, {
+    criarLeitor: () => criarLeitorGold({ raizLake, catalogo: catalogoGold })
+  }));
+
+  assert.deepEqual(resposta.periodo, {
+    inicio: '2026-07-17',
+    fim: '2026-07-17'
+  });
+  assert.deepEqual(resposta.ajuste_cobertura, {
+    data_solicitada: '2026-07-19',
+    data_utilizada: '2026-07-17',
+    motivo: 'ultimo dia parcial excluido da totalizacao'
+  });
+});
+
 test('tool painel inclui o bloco de estoque atual com data propria', async () => {
   const resposta = JSON.parse(await executarAnalisarIndicadores({
     operacao: 'painel',

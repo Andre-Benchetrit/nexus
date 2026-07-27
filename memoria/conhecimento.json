@@ -1,0 +1,57 @@
+{
+  "versao": 1,
+  "itens": [
+    {
+      "id": "numero-pedido-marketplace",
+      "categoria": "vocabulario_negocio",
+      "conteudo": "Quando o usuario disser numero do pedido, ele se refere ao marketplace_pedido; id_nota_saida e um identificador interno e nao deve ser apresentado como numero do pedido.",
+      "gatilhos": [
+        "numero do pedido",
+        "marketplace_pedido",
+        "id_nota_saida"
+      ],
+      "origem": "correcao_aprovada",
+      "ativo": true,
+      "criadoEm": "2026-07-27T00:00:00.000Z"
+    },
+    {
+      "id": "estoque-empresa-10",
+      "categoria": "regra_negocio",
+      "conteudo": "Analises de estoque da FIDComex usam a id_empresa 10, salvo se a regra de negocio for alterada explicitamente.",
+      "gatilhos": [
+        "estoque",
+        "ruptura",
+        "cobertura de estoque"
+      ],
+      "origem": "correcao_aprovada",
+      "ativo": true,
+      "criadoEm": "2026-07-27T00:00:00.000Z"
+    },
+    {
+      "id": "mesma-cobertura-temporal",
+      "categoria": "regra_temporal",
+      "conteudo": "Em comparacoes temporais, mesma cobertura significa usar no novo periodo o mesmo dia de corte da ultima data completa da consulta anterior, limitado ao ultimo dia do mes.",
+      "gatilhos": [
+        "mesma cobertura",
+        "cobertura anterior",
+        "mesmo corte"
+      ],
+      "origem": "correcao_aprovada",
+      "ativo": true,
+      "criadoEm": "2026-07-27T00:00:00.000Z"
+    },
+    {
+      "id": "fatores-variacao-faturamento",
+      "categoria": "correcao_agente",
+      "conteudo": "Perguntas sobre fatores responsaveis por crescimento, queda ou diferenca de faturamento devem usar analisar_influencias e apresentar contribuicoes por marca, produto ou plataforma; nao devem inventar causas genericas.",
+      "gatilhos": [
+        "fatores responsaveis",
+        "o que influenciou",
+        "o que explica a variacao"
+      ],
+      "origem": "correcao_aprovada",
+      "ativo": true,
+      "criadoEm": "2026-07-27T00:00:00.000Z"
+    }
+  ]
+}

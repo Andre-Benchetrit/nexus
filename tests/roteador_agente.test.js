@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classificarPergunta, resolverPerfil } = require('../agentes/roteador');
+const {
+  classificarPergunta,
+  resolverPerfil,
+  resolverPerfilComContexto
+} = require('../agentes/roteador');
 
 test('roteia vendas, catalogo e auditoria sem usar modelo', () => {
   assert.equal(classificarPergunta('Compare o faturamento deste mês com o anterior'), 'indicadores');
@@ -18,6 +22,12 @@ test('roteia vendas, catalogo e auditoria sem usar modelo', () => {
 test('roteia explicacao de queda para analise de influencias', () => {
   assert.equal(
     classificarPergunta('Compare os periodos e diga quais marcas mais influenciaram a queda'),
+    'influencias'
+  );
+  assert.equal(
+    classificarPergunta(
+      'Comparando os dois faturamentos, quais fatores foram responsaveis pelo crescimento?'
+    ),
     'influencias'
   );
 });
@@ -89,6 +99,19 @@ test('prioriza listagem de pedidos pendentes sobre agregacao por plataforma', ()
       'Liste os 5 pedidos pendentes mais recentes, mostrando numero, plataforma e valor.'
     ),
     'vendas'
+  );
+});
+
+test('mesma cobertura herda o perfil da consulta anterior', () => {
+  assert.equal(
+    resolverPerfilComContexto(
+      'E de junho, se pegarmos a mesma cobertura?',
+      [{
+        pergunta: 'Qual foi o faturamento de julho de 2026?',
+        perfil: 'indicadores'
+      }]
+    ),
+    'indicadores'
   );
 });
 

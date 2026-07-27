@@ -16,6 +16,8 @@
     "agente:nexus": "node agentes/consultor_nexus.js",
     "agente:bronze": "node agentes/consultor_nexus.js",
     "agente:contexto": "node scripts/medir-contexto-agente.js",
+    "agente:memoria": "node scripts/memoria-nexus.js",
+    "avaliar:agente": "node scripts/avaliar-agente.js",
     "test": "node --test"
   },
   "keywords": [],

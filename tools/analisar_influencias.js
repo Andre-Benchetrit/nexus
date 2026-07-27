@@ -10,20 +10,32 @@ const DIMENSOES = Object.freeze({
 const definicaoAnalisarInfluencias = {
   type: 'function',
   name: 'analisar_influencias',
-  description: 'Uma unica chamada compara o periodo informado com o anterior de mesma duracao e aponta dimensoes que influenciaram a variacao.',
+  description: 'Compara faturamento entre dois periodos e aponta marcas, produtos ou plataformas que influenciaram a variacao.',
   strict: true,
   parameters: {
     type: 'object',
     properties: {
       data_inicial: { type: 'string' },
       data_final: { type: 'string' },
+      data_inicial_anterior: {
+        description: 'Use null para calcular automaticamente o periodo anterior.',
+        type: ['string', 'null']
+      },
+      data_final_anterior: {
+        description: 'Use null para calcular automaticamente o periodo anterior.',
+        type: ['string', 'null']
+      },
       dimensoes: {
         type: 'array', minItems: 1, maxItems: 3,
         items: { type: 'string', enum: Object.keys(DIMENSOES) }
       },
       limite_por_dimensao: { type: 'integer', minimum: 1, maximum: 10 }
     },
-    required: ['data_inicial', 'data_final', 'dimensoes', 'limite_por_dimensao'],
+    required: [
+      'data_inicial', 'data_final',
+      'data_inicial_anterior', 'data_final_anterior',
+      'dimensoes', 'limite_por_dimensao'
+    ],
     additionalProperties: false
   }
 };
@@ -63,6 +75,31 @@ async function agregarPeriodo(leitor, regra, periodo) {
   ]));
 }
 
+async function totalizarPeriodo(leitor, periodo) {
+  const resultado = await leitor.agregar('fato_nota_fiscal', {
+    agrupamentos: [],
+    calculos: [{ operacao: 'somar', campo: 'valor_total_venda' }],
+    filtros: {
+      data_emissao: { operador: 'entre', valor: periodo.inicio, valorFinal: periodo.fim },
+      faturamento_valido: { operador: 'igual', valor: 'true' }
+    },
+    limite: 1
+  });
+  return Number(resultado.dados[0]?.calculo_1 || 0);
+}
+
+function resumirVariacao(atual, anterior) {
+  const diferenca = Number((atual - anterior).toFixed(2));
+  return {
+    atual,
+    anterior,
+    diferenca,
+    variacao_pct: anterior
+      ? Number((diferenca * 100 / anterior).toFixed(4))
+      : null
+  };
+}
+
 function compararGrupos(atual, anterior, limite) {
   const nomes = new Set([...atual.keys(), ...anterior.keys()]);
   const linhas = [...nomes].map((nome) => {
@@ -85,13 +122,28 @@ async function executarAnalisarInfluencias(argumentos, dependencias = {}) {
   const inicio = dataIso(argumentos.data_inicial, 'data_inicial');
   const fim = dataIso(argumentos.data_final, 'data_final');
   if (inicio > fim) throw new Error('data_inicial nao pode ser posterior a data_final.');
+  const recebeuInicioAnterior = argumentos.data_inicial_anterior != null;
+  const recebeuFimAnterior = argumentos.data_final_anterior != null;
+  if (recebeuInicioAnterior !== recebeuFimAnterior) {
+    throw new Error(
+      'data_inicial_anterior e data_final_anterior devem ser informadas juntas ou como null.'
+    );
+  }
   validarLista(argumentos.dimensoes, 'dimensoes', 1, 3);
   const dimensoes = [...new Set(argumentos.dimensoes)];
   for (const dimensao of dimensoes) if (!DIMENSOES[dimensao]) throw new Error(`Dimensao invalida: ${dimensao}.`);
   const limite = argumentos.limite_por_dimensao;
   if (!Number.isInteger(limite) || limite < 1 || limite > 10) throw new Error('limite_por_dimensao deve estar entre 1 e 10.');
   const atual = { inicio, fim };
-  const anterior = criarPeriodoAnterior(inicio, fim);
+  const anterior = recebeuInicioAnterior
+    ? {
+      inicio: dataIso(argumentos.data_inicial_anterior, 'data_inicial_anterior'),
+      fim: dataIso(argumentos.data_final_anterior, 'data_final_anterior')
+    }
+    : criarPeriodoAnterior(inicio, fim);
+  if (anterior.inicio > anterior.fim) {
+    throw new Error('data_inicial_anterior nao pode ser posterior a data_final_anterior.');
+  }
   const leitor = (dependencias.criarLeitor || criarLeitorSilver)();
   try {
     const influencias = {};
@@ -105,10 +157,26 @@ async function executarAnalisarInfluencias(argumentos, dependencias = {}) {
         ...compararGrupos(valoresAtuais, valoresAnteriores, limite)
       };
     }
-    return serializar({ metrica: 'faturamento_emitido', periodo_atual: atual, periodo_anterior: anterior, influencias });
+    const [totalAtual, totalAnterior] = await Promise.all([
+      totalizarPeriodo(leitor, atual),
+      totalizarPeriodo(leitor, anterior)
+    ]);
+    return serializar({
+      metrica: 'faturamento_emitido',
+      modo_comparacao: recebeuInicioAnterior ? 'periodos_informados' : 'anterior_mesma_duracao',
+      periodo_atual: atual,
+      periodo_anterior: anterior,
+      resumo_variacao: resumirVariacao(totalAtual, totalAnterior),
+      influencias
+    });
   } finally {
     await leitor.fechar();
   }
 }
 
-module.exports = { definicaoAnalisarInfluencias, executarAnalisarInfluencias, DIMENSOES };
+module.exports = {
+  definicaoAnalisarInfluencias,
+  executarAnalisarInfluencias,
+  DIMENSOES,
+  resumirVariacao
+};

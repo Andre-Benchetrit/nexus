@@ -10,8 +10,9 @@ const {
   instrumentarFerramentas,
   obterFerramentasDoPerfil
 } = require('./ferramentas');
-const { resolverPerfil } = require('./roteador');
+const { pedeMesmaCobertura, resolverPerfilComContexto } = require('./roteador');
 const { completarAnoEmDatas, obterDataReferencia } = require('./contexto_temporal');
+const { criarMemoria, pareceContinuacao } = require('./memoria');
 
 const MAX_RODADAS_NEGOCIO = 4;
 const MAX_RODADAS_GENERICAS = 4;
@@ -35,9 +36,23 @@ async function executarAgente(pergunta, dependencias = {}) {
   const texto = pergunta.trim();
   const dataReferencia = dependencias.dataReferencia || obterDataReferencia();
   const perguntaNormalizada = completarAnoEmDatas(texto, dataReferencia);
+  const memoriaDesabilitada = dependencias.memoria === false
+    || (dependencias.provider && dependencias.memoria == null);
+  const memoria = memoriaDesabilitada
+    ? null
+    : dependencias.memoria || criarMemoria({ sessao: dependencias.sessaoMemoria });
+  const historicoCurto = memoria?.listarCurta() || [];
+  const ultimaPergunta = historicoCurto.at(-1)?.pergunta;
+  const perguntaParaRoteamento = pareceContinuacao(texto) && ultimaPergunta
+    ? `${ultimaPergunta} ${texto}`
+    : texto;
   const perfil = dependencias.tools
     ? 'customizado'
-    : resolverPerfil(texto, dependencias.perfilTools || 'automatico');
+    : resolverPerfilComContexto(
+      texto,
+      historicoCurto,
+      dependencias.perfilTools || 'automatico'
+    );
   const ferramentas = dependencias.tools || obterFerramentasDoPerfil(perfil, dependencias);
   const toolsComProgresso = instrumentarFerramentas(
     ferramentas,
@@ -56,16 +71,39 @@ async function executarAgente(pergunta, dependencias = {}) {
     dependencias.onEvento?.(`Data sem ano interpretada com ${dataReferencia.slice(0, 4)}.`);
   }
 
-  return criarProviderConfigurado(dependencias).executar({
+  const instrucoesBase = obterInstrucoes(
+    perfil === 'customizado' ? 'completo' : perfil,
+    dataReferencia
+  );
+  const contextoMemoria = memoria?.montarContexto(perguntaParaRoteamento);
+  const ultimaDataCompleta = [...historicoCurto]
+    .reverse()
+    .find((item) => item.referencias?.ultimaDataCompleta)
+    ?.referencias.ultimaDataCompleta;
+  const contextoCobertura = pedeMesmaCobertura(texto) && ultimaDataCompleta
+    ? (
+      'Contexto temporal da pergunta atual: "mesma cobertura" significa usar o mesmo ' +
+      `dia de corte da ultima data completa anterior (${ultimaDataCompleta}) no novo ` +
+      'periodo, limitado ao ultimo dia do mes. Consulte novamente a tool.'
+    )
+    : '';
+  const resultado = await criarProviderConfigurado(dependencias).executar({
     pergunta: perguntaNormalizada,
-    instrucoes: obterInstrucoes(
-      perfil === 'customizado' ? 'completo' : perfil,
-      dataReferencia
-    ),
+    instrucoes: [instrucoesBase, contextoMemoria, contextoCobertura]
+      .filter(Boolean)
+      .join('\n\n'),
     tools: toolsComProgresso,
     maxRodadas,
     onEvento: dependencias.onEvento
   });
+  memoria?.registrarInteracao({
+    pergunta: perguntaNormalizada,
+    resposta: resultado.texto,
+    provider: resultado.provider,
+    modelo: resultado.modelo,
+    perfil
+  });
+  return resultado;
 }
 
 function lerArgumentos(argumentos) {
@@ -77,7 +115,8 @@ function lerArgumentos(argumentos) {
     ['--fallback-provider', 'fallbackNome'],
     ['--fallback-model', 'modeloFallback'],
     ['--timeout', 'timeoutMs'],
-    ['--perfil', 'perfilTools']
+    ['--perfil', 'perfilTools'],
+    ['--sessao', 'sessaoMemoria']
   ]);
 
   for (let indice = 0; indice < argumentos.length; indice += 1) {
@@ -88,6 +127,10 @@ function lerArgumentos(argumentos) {
     }
     if (argumento === '--debug-tools') {
       opcoes.debugTools = true;
+      continue;
+    }
+    if (argumento === '--sem-memoria') {
+      opcoes.memoria = false;
       continue;
     }
     const destino = opcoesComValor.get(argumento);

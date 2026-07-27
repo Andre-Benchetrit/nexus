@@ -23,10 +23,10 @@ function classificarPergunta(pergunta) {
     /ruptur|risco.{0,20}estoque|sem estoque/.test(texto);
   if (resumoAdministrativo || resumoMultidominio) return 'indicadores';
 
-  const estoque = /ruptur|\bcobertura\b|risco.{0,20}estoque|sem estoque|reposi|estoque.{0,30}(acabar|dura|dias|critico|faltar)/.test(texto);
+  const estoque = /ruptur|\bcobertura\b|risco.{0,20}estoque|sem estoque|reposi|(?:podem?|vai|irao).{0,15}(?:acabar|faltar)|estoque.{0,30}(acabar|dura|dias|critico|faltar)/.test(texto);
   if (estoque) return 'estoque';
 
-  const influencias = /influenci|contribui|caus.{0,20}(queda|alta)|respons.vel.{0,20}(queda|alta)/.test(texto);
+  const influencias = /influenci|contribui|fatores?.{0,35}(respons|explic|caus|por tras)|caus.{0,25}(queda|alta|crescimento|variacao)|respons.vel.{0,25}(queda|alta|crescimento|variacao|diferenca)/.test(texto);
   if (influencias) return 'influencias';
 
   if (/frete|custo de entrega|custo logistico/.test(texto)) return 'frete';
@@ -35,8 +35,11 @@ function classificarPergunta(pergunta) {
   if (listagemPedidos) return 'vendas';
 
   if (
-    /plataforma/.test(texto) &&
-    /cancel|penden|devol|funil|taxa|status/.test(texto)
+    /\bfunil\b/.test(texto) ||
+    (
+      /plataforma/.test(texto) &&
+      /cancel|penden|devol|taxa|status/.test(texto)
+    )
   ) return 'operacao';
 
   const desempenho = /margem|custo|rentab|lucrativ|comissao/.test(texto) ||
@@ -74,4 +77,46 @@ function resolverPerfil(pergunta, solicitado = 'automatico') {
   return perfil === 'automatico' ? classificarPergunta(pergunta) : perfil;
 }
 
-module.exports = { PERFIS, classificarPergunta, normalizarTexto, resolverPerfil };
+function pedeMesmaCobertura(pergunta) {
+  const texto = normalizarTexto(pergunta);
+  return /\b(mesma|igual).{0,12}cobertura\b|\bmesmo.{0,12}(corte|limite de dados)\b/.test(texto);
+}
+
+function obterPerfilAnterior(historico = []) {
+  for (let indice = historico.length - 1; indice >= 0; indice -= 1) {
+    const item = historico[indice];
+    if (item.perfil && PERFIS.includes(item.perfil) && item.perfil !== 'automatico') {
+      return item.perfil;
+    }
+    const pergunta = normalizarTexto(item.pergunta);
+    if (!/^(e |agora |tambem |nesse|nessa|desses|dessas)/.test(pergunta)) {
+      return classificarPergunta(pergunta);
+    }
+  }
+  return null;
+}
+
+function resolverPerfilComContexto(pergunta, historico = [], solicitado = 'automatico') {
+  if (solicitado !== 'automatico') return resolverPerfil(pergunta, solicitado);
+  if (pedeMesmaCobertura(pergunta)) {
+    const anterior = obterPerfilAnterior(historico);
+    if (anterior) return anterior;
+  }
+  const ultimaPergunta = historico.at(-1)?.pergunta;
+  const texto = ultimaPergunta && /^(e |agora |tambem |nesse|nessa|desses|dessas)/.test(
+    normalizarTexto(pergunta)
+  )
+    ? `${ultimaPergunta} ${pergunta}`
+    : pergunta;
+  return resolverPerfil(texto);
+}
+
+module.exports = {
+  PERFIS,
+  classificarPergunta,
+  normalizarTexto,
+  obterPerfilAnterior,
+  pedeMesmaCobertura,
+  resolverPerfil,
+  resolverPerfilComContexto
+};

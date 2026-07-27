@@ -1,0 +1,205 @@
+{
+  "versao": 1,
+  "descricao": "Perguntas permanentes para validar roteamento, contratos e respostas do Nexus sem fixar numeros que mudam com o lake.",
+  "casos": [
+    {
+      "id": "faturamento-periodo",
+      "categoria": "indicadores",
+      "pergunta": "Qual foi o faturamento de 22/06/2026 ate 21/07/2026?",
+      "perfilEsperado": "indicadores",
+      "criterios": ["usar data de emissao", "informar valor monetario", "nao confundir com valor dos pedidos"]
+    },
+    {
+      "id": "comparar-faturamento",
+      "categoria": "indicadores",
+      "pergunta": "Compare o faturamento de 22/06/2026 ate 21/07/2026 com o periodo anterior.",
+      "perfilEsperado": "indicadores",
+      "criterios": ["informar atual, anterior, diferenca e percentual"]
+    },
+    {
+      "id": "continuacao-periodo-anterior",
+      "categoria": "memoria",
+      "pergunta": "E quais marcas mais influenciaram essa diferenca?",
+      "contextoAnterior": {
+        "pergunta": "Compare o faturamento de 22/06/2026 ate 21/07/2026 com o periodo anterior.",
+        "resposta": "O faturamento atual foi comparado com o periodo anterior."
+      },
+      "perfilEsperado": "influencias",
+      "criterios": ["entender a referencia ao periodo anterior", "decompor por marca"]
+    },
+    {
+      "id": "continuacao-mesma-cobertura",
+      "categoria": "memoria",
+      "pergunta": "E de junho, se pegarmos a mesma cobertura?",
+      "contextoAnterior": {
+        "pergunta": "Qual foi o faturamento de julho de 2026?",
+        "resposta": "O faturamento foi consultado. A ultima data completa e 2026-07-21.",
+        "perfil": "indicadores",
+        "referencias": {
+          "ultimaDataCompleta": "2026-07-21"
+        }
+      },
+      "perfilEsperado": "indicadores",
+      "criterios": ["herdar o perfil de indicadores", "usar junho ate o dia 21"]
+    },
+    {
+      "id": "valor-pedidos",
+      "categoria": "indicadores",
+      "pergunta": "Qual foi o valor total dos pedidos de 01/07/2026 ate 20/07/2026?",
+      "perfilEsperado": "vendas",
+      "criterios": ["usar data do pedido", "nao responder faturamento emitido"]
+    },
+    {
+      "id": "resumo-administrativo",
+      "categoria": "indicadores",
+      "pergunta": "Me de o resumo administrativo mais recente e completo, incluindo vendas, faturamento e rupturas.",
+      "perfilEsperado": "indicadores",
+      "criterios": ["usar o painel completo", "incluir os tres dominios"]
+    },
+    {
+      "id": "produto-mais-vendido",
+      "categoria": "desempenho",
+      "pergunta": "Qual produto mais vendeu no dia 17/07/2026? Informe quantidade e valor total.",
+      "perfilEsperado": "desempenho",
+      "criterios": ["ordenar por quantidade", "informar produto, quantidade e valor"]
+    },
+    {
+      "id": "marca-mais-faturou",
+      "categoria": "desempenho",
+      "pergunta": "Qual marca mais faturou entre 01/07/2026 e 20/07/2026?",
+      "perfilEsperado": "desempenho",
+      "criterios": ["ordenar por faturamento", "usar emissao"]
+    },
+    {
+      "id": "produto-filtrado-marca",
+      "categoria": "desempenho",
+      "pergunta": "Qual produto da PHILCO mais vendeu no dia 17/07/2026? Informe quantidade e valor.",
+      "perfilEsperado": "desempenho",
+      "criterios": ["aplicar marca PHILCO", "ordenar por quantidade"]
+    },
+    {
+      "id": "margem-produto",
+      "categoria": "desempenho",
+      "pergunta": "Quais produtos tiveram maior margem bruta estimada em julho de 2026?",
+      "perfilEsperado": "desempenho",
+      "criterios": ["nao chamar margem bruta de lucro liquido"]
+    },
+    {
+      "id": "ultimos-pedidos-transportadora",
+      "categoria": "vendas",
+      "pergunta": "Quais foram os ultimos 10 pedidos com transportadora registrada? Informe o numero do pedido e a transportadora.",
+      "perfilEsperado": "vendas",
+      "criterios": ["numero do pedido deve ser marketplace_pedido", "excluir transportadora vazia"]
+    },
+    {
+      "id": "notas-por-pedidos",
+      "categoria": "vendas",
+      "pergunta": "Localize as notas fiscais dos pedidos 701-0572805-3561041 e 702-4782159-6150621 e informe quais nao foram encontrados.",
+      "perfilEsperado": "vendas",
+      "criterios": ["tratar identificadores como texto", "informar ausentes"]
+    },
+    {
+      "id": "pedidos-tipo",
+      "categoria": "vendas",
+      "pergunta": "Quantos pedidos do tipo 3 tivemos em 17/07/2026 e qual foi o valor total?",
+      "perfilEsperado": "vendas",
+      "criterios": ["filtrar id_tipo_pedido 3", "usar data_pedido"]
+    },
+    {
+      "id": "cancelamentos-plataforma",
+      "categoria": "operacao",
+      "pergunta": "Quais plataformas tiveram mais pedidos cancelados em julho de 2026?",
+      "perfilEsperado": "operacao",
+      "criterios": ["contar pedidos consolidados", "ordenar por cancelados"]
+    },
+    {
+      "id": "funil-plataforma",
+      "categoria": "operacao",
+      "pergunta": "Mostre o funil de pedidos da Amazon em julho de 2026.",
+      "perfilEsperado": "operacao",
+      "criterios": ["aplicar filtro Amazon", "separar status"]
+    },
+    {
+      "id": "frete-plataforma",
+      "categoria": "frete",
+      "pergunta": "Quanto cobramos de frete em julho de 2026 e quais plataformas concentraram esse valor?",
+      "perfilEsperado": "frete",
+      "criterios": ["usar data do pedido", "informar cobertura do custo quando aplicavel"]
+    },
+    {
+      "id": "resultado-frete",
+      "categoria": "frete",
+      "pergunta": "Qual foi o resultado de frete por regra de transporte em julho de 2026?",
+      "perfilEsperado": "frete",
+      "criterios": ["calcular cobrado menos custo", "nao chamar de lucro liquido"]
+    },
+    {
+      "id": "ruptura-atual",
+      "categoria": "estoque",
+      "pergunta": "Quais produtos estao em ruptura atual?",
+      "perfilEsperado": "estoque",
+      "criterios": ["usar empresa 10", "exigir demanda recente"]
+    },
+    {
+      "id": "risco-ruptura",
+      "categoria": "estoque",
+      "pergunta": "Quais produtos podem acabar nos proximos 15 dias?",
+      "perfilEsperado": "estoque",
+      "criterios": ["usar cobertura", "avisar que compras futuras ainda nao entram"]
+    },
+    {
+      "id": "ruptura-marca",
+      "categoria": "estoque",
+      "pergunta": "Quais marcas tem mais produtos em ruptura ou risco de ruptura?",
+      "perfilEsperado": "estoque",
+      "criterios": ["ranquear marcas por produtos em alerta"]
+    },
+    {
+      "id": "catalogo-grupos",
+      "categoria": "catalogo",
+      "pergunta": "Quais tipos de produto predominam no catalogo atual da FIDComex?",
+      "perfilEsperado": "catalogo",
+      "criterios": ["consultar cadastro de produtos", "nao inferir vendas"]
+    },
+    {
+      "id": "catalogo-marca",
+      "categoria": "catalogo",
+      "pergunta": "Quantos produtos ativos da marca PHILCO existem no catalogo?",
+      "perfilEsperado": "catalogo",
+      "criterios": ["filtrar marca e status ativo"]
+    },
+    {
+      "id": "influencia-queda",
+      "categoria": "influencias",
+      "pergunta": "Compare o faturamento de julho com junho de 2026 e identifique quais marcas, produtos ou plataformas mais influenciaram a queda.",
+      "perfilEsperado": "influencias",
+      "criterios": ["informar diferenca absoluta e percentual", "nao alegar causalidade"]
+    },
+    {
+      "id": "fatores-crescimento-contextual",
+      "categoria": "influencias",
+      "pergunta": "Comparando os dois faturamentos, tivemos um crescimento de quantos porcento? E quais foram os fatores responsaveis por isso?",
+      "contextoAnterior": {
+        "pergunta": "Compare o faturamento de 01/07/2026 ate 21/07/2026 com 01/06/2026 ate 21/06/2026.",
+        "resposta": "Julho foi comparado com junho usando a mesma cobertura.",
+        "perfil": "indicadores"
+      },
+      "perfilEsperado": "influencias",
+      "criterios": ["usar analisar_influencias", "comparar os dois periodos informados", "nao inventar causas genericas"]
+    },
+    {
+      "id": "auditoria-bronze",
+      "categoria": "bronze",
+      "pergunta": "Quero auditar no Bronze as alteracoes de um registro de cliente.",
+      "perfilEsperado": "bronze",
+      "criterios": ["usar historico bruto", "nao solicitar SQL livre"]
+    },
+    {
+      "id": "clientes-cadastrados",
+      "categoria": "silver",
+      "pergunta": "Quantos clientes cadastrados existem atualmente?",
+      "perfilEsperado": "silver",
+      "criterios": ["consultar dimensao de clientes"]
+    }
+  ]
+}

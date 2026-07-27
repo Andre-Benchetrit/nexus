@@ -83,6 +83,9 @@ evita enviar todas as tools em cada pergunta.
 | `bronze` | auditoria e dados brutos | tools Bronze genericas |
 | `completo` | diagnostico manual | todas as tools |
 
+Consulte [TOOLS.md](TOOLS.md) para a lista detalhada, finalidade e camada de
+dados de cada tool.
+
 O perfil padrao e `automatico`. Pode ser substituido no terminal:
 
 ```powershell

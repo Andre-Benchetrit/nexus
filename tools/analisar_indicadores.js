@@ -123,7 +123,7 @@ const definicaoAnalisarIndicadores = {
         type: ['string', 'null']
       },
       recencia: {
-        description: 'Painel sem data: prefira mais_recente_completo.',
+        description: 'Use mais_recente_completo para excluir o ultimo dia parcial.',
         type: ['string', 'null'],
         enum: ['mais_recente', 'mais_recente_completo', null]
       },
@@ -249,14 +249,29 @@ async function resolverPeriodo(argumentos, cobertura) {
     !argumentos.data_inicial &&
     argumentos.recencia !== 'mais_recente'
   ) ? (cobertura.ultimo_dia_completo || cobertura.fim) : cobertura.fim;
-  const fim = argumentos.data_final
+  const fimSolicitado = argumentos.data_final
     ? dataIso(argumentos.data_final, 'data_final')
     : argumentos.data_inicial
       ? dataIso(argumentos.data_inicial, 'data_inicial')
       : dataPadrao;
+  let fim = fimSolicitado;
   let inicio = argumentos.data_inicial
     ? dataIso(argumentos.data_inicial, 'data_inicial')
     : fim;
+  let ajusteCobertura = null;
+  if (
+    argumentos.recencia === 'mais_recente_completo' &&
+    cobertura.ultimo_dia_completo &&
+    inicio <= cobertura.ultimo_dia_completo &&
+    fim > cobertura.ultimo_dia_completo
+  ) {
+    fim = cobertura.ultimo_dia_completo;
+    ajusteCobertura = {
+      data_solicitada: fimSolicitado,
+      data_utilizada: fim,
+      motivo: 'ultimo dia parcial excluido da totalizacao'
+    };
+  }
   if (argumentos.operacao === 'tendencia' && !argumentos.data_inicial) {
     inicio = deslocarData(fim, -(argumentos.limite - 1));
   }
@@ -275,7 +290,7 @@ async function resolverPeriodo(argumentos, cobertura) {
   if (inicio < cobertura.inicio || fim > cobertura.fim) {
     throw new Error(`Periodo fora da cobertura Gold: ${cobertura.inicio} a ${cobertura.fim}.`);
   }
-  return { inicio, fim };
+  return { inicio, fim, ajuste_cobertura: ajusteCobertura };
 }
 
 function dividirEmLotes(valores, tamanho) {
@@ -412,7 +427,13 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
 
     const atual = await calcularPeriodo(leitor, periodo, metricas);
     if (argumentos.operacao === 'resumir') {
-      return serializar({ operacao: 'resumir', periodo, metricas: atual, cobertura });
+      return serializar({
+        operacao: 'resumir',
+        periodo: { inicio: periodo.inicio, fim: periodo.fim },
+        metricas: atual,
+        ajuste_cobertura: periodo.ajuste_cobertura || null,
+        cobertura
+      });
     }
 
     const dias = duracaoPeriodo(periodo.inicio, periodo.fim);
@@ -429,6 +450,7 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
       periodo_atual: periodo,
       periodo_anterior: periodoAnterior,
       metricas: compararValores(atual, anterior),
+      ajuste_cobertura: periodo.ajuste_cobertura || null,
       cobertura
     });
   } finally {
