@@ -52,11 +52,15 @@ test('expoe contrato compacto e estrito para vendas', () => {
     new Set(definicaoAnalisarVendas.parameters.required),
     new Set(Object.keys(definicaoAnalisarVendas.parameters.properties))
   );
-  const filtro = definicaoAnalisarVendas.parameters.properties.filtros.anyOf[0].items;
+  const filtro = definicaoAnalisarVendas.parameters.properties.filtros.items;
   assert.deepEqual(filtro.required, ['campo', 'operador', 'valor']);
   const metricas = definicaoAnalisarVendas.parameters.properties.metricas;
-  assert.equal(metricas.anyOf[0].maxItems, 4);
-  assert.equal(metricas.anyOf[1].type, 'null');
+  assert.equal(metricas.maxItems, 4);
+  assert.deepEqual(metricas.type, ['array', 'null']);
+  assert.equal(
+    definicaoAnalisarVendas.parameters.properties.pedidos_marketplace.maxItems,
+    50
+  );
 });
 
 test('traduz ranking de marca para campos de negocio', async () => {
@@ -70,7 +74,7 @@ test('traduz ranking de marca para campos de negocio', async () => {
     quantidade_vendida: 492,
     valor_total_vendido: 656358.41
   }]);
-  assert.equal(falso.chamadas[0][1], 'fato_venda_item');
+  assert.equal(falso.chamadas[0][1], 'fato_pedido_item');
   assert.deepEqual(falso.chamadas[0][2].filtros.data_pedido, {
     operador: 'igual',
     valor: '2026-07-17'
@@ -90,7 +94,8 @@ test('emissao filtra somente notas emitidas e lista pelas mais recentes', async 
   }), { criarLeitor: () => falso.leitor });
 
   const opcoes = falso.chamadas[0][2];
-  assert.deepEqual(opcoes.filtros.faturamento_valido, { operador: 'igual', valor: 'true' });
+  assert.equal(falso.chamadas[0][1], 'fato_nota_fiscal');
+  assert.equal(opcoes.filtros.faturamento_valido, undefined);
   assert.deepEqual(opcoes.ordenacao, { campo: 'data_emissao', direcao: 'desc' });
 });
 
@@ -201,4 +206,78 @@ test('aceita todas as metricas conhecidas quando a operacao e listar', async () 
   }), { criarLeitor: () => falso.leitor });
 
   assert.equal(falso.chamadas[0][0], 'consultar');
+});
+
+test('localiza notas em lote e presta contas de pedidos ausentes e duplicados', async () => {
+  const falso = leitorFalso();
+  falso.leitor.consultar = async (nome, opcoes) => {
+    falso.chamadas.push(['consultar', nome, opcoes]);
+    return {
+      dados: [
+        {
+          marketplace_pedido: 'PED-1',
+          id_nr_nf: 123,
+          faturamento_valido: true,
+          data_emissao: '2026-07-20'
+        },
+        {
+          marketplace_pedido: 'PED-2',
+          id_nr_nf: 456,
+          faturamento_valido: false,
+          data_emissao: '2026-07-21'
+        },
+        {
+          marketplace_pedido: 'PED-2',
+          id_nr_nf: 456,
+          faturamento_valido: false,
+          data_emissao: '2026-07-21'
+        },
+        {
+          marketplace_pedido: 'PED-3',
+          id_nr_nf: 0,
+          faturamento_valido: false,
+          data_emissao: null
+        }
+      ],
+      ultimaConstrucao: 'agora'
+    };
+  };
+
+  const saida = JSON.parse(await executarAnalisarVendas({
+    operacao: 'localizar_notas',
+    pedidos_marketplace: ['PED-1', 'PED-2', 'PED-3', 'PED-4', 'PED-2']
+  }, { criarLeitor: () => falso.leitor }));
+
+  assert.deepEqual(falso.chamadas[0][2].filtros.marketplace_pedido, {
+    operador: 'em',
+    valor: null,
+    valores: ['PED-1', 'PED-2', 'PED-3', 'PED-4']
+  });
+  assert.equal(saida.notas_fiscais_separadas_por_espaco, '123 456');
+  assert.deepEqual(saida.pedidos_nao_encontrados, ['PED-4']);
+  assert.deepEqual(saida.pedidos_encontrados_sem_nota_fiscal, ['PED-3']);
+  assert.deepEqual(saida.pedidos_duplicados_na_solicitacao, [{
+    numero_pedido_marketplace: 'PED-2',
+    ocorrencias: 2
+  }]);
+  assert.deepEqual(saida.pedidos[0].notas_fiscais_validas, ['123']);
+  assert.deepEqual(saida.pedidos[1].notas_fiscais_validas, []);
+  assert.equal(falso.fechado, true);
+});
+
+test('rejeita numero de pedido marketplace recebido como numero', async () => {
+  let abriuLeitor = false;
+  await assert.rejects(
+    executarAnalisarVendas({
+      operacao: 'localizar_notas',
+      pedidos_marketplace: [7010572805356104]
+    }, {
+      criarLeitor() {
+        abriuLeitor = true;
+        return leitorFalso().leitor;
+      }
+    }),
+    /deve ser enviado como texto/
+  );
+  assert.equal(abriuLeitor, false);
 });

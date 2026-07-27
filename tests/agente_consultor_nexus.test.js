@@ -25,10 +25,10 @@ test('delega a execução para um provider com contrato comum', async () => {
     contexto.tools.map((ferramenta) => ferramenta.definicao.name),
     ['analisar_vendas', 'analisar_catalogo']
   );
-  assert.equal(contexto.maxRodadas, 3);
+  assert.equal(contexto.maxRodadas, 4);
 });
 
-test('envia somente a fachada de vendas quando a pergunta e sobre venda', async () => {
+test('envia somente a fachada Gold quando a pergunta e ranking de venda', async () => {
   let contexto;
   const provider = {
     async executar(valor) {
@@ -39,7 +39,7 @@ test('envia somente a fachada de vendas quando a pergunta e sobre venda', async 
   await executarAgente('Qual marca mais vendeu ontem?', { provider });
   assert.deepEqual(
     contexto.tools.map(({ definicao }) => definicao.name),
-    ['analisar_vendas']
+    ['analisar_desempenho']
   );
 });
 
@@ -56,7 +56,7 @@ test('envia somente indicadores Gold em comparacoes executivas', async () => {
     contexto.tools.map(({ definicao }) => definicao.name),
     ['analisar_indicadores']
   );
-  assert.equal(contexto.maxRodadas, 3);
+  assert.equal(contexto.maxRodadas, 4);
 });
 
 test('completa o ano de uma data curta antes de chamar o provider', async () => {

@@ -49,7 +49,7 @@ async function validarArquivoSilver(con, arquivo, objeto, totalEntrada) {
     checksum: resultado.checksum?.toString() || null
   };
   const erros = [];
-  if (metricas.totalSaida !== metricas.totalEntrada) {
+  if (objeto.preservaTotalEntrada !== false && metricas.totalSaida !== metricas.totalEntrada) {
     erros.push(`entrada=${metricas.totalEntrada}, saida=${metricas.totalSaida}`);
   }
   if (metricas.chavesNulas) erros.push(`chaves nulas=${metricas.chavesNulas}`);

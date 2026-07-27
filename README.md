@@ -12,6 +12,8 @@ O Nexus é o hub de entrada do data lake. Ele busca dados em bancos, APIs e arqu
 - **Exportador**: o motor compartilhado que faz conexão, Parquet, validação e logs.
 - **Catálogo**: a lista das entidades disponíveis.
 - **Bronze**: cópia bruta da fonte, sem regra de negócio.
+- **Silver**: dados limpos e ligados em dimensões e fatos com grão declarado.
+- **Gold**: indicadores e análises oficiais, prontos para as tools.
 - **Manifesto**: recibo da execução com horário e total de linhas.
 
 ## Comandos
@@ -67,7 +69,7 @@ npm run consultar -- cliente --schema
 As colunas e entidades são validadas contra o catálogo e o schema do Parquet;
 valores de filtros são parametrizados. O limite padrão é 50 e o máximo é 500.
 
-## Tool e agente do bronze
+## Tools e agente Nexus
 
 A referência completa de operações, filtros e agregações está em
 [`docs/TOOLS_BRONZE.md`](docs/TOOLS_BRONZE.md).
@@ -140,11 +142,12 @@ O agente usa a visão atual por padrão, informa a última extração
 quando disponível e nunca executa SQL produzido pelo modelo.
 
 Para reduzir custo e erros, um roteador local envia somente as tools relevantes
-para cada pergunta. Vendas e catalogo possuem fachadas compactas; consultas
-avancadas ainda podem usar os perfis Silver ou Bronze:
+para cada pergunta. Indicadores, desempenho, operação, frete, estoque, vendas e
+catálogo possuem fachadas compactas; consultas avançadas ainda podem usar os
+perfis Silver ou Bronze:
 
 ```powershell
-npm run agente:nexus -- --perfil vendas "Qual marca mais vendeu hoje?"
+npm run agente:nexus -- --perfil desempenho "Qual marca mais faturou hoje?"
 npm run agente:contexto
 ```
 
@@ -251,4 +254,7 @@ O arquivo `.env` não deve ser versionado.
 
 ## Próximos passos
 
-A versão inicial trabalha com snapshots PostgreSQL. Extração incremental, APIs e arquivos serão adicionados como novos adaptadores, sem duplicar o motor existente.
+O PostgreSQL já alimenta Bronze, Silver e Gold por snapshots e cargas
+incrementais. As próximas fontes, como OneDrive e APIs, entram como novos
+adaptadores sem duplicar o motor existente. O roadmap está em
+[`docs/ROADMAP.md`](docs/ROADMAP.md).

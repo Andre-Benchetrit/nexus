@@ -47,9 +47,9 @@ views DuckDB, filtros parametrizados e paginacao.
 
 ### Facade
 
-`analisar_vendas` e `analisar_catalogo` oferecem operacoes de negocio pequenas
-sobre os leitores genericos. A IA nao precisa conhecer fatos, aliases internos
-ou dezenas de colunas para perguntas comuns.
+As tools `analisar_*` oferecem operacoes de negocio pequenas sobre os leitores.
+A IA nao precisa conhecer fatos, aliases internos ou dezenas de colunas para
+perguntas comuns. Regras oficiais permanecem nos modelos Gold, e nao no prompt.
 
 ### Strategy e Adapter
 
@@ -71,6 +71,12 @@ evita enviar todas as tools em cada pergunta.
 | Perfil | Uso | Tools |
 |---|---|---|
 | `vendas` | pedidos, notas e produtos vendidos | `analisar_vendas` |
+| `indicadores` | painel, KPIs e comparacoes | `analisar_indicadores` |
+| `influencias` | altas e quedas por dimensao | `analisar_influencias` |
+| `desempenho` | faturamento, custo e margem | `analisar_desempenho` |
+| `operacao` | funil de pedidos e plataformas | `analisar_operacao` |
+| `frete` | frete cobrado, custo e cobertura | `analisar_frete` |
+| `estoque` | ruptura e cobertura | `analisar_rupturas` |
 | `catalogo` | cadastro, composicao e estoque | `analisar_catalogo` |
 | `negocio` | pergunta ambigua | as duas fachadas |
 | `silver` | consulta avancada modelada | tools Silver genericas |
@@ -95,13 +101,18 @@ npm run agente:contexto
 A estimativa usa quatro caracteres por token apenas como referencia. Os testes
 mantem os perfis comuns dentro de limites para impedir crescimento acidental.
 
-Baseline anterior: aproximadamente 3.721 tokens fixos por rodada.
+Medicao atual aproximada:
 
-- vendas: aproximadamente 679;
-- catalogo: aproximadamente 507;
-- negocio: aproximadamente 889;
-- Silver generico: aproximadamente 1.301;
-- Bronze generico: aproximadamente 1.473.
+- indicadores: 620 tokens;
+- estoque: 528;
+- desempenho: 789;
+- frete: 622;
+- operacao: 589;
+- vendas: 844;
+- catalogo: 552;
+- negocio: 1.069;
+- Silver generico: 1.482;
+- Bronze generico: 1.616.
 
 ## Como adicionar uma capacidade
 
@@ -120,10 +131,12 @@ A Gold fornece indicadores prontos, sem importar providers ou prompts:
 Silver -> modelos Gold -> leitor Gold -> tools de indicador -> roteador
 ```
 
-Assim, metricas como faturamento, margem, ticket medio e metas ficam definidas
+Assim, metricas como faturamento, margem e ticket medio ficam definidas
 uma vez no dado, em vez de serem reinterpretadas pelo modelo a cada pergunta.
 
-Os primeiros objetos sao `kpi_vendas_diario`, `kpi_faturamento_diario` e
+Os objetos executivos incluem `kpi_vendas_diario`, `kpi_faturamento_diario`,
+`kpi_pedidos_pagos_diario`, `desempenho_produto_diario`,
+`kpi_plataforma_diario`, `kpi_frete_diario`, `kpi_estoque_diario` e
 `painel_executivo_diario`. As definicoes, cobertura e comandos estao em
 [GOLD.md](GOLD.md).
 

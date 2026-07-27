@@ -1,4 +1,5 @@
 const { citar } = require('../core/util');
+const { pedidoPago } = require('../core/regras_venda');
 
 module.exports = {
   nome: 'fato_venda_item',
@@ -11,6 +12,7 @@ module.exports = {
   fontesSilver: ['fato_venda', 'dim_produto'],
   colunas: [
     'id_nota_saida',
+    'id_pedido_vda_importado',
     'item',
     'id_produto',
     'descricao_produto',
@@ -38,6 +40,8 @@ module.exports = {
     'id_plataforma',
     'plataforma',
     'id_transportadora',
+    'id_regra_transporte',
+    'transporte_regra',
     'transporte_regras',
     'ids_transporte_regras',
     'quantidade_regras_transporte',
@@ -49,6 +53,7 @@ module.exports = {
     'marketplace_pedido',
     'item_marketplace',
     'entrega_uf',
+    'entrega_data',
     'quantidade',
     'quantidade_faturada',
     'quantidade_devolvida',
@@ -63,6 +68,9 @@ module.exports = {
     'outros_valores_item',
     'acrescimo_item',
     'valor_financeiro_item',
+    'valor_frete_cobrado_pedido',
+    'valor_frete_custo_pedido',
+    'valor_frete_site_pedido',
     'custo_produto_unitario',
     'custo_total_item',
     'comissao_item',
@@ -84,6 +92,7 @@ module.exports = {
     habilitadaParaAgente: true,
     colunasPadrao: [
       'id_nota_saida',
+      'id_pedido_vda_importado',
       'item',
       'data_pedido',
       'id_produto',
@@ -121,6 +130,8 @@ module.exports = {
       'id_plataforma',
       'plataforma',
       'id_transportadora',
+      'id_regra_transporte',
+      'transporte_regra',
       'transporte_regras',
       'ids_transporte_regras',
       'quantidade_regras_transporte',
@@ -132,6 +143,7 @@ module.exports = {
       'marketplace_pedido',
       'item_marketplace',
       'entrega_uf',
+      'entrega_data',
       'quantidade',
       'quantidade_faturada',
       'quantidade_devolvida',
@@ -146,6 +158,9 @@ module.exports = {
       'outros_valores_item',
       'acrescimo_item',
       'valor_financeiro_item',
+      'valor_frete_cobrado_pedido',
+      'valor_frete_custo_pedido',
+      'valor_frete_site_pedido',
       'nota_emitida', 'nota_cancelada', 'nfe_cstat', 'faturamento_valido',
       'pedido_pago', 'valor_pedido_pago_item'
     ]
@@ -158,6 +173,7 @@ module.exports = {
     return `
       SELECT
         i.id_nota_saida,
+        v.id_pedido_vda_importado,
         i.item,
         i.id_produto,
         p.descricao_produto,
@@ -185,6 +201,8 @@ module.exports = {
         v.id_plataforma,
         v.plataforma,
         v.id_transportadora,
+        v.id_regra_transporte,
+        v.transporte_regra,
         v.transporte_regras,
         v.ids_transporte_regras,
         v.quantidade_regras_transporte,
@@ -196,6 +214,7 @@ module.exports = {
         v.marketplace_pedido,
         i.item_marketplace,
         v.entrega_uf,
+        v.entrega_data,
         i.qtde AS quantidade,
         i.qtde_faturada AS quantidade_faturada,
         i.qtde_devolvida AS quantidade_devolvida,
@@ -213,6 +232,9 @@ module.exports = {
         i.vr_outros AS outros_valores_item,
         i.vr_acrescimo AS acrescimo_item,
         i.vr_financeiro AS valor_financeiro_item,
+        v.valor_frete_cobrado AS valor_frete_cobrado_pedido,
+        v.valor_frete_custo AS valor_frete_custo_pedido,
+        v.valor_frete_site AS valor_frete_site_pedido,
         i.custo_produto AS custo_produto_unitario,
         CAST(i.custo_produto * i.qtde AS DECIMAL(18,2)) AS custo_total_item,
         i.comissao AS comissao_item,
@@ -230,13 +252,7 @@ module.exports = {
         v.nota_cancelada,
         v.nfe_cstat,
         v.faturamento_valido,
-        (
-          upper(trim(coalesce(v.tipo_documento, ''))) = 'PD'
-          AND v.id_tp_pedido IN (1, 3)
-          AND v.id_nat_operacao IN (1, 2, 3, 19)
-          AND NOT starts_with(upper(trim(coalesce(v.tipo_pedido, ''))), 'CANCELADO')
-          AND NOT contains(trim(coalesce(v.marketplace_pedido, '')), '_')
-        ) AS pedido_pago,
+        ${pedidoPago('v', 'v')} AS pedido_pago,
         CAST(
           (i.qtde * i.valor_bruto)
           + coalesce(i.vr_frete, 0)

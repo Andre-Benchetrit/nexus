@@ -4,7 +4,7 @@ module.exports = {
   descricao: 'Indicadores fiscais diarios pela data de emissao da nota.',
   versaoContrato: 1,
   chavePrimaria: 'data_referencia',
-  fontesSilver: ['fato_venda'],
+  fontesSilver: ['fato_nota_fiscal'],
   fontesGold: [],
   colunas: [
     'data_referencia',
@@ -37,7 +37,7 @@ module.exports = {
   },
 
   construirSql(contextosSilver) {
-    const vendas = `"${contextosSilver.get('fato_venda').viewAtual}"`;
+    const vendas = `"${contextosSilver.get('fato_nota_fiscal').viewAtual}"`;
     return `
       WITH base AS (
         SELECT
@@ -48,7 +48,7 @@ module.exports = {
             ELSE NULL
           END AS prazo_emissao_dias
         FROM ${vendas}
-        WHERE faturamento_valido = true AND data_emissao IS NOT NULL
+        WHERE data_emissao IS NOT NULL
       ), limite AS (
         SELECT max(data_emissao) AS ultima_data FROM base
       )
@@ -76,7 +76,7 @@ module.exports = {
   },
 
   construirMetricasQualidadeSql(contextosSilver) {
-    const vendas = `"${contextosSilver.get('fato_venda').viewAtual}"`;
+    const vendas = `"${contextosSilver.get('fato_nota_fiscal').viewAtual}"`;
     return `
       SELECT
         count(*) FILTER (WHERE faturamento_valido = true) AS notas_marcadas_emitidas,

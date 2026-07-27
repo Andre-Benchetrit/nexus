@@ -162,17 +162,17 @@ test('provider OpenAI roteia múltiplas tools pelo nome', async () => {
 
 test('converte o schema estrito para o formato opcional do Gemini', () => {
   const tool = converterToolParaGemini(definicaoConsultarBronze);
-  assert.deepEqual(tool.parameters.required, ['operacao']);
+  assert.deepEqual(tool.parameters.required, ['operacao', 'filtros']);
   assert.equal(tool.parameters.type, 'OBJECT');
   assert.equal(tool.parameters.properties.entidade.type, 'STRING');
   assert.ok(!tool.parameters.properties.entidade.enum.includes(null));
   assert.equal(tool.parameters.properties.colunas.type, 'ARRAY');
 
   const agregacao = converterToolParaGemini(definicaoAgregarBronze);
-  assert.deepEqual(agregacao.parameters.required, ['entidade', 'calculos']);
+  assert.deepEqual(agregacao.parameters.required, ['entidade', 'calculos', 'filtros']);
 
   const vendas = converterToolParaGemini(definicaoAnalisarVendas);
-  assert.deepEqual(vendas.parameters.required, ['operacao', 'nivel', 'limite']);
+  assert.deepEqual(vendas.parameters.required, ['operacao', 'nivel', 'filtros']);
   assert.deepEqual(vendas.parameters.properties.filtros.items.required, ['campo', 'operador']);
 });
 

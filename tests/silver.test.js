@@ -78,12 +78,15 @@ test.before(async () => {
   await criarBronze('produto', `
     SELECT * FROM (VALUES
       (1, ' Geladeira A ', 'SKU-1', '7891', 'FAB-1', 10, 20, 30, 40,
+       4::DECIMAL(15,4), 100, 200, 2,
        5.5::DECIMAL(15,4), 'F', 'T', 'T', DATE '2026-01-01', DATE '2026-07-16'),
       (2, 'Produto inativo', 'SKU-2', NULL, NULL, 10, 20, 31, 40,
+       3::DECIMAL(15,4), 101, 201, 3,
        0::DECIMAL(15,4), 'T', 'T', 'T', DATE '2026-01-02', DATE '2026-07-16')
     ) AS dados(
       id_produto, descricao, codigo_auxiliar, cod_barra, cod_fabrica,
-      id_grupo, id_subgrupo, id_marca, id_categoria, estoque,
+      id_grupo, id_subgrupo, id_marca, id_categoria,
+      custo, id_fornecedor, id_comprador, prazo_separacao, estoque,
       inativo, disponivel, envia_site, dt_cadastro, dt_alteracao
     )
   `);

@@ -42,6 +42,12 @@ npm run exportar -- nota_saida_itens --inicio 2026-07-16 --fim 2026-07-17
 
 # Exportar clientes novos ou alterados em uma janela
 npm run exportar -- cliente --inicio 2026-07-20 --fim 2026-07-21
+
+# Estoque atual: snapshot completo; a analise usa id_empresa 10
+npm run exportar -- produto_inventario --forcar
+
+# Movimentos de estoque; o fim e exclusivo
+npm run exportar -- log_estoque --inicio 2026-07-23 --fim 2026-07-25
 ```
 
 Entidades `incremental_data` exigem `--inicio` e `--fim`. Entidades `snapshot`
@@ -80,6 +86,12 @@ npm run silver -- --todos
 npm run silver -- dim_produto
 npm run silver -- fato_venda
 npm run silver -- fato_venda_item
+npm run silver -- fato_pedido
+npm run silver -- fato_pedido_item
+npm run silver -- fato_nota_fiscal
+npm run silver -- fato_nota_fiscal_item
+npm run silver -- fato_estoque_atual
+npm run silver -- fato_movimento_estoque
 ```
 
 Cada construcao cria um snapshot novo. A consulta atual usa a ultima execucao
@@ -92,7 +104,12 @@ npm run gold -- --listar
 npm run gold -- --todos
 npm run gold -- kpi_vendas_diario
 npm run gold -- kpi_faturamento_diario
+npm run gold -- kpi_estoque_diario
+npm run gold -- desempenho_produto_diario
+npm run gold -- kpi_plataforma_diario
+npm run gold -- kpi_frete_diario
 npm run gold -- painel_executivo_diario
+npm run gold -- risco_ruptura_produto
 ```
 
 Ao construir um objeto Gold, suas dependencias Gold sao processadas primeiro.
@@ -107,6 +124,11 @@ npm run consultar:gold -- painel_executivo_diario --contar
 npm run consultar:gold -- painel_executivo_diario --ordenar data_referencia --direcao desc --limite 7
 npm run consultar:gold -- kpi_vendas_diario --filtro data_referencia=2026-07-17
 npm run consultar:gold -- kpi_faturamento_diario --filtro data_referencia=2026-07-17
+npm run consultar:gold -- desempenho_produto_diario --filtro data_referencia=2026-07-17 --limite 20
+npm run consultar:gold -- kpi_plataforma_diario --filtro data_referencia=2026-07-17 --limite 20
+npm run consultar:gold -- kpi_frete_diario --filtro data_referencia=2026-07-17 --limite 20
+npm run consultar:gold -- risco_ruptura_produto --filtro classificacao_risco=RUPTURA_ATUAL --limite 20
+npm run consultar:gold -- kpi_estoque_diario --ordenar data_referencia --direcao desc --limite 7
 ```
 
 O ultimo dia disponivel e marcado com `dados_parciais=true`. Consulte
@@ -127,6 +149,10 @@ npm run consultar:silver -- fato_venda --contar
 npm run consultar:silver -- fato_venda --colunas id_nota_saida,data_pedido,cliente,tipo_pedido,plataforma,transporte_regras,valor_total_venda --limite 10
 npm run consultar:silver -- fato_venda_item --contar
 npm run consultar:silver -- fato_venda_item --colunas id_nota_saida,item,data_pedido,descricao_produto,marca,cliente,plataforma,transporte_regras,quantidade,valor_total_item --limite 10
+npm run consultar:silver -- fato_pedido --colunas marketplace_pedido,data_pedido,status_pedido,plataforma,transporte_regra,valor_total_venda --limite 10
+npm run consultar:silver -- fato_nota_fiscal --colunas id_nr_nf,marketplace_pedido,data_emissao,valor_total_venda --limite 10
+npm run consultar:silver -- fato_pedido_item --colunas marketplace_pedido,data_pedido,descricao_produto,quantidade,valor_total_item --limite 10
+npm run consultar:silver -- fato_nota_fiscal_item --colunas id_nr_nf,data_emissao,descricao_produto,marca,quantidade,valor_total_item --limite 10
 ```
 
 Na visao historica, a mesma chave pode aparecer em mais de um snapshot Silver.
@@ -143,20 +169,20 @@ npm run agregar:silver -- dim_produto --agrupar grupo --contar --filtro produto_
 # Catalogo do site por grupo e subgrupo
 npm run agregar:silver -- dim_produto --agrupar grupo,subgrupo --contar --filtro catalogo_site_ativo=true --limite 20
 
-# Estoque por grupo
-npm run agregar:silver -- dim_produto --agrupar grupo --somar estoque --limite 10
+# Estoque por grupo; o saldo atual fica na fato de estoque
+npm run agregar:silver -- fato_estoque_atual --agrupar grupo --somar estoque_disponivel --limite 10
 
 # Mais de um calculo
-npm run agregar:silver -- dim_produto --agrupar grupo --contar --somar estoque --limite 10
+npm run agregar:silver -- fato_estoque_atual --agrupar grupo --contar --somar estoque_disponivel --limite 10
 
-# Quantidade de pedidos por plataforma; fato_venda tem uma linha por pedido
-npm run agregar:silver -- fato_venda --agrupar plataforma --contar --limite 10
+# Quantidade de pedidos por plataforma; fato_pedido tem uma linha por pedido
+npm run agregar:silver -- fato_pedido --agrupar plataforma --contar --limite 10
 
 # Quantidade de pedidos por conjunto de regras de transporte
-npm run agregar:silver -- fato_venda --agrupar transporte_regras --contar --limite 10
+npm run agregar:silver -- fato_pedido --agrupar transporte_regra --contar --limite 10
 
-# Vendas por grupo de produto; fato_venda_item tem uma linha por item
-npm run agregar:silver -- fato_venda_item --agrupar grupo --contar --somar valor_total_item --limite 10
+# Produtos faturados por grupo
+npm run agregar:silver -- fato_nota_fiscal_item --agrupar grupo --contar --somar valor_total_item --limite 10
 ```
 
 Calculos disponiveis: `--contar`, `--somar`, `--media`, `--minimo` e `--maximo`.
@@ -181,6 +207,20 @@ npm run agente:nexus -- --provider gemini --fallback-provider groq "Quantos clie
 
 # Desativa o fallback somente nesta execucao
 npm run agente:nexus -- --provider gemini --no-fallback "Quantos clientes temos?"
+
+# Rupturas e cobertura de estoque
+npm run agente:nexus -- "Quais produtos estão em ruptura atual?"
+npm run agente:nexus -- "Quais produtos têm cobertura crítica e quando devem acabar?"
+npm run agente:nexus -- "Quais marcas têm mais produtos em ruptura ou risco de ruptura?"
+
+# Desempenho e margem estimada do faturamento
+npm run agente:nexus -- "Quais marcas mais faturaram em 17/07/2026 e qual foi a margem bruta estimada?"
+
+# Funil operacional por plataforma
+npm run agente:nexus -- "Quais plataformas tiveram mais pedidos cancelados no mes?"
+
+# Frete; a resposta avisa quando o custo nao tem cobertura
+npm run agente:nexus -- "Quanto cobramos de frete em julho e quais plataformas concentraram esse valor?"
 ```
 
 O agente seleciona automaticamente um perfil compacto de tools. Para forcar um
@@ -188,15 +228,20 @@ perfil durante diagnostico:
 
 ```powershell
 npm run agente:nexus -- --perfil vendas "Qual marca mais vendeu hoje?"
+npm run agente:nexus -- --perfil desempenho "Qual produto teve maior margem no mes?"
+npm run agente:nexus -- --perfil operacao "Qual plataforma teve mais cancelamentos?"
+npm run agente:nexus -- --perfil frete "Quanto cobramos de frete hoje?"
 npm run agente:nexus -- --perfil indicadores "Compare o faturamento deste mes com o anterior"
+npm run agente:nexus -- --perfil estoque "Quais produtos podem acabar nos proximos 15 dias?"
 npm run agente:nexus -- --perfil catalogo "Quais grupos predominam no catalogo?"
 npm run agente:nexus -- --perfil silver "Quantos clientes existem?"
 npm run agente:nexus -- --perfil bronze "Liste os dados brutos disponiveis"
 npm run agente:nexus -- --perfil completo "Quais dados temos?"
 ```
 
-Perfis disponiveis: `automatico`, `indicadores`, `vendas`, `catalogo`, `negocio`,
-`silver`, `bronze` e `completo`.
+Perfis disponiveis: `automatico`, `indicadores`, `influencias`, `desempenho`,
+`operacao`, `frete`, `estoque`, `vendas`, `catalogo`, `negocio`, `silver`,
+`bronze` e `completo`.
 
 Datas informadas apenas como `DD/MM` recebem automaticamente o ano da data de
 referencia da FID (`America/Sao_Paulo`). Em rankings de transportadora, a tool
@@ -217,6 +262,14 @@ npm run agente:bronze -- --provider gemini --model gemini-3.1-flash-lite "Quanto
 Para perguntas comuns, o agente usa `analisar_vendas` ou `analisar_catalogo`.
 As tools genericas `consultar_bronze`, `agregar_bronze`, `consultar_silver` e
 `agregar_silver` continuam disponiveis nos perfis tecnicos.
+
+Para localizar notas de varios pedidos marketplace, cole os identificadores como
+texto. O resultado informa as NFs, os pedidos ausentes, os encontrados sem NF e
+eventuais duplicatas da solicitacao:
+
+```powershell
+npm run agente:nexus -- "Me de as notas fiscais, separadas por espaco, dos marketplace_pedido 701-0572805-3561041, 702-4782159-6150621 e informe quais pedidos nao encontrou."
+```
 
 Configuracao recomendada em `agentes/.env`:
 
@@ -246,6 +299,15 @@ para uma execucao com `--timeout` (em milissegundos):
 ```powershell
 npm run agente:nexus -- --timeout 30000 "Quantos clientes temos?"
 ```
+
+Para diagnosticar filtros e argumentos escolhidos pelo provider:
+
+```powershell
+npm run agente:nexus -- --provider groq --debug-tools "Qual foi o faturamento de hoje?"
+```
+
+O modo de diagnostico exibe argumentos estruturados das tools; ele nao mostra
+SQL nem credenciais.
 
 ## Git e GitLab
 

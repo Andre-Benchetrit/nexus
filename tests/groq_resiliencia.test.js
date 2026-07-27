@@ -4,9 +4,11 @@ const assert = require('node:assert/strict');
 const { definicaoConsultarBronze } = require('../tools/consultar_bronze');
 const { definicaoAnalisarVendas } = require('../tools/analisar_vendas');
 const { definicaoAnalisarIndicadores } = require('../tools/analisar_indicadores');
+const { definicaoAnalisarFrete } = require('../tools/analisar_frete');
 const { criarProvider } = require('../agentes/providers');
 const { criarProviderGroq, converterTools } = require('../agentes/providers/groq');
 const { criarProviderResiliente } = require('../agentes/providers/resiliente');
+const { normalizarArgumentosPeloSchema } = require('../agentes/providers/schema');
 const { lerArgumentos } = require('../agentes/consultor_nexus');
 
 test('provider Groq executa uma tool pelo Chat Completions', async () => {
@@ -68,24 +70,35 @@ test('provider Groq executa uma tool pelo Chat Completions', async () => {
 });
 
 test('converte tools para o formato Chat Completions do Groq', () => {
-  const [tool, vendas, indicadores] = converterTools([
+  const [tool, vendas, indicadores, frete] = converterTools([
     definicaoConsultarBronze,
     definicaoAnalisarVendas,
-    definicaoAnalisarIndicadores
+    definicaoAnalisarIndicadores,
+    definicaoAnalisarFrete
   ]);
   assert.equal(tool.type, 'function');
   assert.equal(tool.function.name, 'consultar_bronze');
   assert.equal(tool.function.parameters.type, 'object');
-  assert.deepEqual(tool.function.parameters.required, ['operacao']);
-  assert.deepEqual(vendas.function.parameters.required, ['operacao', 'nivel', 'limite']);
+  assert.deepEqual(tool.function.parameters.required, ['operacao', 'filtros']);
+  assert.deepEqual(vendas.function.parameters.required, ['operacao', 'nivel', 'filtros']);
   assert.deepEqual(
-    vendas.function.parameters.properties.filtros.anyOf[0].items.required,
+    vendas.function.parameters.properties.filtros.items.required,
     ['campo', 'operador']
   );
   assert.deepEqual(
     indicadores.function.parameters.properties.limite.type,
     ['integer', 'string']
   );
+  assert.deepEqual(
+    indicadores.function.parameters.properties.metricas.anyOf[0].type,
+    ['array', 'string']
+  );
+  assert.deepEqual(
+    frete.function.parameters.properties.agrupar_por.type,
+    ['string', 'null']
+  );
+  assert.equal(frete.function.parameters.properties.agrupar_por.enum, undefined);
+  assert.ok(!frete.function.parameters.required.includes('agrupar_por'));
 });
 
 test('normaliza numero textual do Groq antes de executar a tool', async () => {
@@ -136,6 +149,25 @@ test('normaliza numero textual do Groq antes de executar a tool', async () => {
 
   assert.equal(argumentosExecutados.limite, 31);
   assert.equal(typeof argumentosExecutados.limite, 'number');
+});
+
+test('normaliza texto null do Groq em campos opcionais', () => {
+  assert.equal(
+    normalizarArgumentosPeloSchema(
+      'null',
+      definicaoAnalisarFrete.parameters.properties.id_empresa
+    ),
+    null
+  );
+});
+
+test('normaliza lista textual ou sentinela do Groq', () => {
+  const schema = definicaoAnalisarIndicadores.parameters.properties.metricas;
+  assert.deepEqual(
+    normalizarArgumentosPeloSchema('faturamento_emitido', schema),
+    ['faturamento_emitido']
+  );
+  assert.equal(normalizarArgumentosPeloSchema('todas', schema), null);
 });
 
 test('seleciona Groq explicitamente', () => {

@@ -71,7 +71,11 @@ test('expoe somente objetos Silver aprovados em schema estrito', () => {
     'dim_plataforma_ecommerce',
     'dim_produto',
     'fato_venda',
-    'fato_venda_item'
+    'fato_venda_item',
+    'fato_pedido',
+    'fato_nota_fiscal',
+    'fato_pedido_item',
+    'fato_nota_fiscal_item'
   ]);
   assert.deepEqual(
     new Set(definicaoConsultarSilver.parameters.required),

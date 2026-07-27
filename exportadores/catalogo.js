@@ -9,6 +9,8 @@ const tipoPedido = require('./postgres/entidades/tipo_pedido');
 const transporteRegras = require('./postgres/entidades/transporte_regras');
 const plataformaEcommerce = require('./postgres/entidades/plataforma_ecommerce');
 const notaSaidaItens = require('./postgres/entidades/nota_saida_itens');
+const produtoInventario = require('./postgres/entidades/produto_inventario');
+const logEstoque = require('./postgres/entidades/log_estoque');
 
 const entidades = {
   nota_saida: notaSaida,
@@ -21,7 +23,9 @@ const entidades = {
   tipo_pedido: tipoPedido,
   transporte_regras: transporteRegras,
   plataforma_ecommerce: plataformaEcommerce,
-  nota_saida_itens: notaSaidaItens
+  nota_saida_itens: notaSaidaItens,
+  produto_inventario: produtoInventario,
+  log_estoque: logEstoque
 };
 
 function obterEntidade(nome) {

@@ -64,6 +64,9 @@ function montarFiltros(argumentos) {
   for (const [nome, filtro] of Object.entries(normalizados)) {
     filtros[CAMPOS_FILTRO[nome]] = filtro;
   }
+  if (argumentos.incluir_estoque) {
+    filtros.empresa_analisada = { operador: 'igual', valor: 'true' };
+  }
   return filtros;
 }
 
@@ -87,16 +90,22 @@ async function executarAnalisarCatalogo(argumentos, dependencias = {}) {
   if (dimensao && !DIMENSOES[dimensao]) {
     throw new Error(`Dimensao de catalogo invalida: ${dimensao}`);
   }
-  const calculos = [{ operacao: 'contar', campo: null }];
-  if (argumentos.incluir_estoque) calculos.push({ operacao: 'somar', campo: 'estoque' });
+  const objeto = argumentos.incluir_estoque ? 'fato_estoque_atual' : 'dim_produto';
+  const campoEstoque = argumentos.incluir_estoque ? 'estoque_disponivel' : null;
+  const calculos = [{ operacao: 'contar', campo: 'id_produto' }];
+  if (campoEstoque) calculos.push({ operacao: 'somar', campo: campoEstoque });
   const leitor = (dependencias.criarLeitor || criarLeitorSilver)();
   try {
     if (argumentos.operacao === 'listar') {
-      const resultado = await leitor.consultar('dim_produto', {
+      const resultado = await leitor.consultar(objeto, {
         filtros,
         colunas: [
           'id_produto', 'descricao_produto', 'sku', 'ean', 'grupo',
-          'subgrupo', 'marca', 'categoria', 'estoque', 'produto_ativo'
+          'subgrupo', 'marca', 'categoria',
+          ...(argumentos.incluir_estoque
+            ? ['estoque_disponivel', 'quantidade_reservada']
+            : []),
+          'produto_ativo'
         ],
         ordenacao: { campo: 'descricao_produto', direcao: 'asc' },
         limite
@@ -108,7 +117,7 @@ async function executarAnalisarCatalogo(argumentos, dependencias = {}) {
       });
     }
 
-    const resultado = await leitor.agregar('dim_produto', {
+    const resultado = await leitor.agregar(objeto, {
       agrupamentos: dimensao
         ? [{ campo: DIMENSOES[dimensao], granularidade: 'valor' }]
         : [],

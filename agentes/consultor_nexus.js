@@ -13,7 +13,7 @@ const {
 const { resolverPerfil } = require('./roteador');
 const { completarAnoEmDatas, obterDataReferencia } = require('./contexto_temporal');
 
-const MAX_RODADAS_NEGOCIO = 3;
+const MAX_RODADAS_NEGOCIO = 4;
 const MAX_RODADAS_GENERICAS = 4;
 const INSTRUCOES = obterInstrucoes('completo');
 
@@ -39,7 +39,11 @@ async function executarAgente(pergunta, dependencias = {}) {
     ? 'customizado'
     : resolverPerfil(texto, dependencias.perfilTools || 'automatico');
   const ferramentas = dependencias.tools || obterFerramentasDoPerfil(perfil, dependencias);
-  const toolsComProgresso = instrumentarFerramentas(ferramentas, dependencias.onEvento);
+  const toolsComProgresso = instrumentarFerramentas(
+    ferramentas,
+    dependencias.onEvento,
+    { mostrarArgumentos: dependencias.debugTools === true }
+  );
   const maxRodadas = dependencias.maxRodadas || (
     ['indicadores', 'vendas', 'catalogo', 'negocio'].includes(perfil)
       ? MAX_RODADAS_NEGOCIO
@@ -80,6 +84,10 @@ function lerArgumentos(argumentos) {
     const argumento = argumentos[indice];
     if (argumento === '--no-fallback') {
       opcoes.semFallback = true;
+      continue;
+    }
+    if (argumento === '--debug-tools') {
+      opcoes.debugTools = true;
       continue;
     }
     const destino = opcoesComValor.get(argumento);

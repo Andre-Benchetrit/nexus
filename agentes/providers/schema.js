@@ -37,6 +37,53 @@ function flexibilizarTiposPrimitivos(schema) {
       !tipos.includes('string')
     ) {
       atual.type = [...tipos, 'string'];
+    } else if (tipos.includes('array') && !tipos.includes('string')) {
+      atual.type = [...tipos, 'string'];
+    }
+    Object.values(atual.properties || {}).forEach(visitar);
+    if (atual.items) visitar(atual.items);
+    for (const combinador of ['anyOf', 'oneOf', 'allOf']) {
+      (atual[combinador] || []).forEach(visitar);
+    }
+  }
+
+  visitar(copia);
+  return copia;
+}
+
+function removerNulosDoSchema(schema) {
+  const copia = structuredClone(schema);
+
+  function visitar(atual) {
+    if (!atual || typeof atual !== 'object') return;
+    if (Array.isArray(atual.type) && atual.type.includes('null')) {
+      const tipos = atual.type.filter((tipo) => tipo !== 'null');
+      atual.type = tipos.length === 1 ? tipos[0] : tipos;
+    }
+    if (Array.isArray(atual.enum) && atual.enum.includes(null)) {
+      atual.enum = atual.enum.filter((valor) => valor !== null);
+    }
+    if (Array.isArray(atual.anyOf)) {
+      atual.anyOf = atual.anyOf.filter((alternativa) => !aceitaNulo(alternativa));
+    }
+    Object.values(atual.properties || {}).forEach(visitar);
+    if (atual.items) visitar(atual.items);
+    for (const combinador of ['anyOf', 'oneOf', 'allOf']) {
+      (atual[combinador] || []).forEach(visitar);
+    }
+  }
+
+  visitar(copia);
+  return copia;
+}
+
+function flexibilizarEnumsNulos(schema) {
+  const copia = structuredClone(schema);
+
+  function visitar(atual) {
+    if (!atual || typeof atual !== 'object') return;
+    if (Array.isArray(atual.enum) && atual.enum.includes(null)) {
+      delete atual.enum;
     }
     Object.values(atual.properties || {}).forEach(visitar);
     if (atual.items) visitar(atual.items);
@@ -54,6 +101,27 @@ function normalizarArgumentosPeloSchema(valor, schema) {
   const tipos = Array.isArray(schema.type) ? schema.type : [schema.type].filter(Boolean);
 
   if (typeof valor === 'string') {
+    const texto = valor.trim();
+    const textoNormalizado = texto.toLowerCase();
+    if (
+      aceitaNulo(schema) &&
+      ['null', 'all', 'todos', 'todas', 'default', 'padrao', 'completo'].includes(textoNormalizado)
+    ) {
+      return null;
+    }
+    if (tipos.includes('array')) {
+      let itens;
+      if (texto.startsWith('[')) {
+        try {
+          const recebido = JSON.parse(texto);
+          if (Array.isArray(recebido)) itens = recebido;
+        } catch (_) {
+          // A lista textual simples e tratada abaixo.
+        }
+      }
+      itens ||= texto.split(',').map((item) => item.trim()).filter(Boolean);
+      return itens.map((item) => normalizarArgumentosPeloSchema(item, schema.items));
+    }
     if (tipos.includes('integer') && /^-?\d+$/.test(valor)) {
       const numero = Number(valor);
       if (Number.isSafeInteger(numero)) return numero;
@@ -87,6 +155,8 @@ function normalizarArgumentosPeloSchema(valor, schema) {
 module.exports = {
   aceitaNulo,
   flexibilizarCamposNulos,
+  flexibilizarEnumsNulos,
   flexibilizarTiposPrimitivos,
+  removerNulosDoSchema,
   normalizarArgumentosPeloSchema
 };

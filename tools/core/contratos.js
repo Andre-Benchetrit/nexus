@@ -21,34 +21,56 @@ const OPERADORES_FILTRO_SIMPLES = Object.freeze(['igual', 'diferente', 'contem']
 
 function criarSchemaFiltros(opcoes = {}) {
   const campos = opcoes.campos;
+
   const properties = {
-    campo: campos ? { type: 'string', enum: campos } : { type: 'string' },
-    operador: { type: 'string', enum: opcoes.operadores || OPERADORES_FILTRO },
-    valor: { type: ['string', 'null'] }
+    campo: {
+      type: 'string',
+      ...(campos ? { enum: campos } : {}),
+      description: 'Campo. marketplace_pedido e o pedido externo; id_tipo_pedido e codigo interno.'
+    },
+
+    operador: {
+      type: 'string',
+      enum: opcoes.operadores || OPERADORES_FILTRO,
+      description: 'Operador utilizado na comparação do filtro.'
+    },
+
+    valor: {
+      type: ['string', 'null'],
+      description: 'Valor como texto; null quando o operador nao usa valor unico.'
+    }
   };
+
   if (!opcoes.simples) {
-    properties.valor_final = { type: ['string', 'null'] };
+    properties.valor_final = {
+      type: ['string', 'null'],
+      description: 'Fim do intervalo ou null.'
+    };
+
     properties.valores = {
-      anyOf: [
-        { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string' } },
-        { type: 'null' }
-      ]
+      type: ['array', 'null'],
+      description: 'Valores para em ou nao_em.',
+      items: {
+        type: 'string'
+      },
+      minItems: 1,
+      maxItems: 50
     };
   }
+
   return {
-    anyOf: [
-      {
-        type: 'array',
-        maxItems: opcoes.maxItems || 10,
-        items: {
-          type: 'object',
-          properties,
-          required: Object.keys(properties),
-          additionalProperties: false
-        }
-      },
-      { type: 'null' }
-    ]
+    type: 'array',
+
+    description: 'Array de filtros; use [] quando vazio.',
+
+    maxItems: opcoes.maxItems || 10,
+
+    items: {
+      type: 'object',
+      properties,
+      required: Object.keys(properties),
+      additionalProperties: false
+    }
   };
 }
 

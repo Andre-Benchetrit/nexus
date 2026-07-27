@@ -30,17 +30,39 @@ const {
   definicaoAnalisarInfluencias,
   executarAnalisarInfluencias
 } = require('../tools/analisar_influencias');
+const {
+  definicaoAnalisarRupturas,
+  executarAnalisarRupturas
+} = require('../tools/analisar_rupturas');
+const {
+  definicaoAnalisarDesempenho,
+  executarAnalisarDesempenho
+} = require('../tools/analisar_desempenho');
+const {
+  definicaoAnalisarFrete,
+  executarAnalisarFrete
+} = require('../tools/analisar_frete');
+const {
+  definicaoAnalisarOperacao,
+  executarAnalisarOperacao
+} = require('../tools/analisar_operacao');
 
 const PERFIS_TOOLS = Object.freeze({
   indicadores: ['analisar_indicadores'],
   influencias: ['analisar_influencias'],
+  estoque: ['analisar_rupturas'],
+  desempenho: ['analisar_desempenho'],
+  frete: ['analisar_frete'],
+  operacao: ['analisar_operacao'],
   vendas: ['analisar_vendas'],
   catalogo: ['analisar_catalogo'],
   negocio: ['analisar_vendas', 'analisar_catalogo'],
   silver: ['consultar_silver', 'agregar_silver'],
   bronze: ['consultar_bronze', 'agregar_bronze'],
   completo: [
-    'analisar_indicadores', 'analisar_influencias', 'analisar_vendas', 'analisar_catalogo',
+    'analisar_indicadores', 'analisar_influencias', 'analisar_rupturas',
+    'analisar_desempenho', 'analisar_frete', 'analisar_operacao',
+    'analisar_vendas', 'analisar_catalogo',
     'consultar_silver', 'agregar_silver',
     'consultar_bronze', 'agregar_bronze'
   ]
@@ -57,6 +79,26 @@ function criarRegistroFerramentas(dependencias = {}) {
       definicao: definicaoAnalisarInfluencias,
       terminal: true,
       executar: dependencias.executarAnalisarInfluenciasTool || executarAnalisarInfluencias
+    }],
+    ['analisar_rupturas', {
+      definicao: definicaoAnalisarRupturas,
+      terminal: true,
+      executar: dependencias.executarAnalisarRupturasTool || executarAnalisarRupturas
+    }],
+    ['analisar_desempenho', {
+      definicao: definicaoAnalisarDesempenho,
+      terminal: true,
+      executar: dependencias.executarAnalisarDesempenhoTool || executarAnalisarDesempenho
+    }],
+    ['analisar_frete', {
+      definicao: definicaoAnalisarFrete,
+      terminal: true,
+      executar: dependencias.executarAnalisarFreteTool || executarAnalisarFrete
+    }],
+    ['analisar_operacao', {
+      definicao: definicaoAnalisarOperacao,
+      terminal: true,
+      executar: dependencias.executarAnalisarOperacaoTool || executarAnalisarOperacao
     }],
     ['analisar_vendas', {
       definicao: definicaoAnalisarVendas,
@@ -94,7 +136,7 @@ function obterFerramentasDoPerfil(perfil, dependencias = {}) {
   return nomes.map((nome) => registro.get(nome));
 }
 
-function instrumentarFerramentas(ferramentas, onEvento) {
+function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
   if (!onEvento) return ferramentas;
   return ferramentas.map((ferramenta) => ({
     ...ferramenta,
@@ -102,6 +144,9 @@ function instrumentarFerramentas(ferramentas, onEvento) {
       const inicio = Date.now();
       let sucesso = false;
       onEvento(`Executando tool ${ferramenta.definicao.name}...`);
+      if (opcoes.mostrarArgumentos) {
+        onEvento(`Argumentos: ${JSON.stringify(argumentos).slice(0, 1200)}`);
+      }
       try {
         const resultado = await ferramenta.executar(argumentos);
         sucesso = true;

@@ -10,6 +10,7 @@ PostgreSQL estao em:
 ```text
 silver/postgres/
   core/
+    regras_venda.js
     util.js
   dimensoes/
     dim_cliente.js
@@ -24,6 +25,12 @@ silver/postgres/
   fatos/
     fato_venda.js
     fato_venda_item.js
+    fato_pedido.js
+    fato_pedido_item.js
+    fato_nota_fiscal.js
+    fato_nota_fiscal_item.js
+    fato_estoque_atual.js
+    fato_movimento_estoque.js
 ```
 
 ## Fluxo
@@ -36,29 +43,53 @@ PostgreSQL -> Bronze (copia fiel) -> DuckDB (limpeza e joins)
 Uma tabela nova entra primeiro no Bronze. A partir dela, o Silver gera dimensoes
 e fatos enriquecidas. Isso preserva a origem para auditoria e reprocessamento.
 
-## Modelo atual
+## Graos de venda
 
 ```text
-dim_cliente -----------\
-dim_tipo_pedido --------+-> fato_venda ---------\
-dim_transporte_regra ----+                      +-> fato_venda_item
-dim_plataforma_ecommerce/   dim_produto --------/
-
-dim_grupo -----\
-dim_subgrupo ---+-> dim_produto
-dim_marca ------+
-dim_categoria --/
+nota_saida PD -----------------> fato_pedido ---------> fato_pedido_item
+nota_saida NF autorizada ------> fato_nota_fiscal ----> fato_nota_fiscal_item
+nota_saida sem filtro ---------> fato_venda ----------> fato_venda_item
 ```
 
-- `fato_venda`: uma linha por registro interno de venda (`id_nota_saida`).
-- `fato_venda_item`: uma linha por `(id_nota_saida, item)`, ideal para produtos,
-  quantidades e valores vendidos.
+- `fato_pedido`: uma linha por pedido PD, identificado por
+  `(id_empresa, id_pedido_vda_importado)`. E a fonte correta para quantidade,
+  situacao, plataforma e valor de pedidos.
+- `fato_pedido_item`: itens pertencentes aos documentos PD. E a fonte correta
+  para valor e quantidade de produtos pedidos.
+- `fato_nota_fiscal`: uma linha por documento fiscal emitido valido. E a fonte
+  correta para quantidade e valor de notas e faturamento.
+- `fato_nota_fiscal_item`: itens das notas fiscais emitidas validas. E a fonte
+  correta para produto, marca, custo e margem do faturamento.
+- `fato_venda` e `fato_venda_item`: visoes amplas no grao de documento da
+  origem. Continuam disponiveis para auditoria e localizacao de registros, mas
+  nao devem ser usadas para contar pedidos ou calcular faturamento oficial.
 - No vocabulario de negocio, **numero do pedido** e `marketplace_pedido`; o agente
   o apresenta como `numero_pedido`. `id_nota_saida` e apenas o identificador
   interno do registro, apresentado como `id_registro_venda`, e `id_nr_nf` e o
   numero da nota fiscal.
-- As dimensoes podem ser consultadas sozinhas ou usadas para traduzir IDs em
-  nomes nas fatos.
+
+As regras comuns de PD, nota autorizada, devolucao, cancelamento fiscal e sufixo
+reverso ficam centralizadas em `silver/postgres/core/regras_venda.js`. Assim,
+uma correcao de negocio nao precisa ser repetida em cada fato.
+
+### Ligacao entre pedido, nota e devolucao
+
+Pedido, nota fiscal e devolucao sao registros separados na origem. A ligacao
+principal usa `(id_empresa, id_pedido_vda_importado)`, e nao apenas o texto de
+`marketplace_pedido`.
+
+`fato_pedido` classifica cada pedido como:
+
+- `FATURADO`;
+- `PENDENTE`;
+- `CANCELADO`;
+- `DEVOLVIDO`, quando existe documento DV ligado ao pedido;
+- `CANCELADO_FISCAL`, quando a nota possui cancelamento fiscal;
+- `FATURADO_COM_STATUS_CANCELADO`, quando o PD esta cancelado, mas ainda existe
+  NF autorizada sem DV ou cancelamento fiscal encontrado.
+
+O ultimo estado e preservado como conflito de origem. Ele nao e corrigido
+silenciosamente e ainda depende da definicao oficial do negocio.
 
 ## Primeiro objeto: dim_produto
 
@@ -109,32 +140,34 @@ O manifesto e o marcador de sucesso. O leitor ignora Parquets sem um
 
 A construcao falha antes de publicar o manifesto quando:
 
-- a quantidade de produtos muda durante o join;
-- `id_produto` esta nulo;
+- um join multiplica indevidamente o grao declarado;
+- alguma parte obrigatoria da chave primaria esta nula;
 - existem chaves duplicadas;
 - o schema produzido diverge do contrato.
 
-Relacionamentos ausentes sao contabilizados no manifesto para diagnostico.
+Relacionamentos ausentes e reducoes intencionais de linhas em fatos filtradas
+sao contabilizados no manifesto para diagnostico.
 
 ## Estado atual
 
 - todas as tabelas Bronze disponiveis possuem uma dimensao ou fato Silver;
 - os modelos sao construidos em ordem automatica com `--todos`;
 - joins e chaves sao conferidos no manifesto de cada execucao;
-- todos os objetos estao liberados pelas tools seguras do agente Nexus.
+- objetos aprovados sao publicados automaticamente para as tools genericas.
 
 As tools seguras `consultar_silver` e `agregar_silver` ja estao conectadas ao
 agente Nexus.
 
-## Fato de venda por item
+## Fatos de item
 
 `fato_venda_item` possui uma linha por `(id_nota_saida, item)` e combina os
 itens do Bronze com a `fato_venda` e a `dim_produto`. Ela separa
 explicitamente `valor_liquido_unitario` de `valor_total_item`.
 
-A fato pode ser consultada pelo terminal e pelo agente Nexus. O manifesto
-registra inicio/fim da cobertura e quantos itens nao encontraram venda ou produto
-correspondente.
+Para analise de negocio, prefira `fato_pedido_item` ou
+`fato_nota_fiscal_item`, conforme a pergunta seja sobre pedidos ou faturamento.
+Os manifestos registram inicio/fim da cobertura e quantos itens nao encontraram
+cabecalho ou produto correspondente.
 
 ## Exemplo completo: dim_transporte_regra
 
@@ -177,30 +210,26 @@ colunas aprovadas. Nao e necessario manter uma lista paralela nas tools.
 
 ### 4. A fato faz o LEFT JOIN
 
-Uma transportadora pode ter varias regras. Por isso, `fato_venda.js` primeiro
-agrupa as regras por `id_transportadora` e depois liga:
+Quando `nota_saida.id_regra_transporte` esta preenchido, a fato liga diretamente
+a regra:
 
 ```sql
-LEFT JOIN regras_por_transportadora tr
-  ON tr.id_transportadora = nota_saida.id_transportadora
+LEFT JOIN dim_transporte_regra tr
+  ON tr.id_transporte = nota_saida.id_regra_transporte
 ```
 
-O campo `transporte_regras` concatena as descricoes quando existe mais de uma.
-Isso preserva o pedido e impede que um join um-para-muitos multiplique a venda.
-Uma chave sem regra aumenta `vendas_sem_regra_transporte_correspondente`.
+Isso preserva uma unica regra por documento e impede que transportadoras com
+varias regras multipliquem a venda. O nome descritivo sai em
+`transporte_regra`.
 
 ### 5. Construir, conferir e consultar
 
 ```powershell
 npm run silver -- --todos
 npm run consultar:silver -- dim_transporte_regra --schema
-npm run consultar:silver -- fato_venda --colunas id_nota_saida,data_pedido,id_transportadora,transporte_regras --limite 10
-npm run agregar:silver -- fato_venda --agrupar transporte_regras --contar --limite 10
+npm run consultar:silver -- fato_pedido --colunas marketplace_pedido,data_pedido,id_transportadora,transporte_regra,status_pedido --limite 10
+npm run agregar:silver -- fato_pedido --agrupar transporte_regra --contar --limite 10
 ```
-
-Na origem atual existem 63 regras e 58 transportadoras distintas. O join usa
-`transporte_regras.id_transportadora`, pois e essa coluna que corresponde a
-`nota_saida.id_transportadora`; `id_transporte` identifica a regra individual.
 
 ## Licao de qualidade: baseline de cliente
 

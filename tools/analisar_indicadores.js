@@ -17,6 +17,21 @@ const METRICAS = Object.freeze({
     componentes: { valor: 'pedidos_pendentes' },
     calcular: ({ valor }) => valor
   },
+  pedidos_faturados: {
+    objeto: 'kpi_vendas_diario',
+    componentes: { valor: 'pedidos_faturados' },
+    calcular: ({ valor }) => valor
+  },
+  pedidos_devolvidos: {
+    objeto: 'kpi_vendas_diario',
+    componentes: { valor: 'pedidos_devolvidos' },
+    calcular: ({ valor }) => valor
+  },
+  pedidos_status_conflitante: {
+    objeto: 'kpi_vendas_diario',
+    componentes: { valor: 'pedidos_status_conflitante' },
+    calcular: ({ valor }) => valor
+  },
   valor_pedidos_validos: {
     objeto: 'kpi_vendas_diario',
     componentes: { valor: 'valor_pedidos_validos' },
@@ -82,13 +97,14 @@ const METRICAS_PADRAO = Object.freeze([
 const definicaoAnalisarIndicadores = {
   type: 'function',
   name: 'analisar_indicadores',
-  description: 'Consulta KPIs Gold oficiais. resumir totaliza intervalos; painel mostra somente um dia; comparar compara periodos; tendencia mostra dias.',
+  description: 'KPIs Gold: painel diario completo; resumir; comparar periodos; tendencia diaria.',
   strict: true,
   parameters: {
     type: 'object',
     properties: {
       operacao: { type: 'string', enum: ['painel', 'resumir', 'comparar', 'tendencia'] },
       metricas: {
+        description: 'No painel, use null.',
         anyOf: [
           {
             type: 'array',
@@ -99,11 +115,24 @@ const definicaoAnalisarIndicadores = {
           { type: 'null' }
         ]
       },
-      data_inicial: { type: ['string', 'null'] },
-      data_final: { type: ['string', 'null'] },
+      data_inicial: {
+        description: 'Painel mais recente: null.',
+        type: ['string', 'null']
+      },
+      data_final: {
+        type: ['string', 'null']
+      },
+      recencia: {
+        description: 'Painel sem data: prefira mais_recente_completo.',
+        type: ['string', 'null'],
+        enum: ['mais_recente', 'mais_recente_completo', null]
+      },
       limite: { type: 'integer', minimum: 1, maximum: 31 }
     },
-    required: ['operacao', 'metricas', 'data_inicial', 'data_final', 'limite'],
+    required: [
+      'operacao', 'metricas', 'data_inicial', 'data_final',
+      'recencia', 'limite'
+    ],
     additionalProperties: false
   }
 };
@@ -145,7 +174,7 @@ function filtroPeriodo(inicio, fim) {
 }
 
 async function obterCobertura(leitor) {
-  const [primeiro, ultimo] = await Promise.all([
+  const [primeiro, ultimo, ultimoCompleto] = await Promise.all([
     leitor.consultar('painel_executivo_diario', {
       colunas: ['data_referencia'],
       ordenacao: { campo: 'data_referencia', direcao: 'asc' },
@@ -155,18 +184,50 @@ async function obterCobertura(leitor) {
       colunas: ['data_referencia', 'dados_parciais'],
       ordenacao: { campo: 'data_referencia', direcao: 'desc' },
       limite: 1
+    }),
+    leitor.consultar('painel_executivo_diario', {
+      filtros: {
+        dados_parciais: { operador: 'igual', valor: false }
+      },
+      colunas: ['data_referencia'],
+      ordenacao: { campo: 'data_referencia', direcao: 'desc' },
+      limite: 1
     })
   ]);
   const inicio = primeiro.dados[0]?.data_referencia?.toISOString?.().slice(0, 10)
     || String(primeiro.dados[0]?.data_referencia || '').slice(0, 10);
   const fim = ultimo.dados[0]?.data_referencia?.toISOString?.().slice(0, 10)
     || String(ultimo.dados[0]?.data_referencia || '').slice(0, 10);
+  const fimCompleto = ultimoCompleto.dados[0]?.data_referencia?.toISOString?.().slice(0, 10)
+    || String(ultimoCompleto.dados[0]?.data_referencia || '').slice(0, 10);
   return {
     inicio,
     fim,
+    ultimo_dia_completo: fimCompleto || null,
     ultima_data_parcial: Boolean(ultimo.dados[0]?.dados_parciais),
     atualizado_em: ultimo.ultimaConstrucao
   };
+}
+
+async function obterEstoqueAtual(leitor) {
+  const resultado = await leitor.consultar('kpi_estoque_diario', {
+    colunas: [
+      'data_referencia',
+      'produtos_elegiveis_estoque',
+      'produtos_ruptura_atual',
+      'produtos_risco_critico',
+      'produtos_risco_alto',
+      'produtos_risco_medio',
+      'produtos_alerta_30d',
+      'marca_mais_alertas',
+      'produtos_alerta_marca_lider',
+      'saida_30d_marca_lider',
+      'estoque_atualizado_em'
+    ],
+    ordenacao: { campo: 'data_referencia', direcao: 'desc' },
+    limite: 1
+  });
+  return resultado.dados[0] || null;
 }
 
 function normalizarMetricas(valor) {
@@ -183,11 +244,16 @@ async function resolverPeriodo(argumentos, cobertura) {
   if (argumentos.data_final && !argumentos.data_inicial) {
     throw new Error('data_final exige data_inicial.');
   }
+  const dataPadrao = (
+    argumentos.operacao === 'painel' &&
+    !argumentos.data_inicial &&
+    argumentos.recencia !== 'mais_recente'
+  ) ? (cobertura.ultimo_dia_completo || cobertura.fim) : cobertura.fim;
   const fim = argumentos.data_final
     ? dataIso(argumentos.data_final, 'data_final')
     : argumentos.data_inicial
       ? dataIso(argumentos.data_inicial, 'data_inicial')
-      : cobertura.fim;
+      : dataPadrao;
   let inicio = argumentos.data_inicial
     ? dataIso(argumentos.data_inicial, 'data_inicial')
     : fim;
@@ -195,6 +261,17 @@ async function resolverPeriodo(argumentos, cobertura) {
     inicio = deslocarData(fim, -(argumentos.limite - 1));
   }
   if (inicio > fim) throw new Error('data_inicial nao pode ser posterior a data_final.');
+  if (argumentos.operacao === 'painel' && inicio > cobertura.fim) {
+    return {
+      inicio: cobertura.fim,
+      fim: cobertura.fim,
+      ajuste_cobertura: {
+        data_solicitada: fim,
+        data_utilizada: cobertura.fim,
+        motivo: 'data solicitada posterior a ultima data comercial disponivel'
+      }
+    };
+  }
   if (inicio < cobertura.inicio || fim > cobertura.fim) {
     throw new Error(`Periodo fora da cobertura Gold: ${cobertura.inicio} a ${cobertura.fim}.`);
   }
@@ -259,8 +336,19 @@ function compararValores(atual, anterior) {
 
 async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
   validarObjeto(argumentos);
+  if (
+    argumentos.operacao === 'resumir' &&
+    !argumentos.data_inicial &&
+    !argumentos.data_final &&
+    argumentos.recencia
+  ) {
+    argumentos = { ...argumentos, operacao: 'painel' };
+  }
   if (!['painel', 'resumir', 'comparar', 'tendencia'].includes(argumentos.operacao)) {
     throw new Error(`Operacao Gold invalida: ${argumentos.operacao}.`);
+  }
+  if (![null, undefined, 'mais_recente', 'mais_recente_completo'].includes(argumentos.recencia)) {
+    throw new Error('recencia invalida.');
   }
   const limite = argumentos.limite ?? 7;
   if (!Number.isInteger(limite) || limite < 1 || limite > 31) {
@@ -276,22 +364,37 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
       if (periodo.inicio !== periodo.fim) {
         throw new Error('painel aceita somente um dia; use resumir para totalizar um intervalo.');
       }
-      const resultado = await leitor.consultar('painel_executivo_diario', {
-        filtros: filtroPeriodo(periodo.fim, periodo.fim),
-        colunas: [
-          'data_referencia', 'pedidos_validos', 'pedidos_cancelados',
-          'pedidos_pendentes', 'valor_pedidos_validos', 'pedidos_pagos',
-          'valor_pedidos_pagos', 'ticket_medio_pedido',
-          'taxa_cancelamento_pct', 'taxa_emissao_pct', 'notas_emitidas',
-          'faturamento_emitido', 'ticket_medio_faturado',
-          'prazo_medio_emissao_dias', 'pedidos_validos_7d',
-          'faturamento_emitido_7d', 'pedidos_validos_30d',
-          'faturamento_emitido_30d', 'variacao_valor_pedidos_dia_pct',
-          'variacao_faturamento_dia_pct', 'dados_parciais'
-        ],
-        limite: 1
+      const [resultado, estoqueAtual] = await Promise.all([
+        leitor.consultar('painel_executivo_diario', {
+          filtros: filtroPeriodo(periodo.fim, periodo.fim),
+          colunas: [
+            'data_referencia', 'pedidos_validos', 'pedidos_cancelados',
+            'pedidos_pendentes', 'pedidos_faturados', 'pedidos_devolvidos',
+            'pedidos_status_conflitante', 'valor_pedidos_validos', 'pedidos_pagos',
+            'valor_pedidos_pagos', 'ticket_medio_pedido',
+            'taxa_cancelamento_pct', 'taxa_emissao_pct', 'notas_emitidas',
+            'faturamento_emitido', 'ticket_medio_faturado',
+            'prazo_medio_emissao_dias', 'pedidos_validos_7d',
+            'faturamento_emitido_7d', 'pedidos_validos_30d',
+            'faturamento_emitido_30d', 'variacao_valor_pedidos_dia_pct',
+            'variacao_faturamento_dia_pct', 'produtos_elegiveis_estoque',
+            'produtos_ruptura_atual', 'produtos_risco_critico',
+            'produtos_risco_alto', 'produtos_risco_medio',
+            'produtos_alerta_30d', 'marca_mais_alertas',
+            'produtos_alerta_marca_lider', 'saida_30d_marca_lider',
+            'estoque_atualizado_em', 'dados_parciais'
+          ],
+          limite: 1
+        }),
+        obterEstoqueAtual(leitor)
+      ]);
+      return serializar({
+        operacao: 'painel',
+        dados: resultado.dados[0] || null,
+        estoque_atual: estoqueAtual,
+        ajuste_cobertura: periodo.ajuste_cobertura || null,
+        cobertura
       });
-      return serializar({ operacao: 'painel', dados: resultado.dados[0] || null, cobertura });
     }
 
     if (argumentos.operacao === 'tendencia') {

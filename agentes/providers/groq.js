@@ -1,6 +1,7 @@
 const OpenAI = require('openai');
 const {
   flexibilizarCamposNulos,
+  flexibilizarEnumsNulos,
   flexibilizarTiposPrimitivos,
   normalizarArgumentosPeloSchema
 } = require('./schema');
@@ -14,7 +15,9 @@ function converterTools(definicoes = []) {
       name: definicao.name,
       description: definicao.description,
       parameters: flexibilizarTiposPrimitivos(
-        flexibilizarCamposNulos(definicao.parameters)
+        flexibilizarEnumsNulos(
+          flexibilizarCamposNulos(definicao.parameters)
+        )
       )
     }
   }));

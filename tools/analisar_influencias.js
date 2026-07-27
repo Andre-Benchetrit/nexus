@@ -2,15 +2,15 @@ const { criarLeitorSilver } = require('../duckdb/silver');
 const { serializar, validarLista, validarObjeto } = require('./core/validacao');
 
 const DIMENSOES = Object.freeze({
-  marca: { objeto: 'fato_venda_item', campo: 'marca', valor: 'valor_total_item', base: 'itens_faturados' },
-  produto: { objeto: 'fato_venda_item', campo: 'descricao_produto', valor: 'valor_total_item', base: 'itens_faturados' },
-  plataforma: { objeto: 'fato_venda', campo: 'plataforma', valor: 'valor_total_venda', base: 'notas_fiscais' }
+  marca: { objeto: 'fato_nota_fiscal_item', campo: 'marca', valor: 'valor_total_item', base: 'itens_faturados' },
+  produto: { objeto: 'fato_nota_fiscal_item', campo: 'descricao_produto', valor: 'valor_total_item', base: 'itens_faturados' },
+  plataforma: { objeto: 'fato_nota_fiscal', campo: 'plataforma', valor: 'valor_total_venda', base: 'notas_fiscais' }
 });
 
 const definicaoAnalisarInfluencias = {
   type: 'function',
   name: 'analisar_influencias',
-  description: 'Compara o faturamento emitido com o periodo anterior e aponta grupos que mais influenciaram a variacao.',
+  description: 'Uma unica chamada compara o periodo informado com o anterior de mesma duracao e aponta dimensoes que influenciaram a variacao.',
   strict: true,
   parameters: {
     type: 'object',

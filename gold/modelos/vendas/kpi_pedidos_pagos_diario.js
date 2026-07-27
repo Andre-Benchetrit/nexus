@@ -4,7 +4,7 @@ module.exports = {
   descricao: 'Pedidos pagos por data do pedido, conforme itens de notas autorizadas.',
   versaoContrato: 1,
   chavePrimaria: 'data_referencia',
-  fontesSilver: ['fato_venda_item'],
+  fontesSilver: ['fato_pedido_item'],
   fontesGold: [],
   colunas: [
     'data_referencia', 'pedidos_pagos', 'valor_pedidos_pagos',
@@ -23,7 +23,7 @@ module.exports = {
   },
 
   construirSql(contextosSilver) {
-    const itens = `"${contextosSilver.get('fato_venda_item').viewAtual}"`;
+    const itens = `"${contextosSilver.get('fato_pedido_item').viewAtual}"`;
     return `
       WITH base AS (
         SELECT *
@@ -34,12 +34,12 @@ module.exports = {
       )
       SELECT
         CAST(data_pedido AS DATE) AS data_referencia,
-        count(DISTINCT id_nota_saida) AS pedidos_pagos,
+        count(DISTINCT (id_empresa, id_pedido_vda_importado)) AS pedidos_pagos,
         CAST(coalesce(sum(valor_pedido_pago_item), 0) AS DECIMAL(18,2))
           AS valor_pedidos_pagos,
         CAST(
           coalesce(sum(valor_pedido_pago_item), 0) /
-            nullif(count(DISTINCT id_nota_saida), 0)
+            nullif(count(DISTINCT (id_empresa, id_pedido_vda_importado)), 0)
           AS DECIMAL(18,2)
         ) AS ticket_medio_pedido_pago,
         bool_or(data_pedido = limite.ultima_data) AS dados_parciais,
@@ -52,7 +52,7 @@ module.exports = {
   },
 
   construirMetricasQualidadeSql(contextosSilver) {
-    const itens = `"${contextosSilver.get('fato_venda_item').viewAtual}"`;
+    const itens = `"${contextosSilver.get('fato_pedido_item').viewAtual}"`;
     return `
       SELECT
         count(*) FILTER (WHERE pedido_pago = true) AS itens_pagos,

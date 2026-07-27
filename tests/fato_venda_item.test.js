@@ -99,6 +99,8 @@ test.before(async () => {
     SELECT 1 AS id_produto, 'Produto A' AS descricao, 'SKU-1' AS codigo_auxiliar,
       '789' AS cod_barra, 'FAB' AS cod_fabrica, 10 AS id_grupo,
       20 AS id_subgrupo, 30 AS id_marca, 40 AS id_categoria,
+      6::DECIMAL(15,4) AS custo, 100 AS id_fornecedor,
+      200 AS id_comprador, 2 AS prazo_separacao,
       5::DECIMAL(15,4) AS estoque, 'F' AS inativo, 'T' AS disponivel,
       'T' AS envia_site, DATE '2026-01-01' AS dt_cadastro,
       DATE '2026-07-17' AS dt_alteracao
@@ -135,14 +137,19 @@ test.before(async () => {
       NULL::TIMESTAMP AS data_ultimo_status
   `);
   await criarBronze('nota_saida', `
-    SELECT 500::BIGINT AS id_nota_saida, 10 AS id_cliente, 1 AS id_empresa,
+    SELECT 500::BIGINT AS id_nota_saida, 900::BIGINT AS id_pedido_vda_importado,
+      10 AS id_cliente, 1 AS id_empresa,
       3 AS id_tp_pedido, 19 AS id_nat_operacao, 'PD' AS tipo_documento,
-      2 AS id_plataforma, 4 AS id_transportadora,
+      2 AS id_plataforma, 4 AS id_transportadora, 77 AS id_regra_transporte,
       123 AS id_nr_nf, '1' AS serie, DATE '2026-07-16' AS data_pedido,
       DATE '2026-07-16' AS data_emissao, 'F' AS situacao,
       'MKT-500' AS marketplace_pedido, 'RJ' AS entrega_uf,
+      DATE '2026-07-20' AS entrega_data,
       30::DECIMAL(15,4) AS total_nota_fiscal, 'F' AS nf_cancelada,
       '100' AS nfe_cstat,
+      5::DECIMAL(15,4) AS valor_frete,
+      4::DECIMAL(15,2) AS valor_frete_custo,
+      5::DECIMAL(15,2) AS valor_frete_site,
       DATE '2026-07-16' AS dt_cadastro,
       DATE '2026-07-17' AS dt_alteracao
   `);

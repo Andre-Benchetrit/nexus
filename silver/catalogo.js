@@ -9,6 +9,12 @@ const dimPlataformaEcommerce = require('./postgres/dimensoes/dim_plataforma_ecom
 const dimProduto = require('./postgres/dimensoes/dim_produto');
 const fatoVenda = require('./postgres/fatos/fato_venda');
 const fatoVendaItem = require('./postgres/fatos/fato_venda_item');
+const fatoPedido = require('./postgres/fatos/fato_pedido');
+const fatoNotaFiscal = require('./postgres/fatos/fato_nota_fiscal');
+const fatoPedidoItem = require('./postgres/fatos/fato_pedido_item');
+const fatoNotaFiscalItem = require('./postgres/fatos/fato_nota_fiscal_item');
+const fatoEstoqueAtual = require('./postgres/fatos/fato_estoque_atual');
+const fatoMovimentoEstoque = require('./postgres/fatos/fato_movimento_estoque');
 
 const objetos = {
   dim_cliente: dimCliente,
@@ -21,7 +27,13 @@ const objetos = {
   dim_plataforma_ecommerce: dimPlataformaEcommerce,
   dim_produto: dimProduto,
   fato_venda: fatoVenda,
-  fato_venda_item: fatoVendaItem
+  fato_venda_item: fatoVendaItem,
+  fato_pedido: fatoPedido,
+  fato_nota_fiscal: fatoNotaFiscal,
+  fato_pedido_item: fatoPedidoItem,
+  fato_nota_fiscal_item: fatoNotaFiscalItem,
+  fato_estoque_atual: fatoEstoqueAtual,
+  fato_movimento_estoque: fatoMovimentoEstoque
 };
 
 function obterObjeto(nome) {
