@@ -119,9 +119,15 @@ Classificacoes:
 - `SEM_ESTOQUE_SEM_GIRO`: sem estoque e sem demanda recente;
 - `SEM_GIRO`: estoque positivo e sem demanda recente.
 
-A data estimada de ruptura ainda nao considera compras ou reposicoes futuras.
-Essa premissa fica gravada no proprio objeto e sera substituida quando a agenda
-de compras do OneDrive entrar no Nexus.
+A data estimada de ruptura e a cobertura continuam usando exclusivamente o
+estoque do Sysemp; compras previstas nunca aumentam esse saldo. A agenda do
+OneDrive acrescenta sinais separados: proxima previsao, entrega atrasada e
+recebimento indicado nos ultimos sete dias. Assim o agente pode contextualizar
+uma ruptura sem mascarar o saldo oficial.
+
+`estoque_zero_com_recebimento_indicado_7d` significa apenas que a planilha
+registra uma chegada recente e o saldo atual esta zerado. Nao prova falha de
+processamento, pois o item pode ter sido vendido depois.
 
 ## Cobertura e qualidade
 

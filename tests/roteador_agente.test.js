@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  analisarRoteamento,
   classificarPergunta,
   resolverPerfil,
   resolverPerfilComContexto
@@ -17,6 +18,8 @@ test('roteia vendas, catalogo e auditoria sem usar modelo', () => {
   assert.equal(classificarPergunta('Quero auditar os dados brutos do Bronze'), 'bronze');
   assert.equal(classificarPergunta('Quantos registros do cliente MMA existem?'), 'silver');
   assert.equal(classificarPergunta('Quais tipos de pedido existem?'), 'silver');
+  assert.equal(classificarPergunta('Quantos funcionarios eu tenho ativos no momento?'), 'pessoas');
+  assert.equal(classificarPergunta('Quais transportadoras ativas temos cadastradas?'), 'pessoas');
 });
 
 test('roteia explicacao de queda para analise de influencias', () => {
@@ -27,6 +30,12 @@ test('roteia explicacao de queda para analise de influencias', () => {
   assert.equal(
     classificarPergunta(
       'Comparando os dois faturamentos, quais fatores foram responsaveis pelo crescimento?'
+    ),
+    'influencias'
+  );
+  assert.equal(
+    classificarPergunta(
+      'Quais são os principais fatores que levaram a essa diferença entre os meses?'
     ),
     'influencias'
   );
@@ -56,6 +65,35 @@ test('roteia ruptura e cobertura para o perfil de estoque', () => {
   assert.equal(classificarPergunta('Quais produtos estão em ruptura?'), 'estoque');
   assert.equal(classificarPergunta('Qual estoque deve acabar nos próximos 15 dias?'), 'estoque');
   assert.equal(classificarPergunta('Quais produtos têm cobertura crítica?'), 'estoque');
+  assert.equal(
+    classificarPergunta('Qual e o estoque disponivel do produto X?'),
+    'estoque'
+  );
+  assert.equal(
+    classificarPergunta('Quantas unidades temos em estoque do SKU ABC?'),
+    'estoque'
+  );
+});
+
+test('roteia agendamentos e chegadas para reposicoes', () => {
+  assert.equal(
+    classificarPergunta('Quais produtos chegarao no dia 30/07/2026?'),
+    'reposicoes'
+  );
+  assert.equal(
+    classificarPergunta('Quanto do produto X esta previsto no pedido de compra?'),
+    'reposicoes'
+  );
+  assert.equal(
+    classificarPergunta('Quais NFs de entrada foram recebidas?'),
+    'reposicoes'
+  );
+  assert.equal(
+    classificarPergunta(
+      'Esse produto esta em risco de ruptura? Temos algum agendamento para ele depois de 29/07?'
+    ),
+    'estoque_reposicoes'
+  );
 });
 
 test('prioriza painel administrativo quando a pergunta mistura estoque e vendas', () => {
@@ -118,4 +156,17 @@ test('mesma cobertura herda o perfil da consulta anterior', () => {
 test('respeita perfil explicito e valida perfil desconhecido', () => {
   assert.equal(resolverPerfil('qualquer pergunta', 'silver'), 'silver');
   assert.throws(() => resolverPerfil('x', 'impossivel'), /Perfil invalido/);
+});
+
+test('usa fallback hibrido somente quando nenhuma regra tem alta confianca', () => {
+  assert.deepEqual(analisarRoteamento('Como estamos?'), {
+    perfil: 'hibrido',
+    confianca: 'baixa',
+    origem: 'fallback_hibrido'
+  });
+  assert.deepEqual(analisarRoteamento('Quais produtos estao em ruptura?'), {
+    perfil: 'estoque',
+    confianca: 'alta',
+    origem: 'regra_deterministica'
+  });
 });

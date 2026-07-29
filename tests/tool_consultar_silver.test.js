@@ -77,7 +77,8 @@ test('expoe somente objetos Silver aprovados em schema estrito', () => {
     'fato_pedido',
     'fato_nota_fiscal',
     'fato_pedido_item',
-    'fato_nota_fiscal_item'
+    'fato_nota_fiscal_item',
+    'fato_agendamento_compra'
   ]);
   assert.deepEqual(
     new Set(definicaoConsultarSilver.parameters.required),

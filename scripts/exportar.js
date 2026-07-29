@@ -1,5 +1,5 @@
 const { entidades, obterEntidade } = require('../exportadores/catalogo');
-const { exportarPostgres } = require('../exportadores/postgres/exportar');
+const { obterAdaptadorFonte } = require('../exportadores/adaptadores');
 
 function lerArgumentos(argumentos) {
   function valorDepoisDe(flag) {
@@ -30,7 +30,8 @@ async function main() {
   }
 
   const entidade = obterEntidade(opcoes.nome);
-  const resultado = await exportarPostgres(entidade, {
+  const exportar = obterAdaptadorFonte(entidade.fonte);
+  const resultado = await exportar(entidade, {
     dryRun: opcoes.dryRun,
     forcar: opcoes.forcar,
     inicio: opcoes.inicio,
@@ -39,7 +40,8 @@ async function main() {
 
   if (opcoes.dryRun) {
     console.log('Simulação concluída; nenhum dado foi extraído.');
-    console.log(`Consulta: ${resultado.consulta}`);
+    if (resultado.consulta) console.log(`Consulta: ${resultado.consulta}`);
+    if (resultado.conexao) console.log(`Conexao: ${resultado.conexao}`);
     console.log(`Destino: ${resultado.caminhos.parquet}`);
   }
 }

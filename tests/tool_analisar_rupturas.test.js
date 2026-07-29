@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 
 const {
   definicaoAnalisarRupturas,
-  executarAnalisarRupturas
+  executarAnalisarRupturas,
+  normalizarLimite
 } = require('../tools/analisar_rupturas');
 
 function leitorFalso() {
@@ -70,6 +71,11 @@ test('expoe contrato estrito e compacto para rupturas', () => {
     new Set(definicaoAnalisarRupturas.parameters.required),
     new Set(Object.keys(definicaoAnalisarRupturas.parameters.properties))
   );
+});
+
+test('tolera janela de demanda enviada como limite sem ampliar a saida', () => {
+  assert.equal(definicaoAnalisarRupturas.parameters.properties.limite.maximum, 365);
+  assert.equal(normalizarLimite(90), 20);
 });
 
 test('resume as classificacoes de risco', async () => {

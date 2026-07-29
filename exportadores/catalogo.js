@@ -11,6 +11,7 @@ const plataformaEcommerce = require('./postgres/entidades/plataforma_ecommerce')
 const notaSaidaItens = require('./postgres/entidades/nota_saida_itens');
 const produtoInventario = require('./postgres/entidades/produto_inventario');
 const logEstoque = require('./postgres/entidades/log_estoque');
+const agendamentoCompra = require('./onedrive/entidades/agendamento_compra');
 
 const entidades = {
   nota_saida: notaSaida,
@@ -25,7 +26,8 @@ const entidades = {
   plataforma_ecommerce: plataformaEcommerce,
   nota_saida_itens: notaSaidaItens,
   produto_inventario: produtoInventario,
-  log_estoque: logEstoque
+  log_estoque: logEstoque,
+  agendamento_compra: agendamentoCompra
 };
 
 function obterEntidade(nome) {

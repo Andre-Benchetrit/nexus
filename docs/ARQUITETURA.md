@@ -3,7 +3,7 @@
 ## Fluxo principal
 
 ```text
-PostgreSQL
+PostgreSQL + Microsoft 365
   -> exportadores + catalogo Bronze
   -> Parquets Bronze + manifestos
   -> modelos Silver + qualidade
@@ -23,6 +23,7 @@ usar o leitor DuckDB.
 ## Responsabilidades
 
 - `exportadores/`: ingestao fiel da origem e contratos das entidades Bronze.
+- `integracoes/microsoft/`: autenticacao corporativa e cliente Microsoft Graph.
 - `silver/`: dimensoes, fatos, dependencias e validacoes de qualidade.
 - `gold/`: metricas oficiais, paineis e comparacoes derivados somente do Silver.
 - `duckdb/`: repositorios de consulta somente leitura para Bronze, Silver e Gold.
@@ -30,6 +31,8 @@ usar o leitor DuckDB.
 - `tools/analisar_*.js`: fachadas de negocio com respostas autoexplicativas.
 - `agentes/roteador.js`: escolhe localmente o menor perfil de tools.
 - `agentes/ferramentas.js`: registro central e injecao dos executores.
+- `agentes/recuperacao_tools.js`: amplia uma vez uma rota automatica incompleta.
+- `agentes/resposta.js`: normaliza a apresentacao sem misturar regras ao fluxo.
 - `agentes/providers/`: adapters para Gemini, Groq e OpenAI.
 - `agentes/consultor_nexus.js`: facade de orquestracao e entrada de linha de comando.
 
@@ -61,10 +64,13 @@ esse contrato aos seus formatos sem alterar tools ou regras de negocio.
 `agentes/ferramentas.js` concentra definicoes e executores. Testes podem injetar
 implementacoes falsas sem alterar o agente.
 
-### Router deterministico
+### Router hibrido
 
 O roteador classifica palavras de negocio localmente. Isso nao consome API e
-evita enviar todas as tools em cada pergunta.
+evita enviar todas as tools em cada pergunta. Quando a frase nao possui sinais
+suficientes, o perfil `hibrido` oferece todas as fachadas de negocio, mas nunca
+as tools tecnicas. Uma fachada conhecida que tenha faltado pode ser adicionada
+em uma unica nova tentativa; nao existe escalada recursiva.
 
 ## Perfis de tools
 
@@ -77,8 +83,11 @@ evita enviar todas as tools em cada pergunta.
 | `operacao` | funil de pedidos e plataformas | `analisar_operacao` |
 | `frete` | frete cobrado, custo e cobertura | `analisar_frete` |
 | `estoque` | ruptura e cobertura | `analisar_rupturas` |
+| `reposicoes` | compras previstas e recebimentos | `analisar_reposicoes` |
 | `catalogo` | cadastro, composicao e estoque | `analisar_catalogo` |
-| `negocio` | pergunta ambigua | as duas fachadas |
+| `pessoas` | funcionarios e transportadoras | `analisar_pessoas` |
+| `negocio` | perfil manual legado | vendas e catalogo |
+| `hibrido` | pergunta realmente ambigua | todas as fachadas de negocio |
 | `silver` | consulta avancada modelada | tools Silver genericas |
 | `bronze` | auditoria e dados brutos | tools Bronze genericas |
 | `completo` | diagnostico manual | todas as tools |
@@ -106,16 +115,17 @@ mantem os perfis comuns dentro de limites para impedir crescimento acidental.
 
 Medicao atual aproximada:
 
-- indicadores: 620 tokens;
-- estoque: 528;
-- desempenho: 789;
-- frete: 622;
-- operacao: 589;
-- vendas: 844;
-- catalogo: 552;
-- negocio: 1.069;
-- Silver generico: 1.482;
-- Bronze generico: 1.616.
+- indicadores: 648 tokens;
+- estoque: 549;
+- desempenho: 791;
+- frete: 624;
+- operacao: 590;
+- vendas: 846;
+- catalogo: 554;
+- negocio: 1.071;
+- hibrido: 3.457;
+- Silver generico: 1.578;
+- Bronze generico: 1.618.
 
 ## Como adicionar uma capacidade
 

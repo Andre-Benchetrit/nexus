@@ -19,9 +19,10 @@ function medirContexto(perfil) {
 
 function medirTodosPerfis() {
   return [
-    'indicadores', 'estoque', 'desempenho', 'frete', 'operacao',
-    'vendas', 'catalogo',
-    'negocio', 'silver', 'bronze', 'completo'
+    'indicadores', 'estoque', 'estoque_reposicoes', 'reposicoes',
+    'desempenho', 'frete', 'operacao',
+    'vendas', 'catalogo', 'pessoas',
+    'negocio', 'hibrido', 'silver', 'bronze', 'completo'
   ]
     .map(medirContexto);
 }

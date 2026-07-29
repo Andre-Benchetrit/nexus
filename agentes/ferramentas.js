@@ -23,6 +23,10 @@ const {
   executarAnalisarCatalogo
 } = require('../tools/analisar_catalogo');
 const {
+  definicaoAnalisarPessoas,
+  executarAnalisarPessoas
+} = require('../tools/analisar_pessoas');
+const {
   definicaoAnalisarIndicadores,
   executarAnalisarIndicadores
 } = require('../tools/analisar_indicadores');
@@ -34,6 +38,10 @@ const {
   definicaoAnalisarRupturas,
   executarAnalisarRupturas
 } = require('../tools/analisar_rupturas');
+const {
+  definicaoAnalisarReposicoes,
+  executarAnalisarReposicoes
+} = require('../tools/analisar_reposicoes');
 const {
   definicaoAnalisarDesempenho,
   executarAnalisarDesempenho
@@ -47,22 +55,50 @@ const {
   executarAnalisarOperacao
 } = require('../tools/analisar_operacao');
 
+const FERRAMENTAS_NEGOCIO = Object.freeze([
+  'analisar_indicadores',
+  'analisar_influencias',
+  'analisar_rupturas',
+  'analisar_reposicoes',
+  'analisar_desempenho',
+  'analisar_frete',
+  'analisar_operacao',
+  'analisar_vendas',
+  'analisar_catalogo',
+  'analisar_pessoas'
+]);
+
+const PERFIL_POR_FERRAMENTA = Object.freeze({
+  analisar_indicadores: 'indicadores',
+  analisar_influencias: 'influencias',
+  analisar_rupturas: 'estoque',
+  analisar_reposicoes: 'reposicoes',
+  analisar_desempenho: 'desempenho',
+  analisar_frete: 'frete',
+  analisar_operacao: 'operacao',
+  analisar_vendas: 'vendas',
+  analisar_catalogo: 'catalogo',
+  analisar_pessoas: 'pessoas'
+});
+
 const PERFIS_TOOLS = Object.freeze({
   indicadores: ['analisar_indicadores'],
   influencias: ['analisar_influencias'],
   estoque: ['analisar_rupturas'],
+  estoque_reposicoes: ['analisar_rupturas', 'analisar_reposicoes'],
+  reposicoes: ['analisar_reposicoes'],
   desempenho: ['analisar_desempenho'],
   frete: ['analisar_frete'],
   operacao: ['analisar_operacao'],
   vendas: ['analisar_vendas'],
   catalogo: ['analisar_catalogo'],
+  pessoas: ['analisar_pessoas'],
   negocio: ['analisar_vendas', 'analisar_catalogo'],
+  hibrido: FERRAMENTAS_NEGOCIO,
   silver: ['consultar_silver', 'agregar_silver'],
   bronze: ['consultar_bronze', 'agregar_bronze'],
   completo: [
-    'analisar_indicadores', 'analisar_influencias', 'analisar_rupturas',
-    'analisar_desempenho', 'analisar_frete', 'analisar_operacao',
-    'analisar_vendas', 'analisar_catalogo',
+    ...FERRAMENTAS_NEGOCIO,
     'consultar_silver', 'agregar_silver',
     'consultar_bronze', 'agregar_bronze'
   ]
@@ -84,6 +120,11 @@ function criarRegistroFerramentas(dependencias = {}) {
       definicao: definicaoAnalisarRupturas,
       terminal: true,
       executar: dependencias.executarAnalisarRupturasTool || executarAnalisarRupturas
+    }],
+    ['analisar_reposicoes', {
+      definicao: definicaoAnalisarReposicoes,
+      terminal: true,
+      executar: dependencias.executarAnalisarReposicoesTool || executarAnalisarReposicoes
     }],
     ['analisar_desempenho', {
       definicao: definicaoAnalisarDesempenho,
@@ -110,6 +151,11 @@ function criarRegistroFerramentas(dependencias = {}) {
       terminal: true,
       executar: dependencias.executarAnalisarCatalogoTool || executarAnalisarCatalogo
     }],
+    ['analisar_pessoas', {
+      definicao: definicaoAnalisarPessoas,
+      terminal: true,
+      executar: dependencias.executarAnalisarPessoasTool || executarAnalisarPessoas
+    }],
     ['consultar_silver', {
       definicao: definicaoConsultarSilver,
       executar: dependencias.executarConsultarSilverTool || executarConsultarSilver
@@ -133,7 +179,26 @@ function obterFerramentasDoPerfil(perfil, dependencias = {}) {
   const nomes = PERFIS_TOOLS[perfil];
   if (!nomes) throw new Error(`Perfil de tools desconhecido: ${perfil}`);
   const registro = criarRegistroFerramentas(dependencias);
-  return nomes.map((nome) => registro.get(nome));
+  const permiteMultiplasChamadas = nomes.length > 1;
+  return nomes.map((nome) => {
+    const ferramenta = registro.get(nome);
+    if (permiteMultiplasChamadas) {
+      return { ...ferramenta, terminal: false };
+    }
+    return ferramenta;
+  });
+}
+
+function obterFerramentaPorNome(nome, dependencias = {}) {
+  return criarRegistroFerramentas(dependencias).get(nome) || null;
+}
+
+function obterPerfilDaFerramenta(nome) {
+  return PERFIL_POR_FERRAMENTA[nome] || null;
+}
+
+function ferramentaDeNegocio(nome) {
+  return FERRAMENTAS_NEGOCIO.includes(nome);
 }
 
 function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
@@ -149,6 +214,7 @@ function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
       }
       try {
         const resultado = await ferramenta.executar(argumentos);
+        opcoes.onResultado?.(ferramenta.definicao.name, resultado);
         sucesso = true;
         return resultado;
       } catch (erro) {
@@ -166,6 +232,10 @@ function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
 }
 
 module.exports = {
+  FERRAMENTAS_NEGOCIO,
+  ferramentaDeNegocio,
+  obterFerramentaPorNome,
+  obterPerfilDaFerramenta,
   PERFIS_TOOLS,
   criarRegistroFerramentas,
   instrumentarFerramentas,

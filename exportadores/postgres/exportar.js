@@ -12,23 +12,10 @@ const {
   prepararPostgresDuckDB,
   conectarPostgresNoDuckDB
 } = require('../../duckdb/connections');
+const { operacaoArquivoComRetentativas } = require('../core/arquivos');
 const { criarCaminhosExportacao, caminhoParaDuckDB } = require('../core/caminhos');
 const { montarConsultaPostgres, validarEntidade } = require('../core/sql');
 const { exportarConsultaParaCsv, converterCsvParaParquet } = require('./copy_stream');
-
-async function operacaoArquivoComRetentativas(operacao, tentativas = 10) {
-  let ultimoErro;
-  for (let tentativa = 0; tentativa < tentativas; tentativa += 1) {
-    try {
-      return await operacao();
-    } catch (erro) {
-      ultimoErro = erro;
-      if (!['EBUSY', 'EPERM'].includes(erro.code) || tentativa === tentativas - 1) throw erro;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-  throw ultimoErro;
-}
 
 async function janelaJaExportada(raiz, inicio, fim) {
   if (!fs.existsSync(raiz)) return false;

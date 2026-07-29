@@ -92,6 +92,7 @@ npm run silver -- fato_nota_fiscal
 npm run silver -- fato_nota_fiscal_item
 npm run silver -- fato_estoque_atual
 npm run silver -- fato_movimento_estoque
+npm run silver -- fato_agendamento_compra
 ```
 
 Cada construcao cria um snapshot novo. A consulta atual usa a ultima execucao
@@ -128,6 +129,7 @@ npm run consultar:gold -- desempenho_produto_diario --filtro data_referencia=202
 npm run consultar:gold -- kpi_plataforma_diario --filtro data_referencia=2026-07-17 --limite 20
 npm run consultar:gold -- kpi_frete_diario --filtro data_referencia=2026-07-17 --limite 20
 npm run consultar:gold -- risco_ruptura_produto --filtro classificacao_risco=RUPTURA_ATUAL --limite 20
+npm run consultar:gold -- risco_ruptura_produto --filtro tem_reposicao_prevista=true --limite 20
 npm run consultar:gold -- kpi_estoque_diario --ordenar data_referencia --direcao desc --limite 7
 ```
 
@@ -178,6 +180,7 @@ npm run agregar:silver -- fato_estoque_atual --agrupar grupo --somar estoque_dis
 
 # Mais de um calculo
 npm run agregar:silver -- fato_estoque_atual --agrupar grupo --contar --somar estoque_disponivel --limite 10
+npm run agregar:silver -- fato_agendamento_compra --agrupar descricao_produto --somar quantidade_pendente --filtro data_prevista=2026-07-30 --limite 10
 
 # Quantidade de pedidos por plataforma; fato_pedido tem uma linha por pedido
 npm run agregar:silver -- fato_pedido --agrupar plataforma --contar --limite 10
@@ -238,14 +241,16 @@ npm run agente:nexus -- --perfil frete "Quanto cobramos de frete hoje?"
 npm run agente:nexus -- --perfil indicadores "Compare o faturamento deste mes com o anterior"
 npm run agente:nexus -- --perfil estoque "Quais produtos podem acabar nos proximos 15 dias?"
 npm run agente:nexus -- --perfil catalogo "Quais grupos predominam no catalogo?"
+npm run agente:nexus -- --perfil pessoas "Quais transportadoras estao ativas?"
+npm run agente:nexus -- --perfil hibrido "Como estamos?"
 npm run agente:nexus -- --perfil silver "Quantos clientes existem?"
 npm run agente:nexus -- --perfil bronze "Liste os dados brutos disponiveis"
 npm run agente:nexus -- --perfil completo "Quais dados temos?"
 ```
 
 Perfis disponiveis: `automatico`, `indicadores`, `influencias`, `desempenho`,
-`operacao`, `frete`, `estoque`, `vendas`, `catalogo`, `negocio`, `silver`,
-`bronze` e `completo`.
+`operacao`, `frete`, `estoque`, `estoque_reposicoes`, `reposicoes`, `vendas`,
+`catalogo`, `pessoas`, `negocio`, `hibrido`, `silver`, `bronze` e `completo`.
 
 A lista completa das tools e de seus perfis esta em [`TOOLS.md`](TOOLS.md).
 
@@ -265,9 +270,11 @@ O comando antigo continua como alias compativel:
 npm run agente:bronze -- --provider gemini --model gemini-3.1-flash-lite "Quantos clientes temos?"
 ```
 
-Para perguntas comuns, o agente usa `analisar_vendas` ou `analisar_catalogo`.
-As tools genericas `consultar_bronze`, `agregar_bronze`, `consultar_silver` e
-`agregar_silver` continuam disponiveis nos perfis tecnicos.
+Para perguntas comuns, o agente envia somente a fachada de negocio reconhecida.
+Perguntas ambiguas usam o perfil `hibrido`, que oferece as fachadas
+`analisar_*`, mas nao as tools tecnicas. As tools genericas `consultar_bronze`,
+`agregar_bronze`, `consultar_silver` e `agregar_silver` continuam disponiveis
+apenas nos perfis tecnicos ou no perfil `completo`.
 
 Para localizar notas de varios pedidos marketplace, cole os identificadores como
 texto. O resultado informa as NFs, os pedidos ausentes, os encontrados sem NF e
@@ -343,6 +350,31 @@ npm run avaliar:agente -- --executar --provider groq --limite 5
 
 Consulte [`MEMORIA_E_AVALIACAO.md`](MEMORIA_E_AVALIACAO.md) para o contrato de
 seguranca, sessoes e manutencao dos casos.
+
+## OneDrive corporativo
+
+```powershell
+# Conferir configuracao sem revelar segredos
+npm run onedrive:status
+
+# Testar uma conexao configurada
+npm run onedrive:status -- --conexao automacoes_onedrive --testar
+
+# Descobrir drive da conta corporativa de automacoes
+npm run onedrive:descobrir -- --conexao automacoes_onedrive
+
+# Listar ou buscar arquivos
+npm run onedrive:listar -- --conexao automacoes_onedrive
+npm run onedrive:buscar -- --conexao automacoes_onedrive --termo "Agendamento"
+
+# Sincronizar a fonte inicial depois de configurar o item
+npm run onedrive:sincronizar
+npm run silver -- fato_agendamento_compra
+npm run gold -- risco_ruptura_produto
+```
+
+As permissoes, variaveis e fluxo completo estao em
+[`docs/ONEDRIVE.md`](ONEDRIVE.md).
 
 ## Atualizacao automatizada do lake
 

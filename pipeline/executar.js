@@ -1,7 +1,7 @@
 const path = require('node:path');
 
 const { entidades: catalogoBronzePadrao } = require('../exportadores/catalogo');
-const { exportarPostgres } = require('../exportadores/postgres/exportar');
+const { ADAPTADORES_FONTE } = require('../exportadores/adaptadores');
 const { objetos: catalogoSilverPadrao } = require('../silver/catalogo');
 const { construirSilver } = require('../silver/core/executar');
 const { objetos: catalogoGoldPadrao } = require('../gold/catalogo');
@@ -14,10 +14,6 @@ const {
   salvarEstado,
   salvarExecucao
 } = require('./controle');
-
-const ADAPTADORES_FONTE = Object.freeze({
-  postgres: exportarPostgres
-});
 
 function criarIdExecucao(data = new Date()) {
   return `${data.toISOString().replace(/[-:.]/g, '')}-${process.pid}`;

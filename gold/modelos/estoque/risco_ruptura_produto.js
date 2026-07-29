@@ -2,9 +2,13 @@ module.exports = {
   nome: 'risco_ruptura_produto',
   tipo: 'indicador',
   descricao: 'Risco atual e projetado de ruptura por produto da empresa 10.',
-  versaoContrato: 1,
+  versaoContrato: 2,
   chavePrimaria: 'id_produto',
-  fontesSilver: ['fato_estoque_atual', 'fato_movimento_estoque'],
+  fontesSilver: [
+    'fato_estoque_atual',
+    'fato_movimento_estoque',
+    'fato_agendamento_compra'
+  ],
   fontesGold: [],
   colunas: [
     'id_produto',
@@ -35,6 +39,14 @@ module.exports = {
     'ruptura_atual',
     'risco_ruptura_30d',
     'tem_demanda_recente',
+    'tem_reposicao_prevista',
+    'proxima_data_prevista',
+    'tem_entrega_atrasada',
+    'data_entrega_atrasada_mais_antiga',
+    'tem_recebimento_indicado_7d',
+    'data_ultimo_recebimento_indicado',
+    'estoque_zero_com_recebimento_indicado_7d',
+    'reposicao_incluida_no_estoque_calculado',
     'janela_demanda_dias',
     'premissa_sem_reposicao',
     'cobertura_movimentos_inicio',
@@ -65,6 +77,11 @@ module.exports = {
       'media_diaria_saida_90d', 'dias_cobertura', 'data_estimada_ruptura',
       'classificacao_risco', 'prioridade_risco', 'ruptura_atual',
       'risco_ruptura_30d', 'tem_demanda_recente', 'janela_demanda_dias',
+      'tem_reposicao_prevista', 'proxima_data_prevista',
+      'tem_entrega_atrasada', 'data_entrega_atrasada_mais_antiga',
+      'tem_recebimento_indicado_7d', 'data_ultimo_recebimento_indicado',
+      'estoque_zero_com_recebimento_indicado_7d',
+      'reposicao_incluida_no_estoque_calculado',
       'premissa_sem_reposicao', 'cobertura_movimentos_inicio',
       'cobertura_movimentos_fim', 'dthr_atualizacao_estoque'
     ]
@@ -73,6 +90,7 @@ module.exports = {
   construirSql(contextosSilver) {
     const estoque = `"${contextosSilver.get('fato_estoque_atual').viewAtual}"`;
     const movimentos = `"${contextosSilver.get('fato_movimento_estoque').viewAtual}"`;
+    const agendamentos = `"${contextosSilver.get('fato_agendamento_compra').viewAtual}"`;
     return `
       WITH limite AS (
         SELECT
@@ -97,6 +115,35 @@ module.exports = {
           AND m.movimento_venda = true
           AND m.data_referencia > l.data_referencia - INTERVAL 90 DAY
         GROUP BY m.id_produto
+      ), logistica AS (
+        SELECT
+          a.id_produto,
+          bool_or(
+            a.status_logistico = 'PREVISTO'
+            AND a.data_prevista >= l.data_referencia
+          ) AS tem_reposicao_prevista,
+          min(a.data_prevista) FILTER (
+            WHERE a.status_logistico = 'PREVISTO'
+              AND a.data_prevista >= l.data_referencia
+          ) AS proxima_data_prevista,
+          bool_or(a.entrega_atrasada OR a.status_logistico = 'NAO_RECEBIDO')
+            AS tem_entrega_atrasada,
+          min(a.data_prevista) FILTER (
+            WHERE a.entrega_atrasada OR a.status_logistico = 'NAO_RECEBIDO'
+          ) AS data_entrega_atrasada_mais_antiga,
+          bool_or(
+            a.tem_evidencia_recebimento
+            AND a.data_entrada > l.data_referencia - INTERVAL 7 DAY
+            AND a.data_entrada <= l.data_referencia
+          ) AS tem_recebimento_indicado_7d,
+          max(a.data_entrada) FILTER (
+            WHERE a.tem_evidencia_recebimento
+              AND a.data_entrada <= l.data_referencia
+          ) AS data_ultimo_recebimento_indicado
+        FROM ${agendamentos} a
+        CROSS JOIN limite l
+        WHERE a.id_produto IS NOT NULL
+        GROUP BY a.id_produto
       ), base AS (
         SELECT
           e.*,
@@ -106,11 +153,19 @@ module.exports = {
           coalesce(d.saida_venda_7d, 0) AS saida_venda_7d,
           coalesce(d.saida_venda_30d, 0) AS saida_venda_30d,
           coalesce(d.saida_venda_90d, 0) AS saida_venda_90d,
+          coalesce(lo.tem_reposicao_prevista, false) AS tem_reposicao_prevista,
+          lo.proxima_data_prevista,
+          coalesce(lo.tem_entrega_atrasada, false) AS tem_entrega_atrasada,
+          lo.data_entrega_atrasada_mais_antiga,
+          coalesce(lo.tem_recebimento_indicado_7d, false)
+            AS tem_recebimento_indicado_7d,
+          lo.data_ultimo_recebimento_indicado,
           CAST(coalesce(d.saida_venda_90d, 0) / 90.0 AS DECIMAL(18,4))
             AS media_diaria_saida_90d
         FROM ${estoque} e
         CROSS JOIN limite l
         LEFT JOIN demanda d ON d.id_produto = e.id_produto
+        LEFT JOIN logistica lo ON lo.id_produto = e.id_produto
         WHERE e.empresa_analisada = true
           AND e.produto_ativo = true
           AND e.envia_site = true
@@ -181,6 +236,15 @@ module.exports = {
         classificacao_risco IN ('RUPTURA_ATUAL', 'CRITICO', 'ALTO', 'MEDIO')
           AS risco_ruptura_30d,
         media_diaria_saida_90d > 0 AS tem_demanda_recente,
+        tem_reposicao_prevista,
+        proxima_data_prevista,
+        tem_entrega_atrasada,
+        data_entrega_atrasada_mais_antiga,
+        tem_recebimento_indicado_7d,
+        data_ultimo_recebimento_indicado,
+        estoque_disponivel <= 0 AND tem_recebimento_indicado_7d
+          AS estoque_zero_com_recebimento_indicado_7d,
+        false AS reposicao_incluida_no_estoque_calculado,
         90 AS janela_demanda_dias,
         true AS premissa_sem_reposicao,
         cobertura_inicio AS cobertura_movimentos_inicio,

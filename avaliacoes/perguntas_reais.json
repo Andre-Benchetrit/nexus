@@ -28,6 +28,17 @@
       "criterios": ["entender a referencia ao periodo anterior", "decompor por marca"]
     },
     {
+      "id": "fatores-diferenca-contextual",
+      "categoria": "memoria",
+      "pergunta": "Quais sao os principais fatores que levaram a essa diferenca entre os meses?",
+      "contextoAnterior": {
+        "pergunta": "Compare o faturamento de julho com junho de 2026.",
+        "resposta": "O faturamento dos dois meses foi comparado."
+      },
+      "perfilEsperado": "influencias",
+      "criterios": ["usar analisar_influencias", "reaproveitar os periodos anteriores", "nao inventar causalidade"]
+    },
+    {
       "id": "continuacao-mesma-cobertura",
       "categoria": "memoria",
       "pergunta": "E de junho, se pegarmos a mesma cobertura?",
@@ -200,6 +211,48 @@
       "pergunta": "Quantos clientes cadastrados existem atualmente?",
       "perfilEsperado": "silver",
       "criterios": ["consultar dimensao de clientes"]
+    },
+    {
+      "id": "funcionarios-ativos",
+      "categoria": "pessoas",
+      "pergunta": "Quantos funcionarios eu tenho ativos no momento?",
+      "perfilEsperado": "pessoas",
+      "criterios": ["usar dim_funcionario", "filtrar funcionario_ativo=true", "considerar todas as empresas"]
+    },
+    {
+      "id": "transportadoras-ativas",
+      "categoria": "pessoas",
+      "pergunta": "Quais transportadoras ativas temos cadastradas?",
+      "perfilEsperado": "pessoas",
+      "criterios": ["usar dim_transportadora", "filtrar transportadora_ativa=true", "considerar todas as empresas"]
+    },
+    {
+      "id": "reposicoes-dia",
+      "categoria": "reposicoes",
+      "pergunta": "Quais produtos estao previstos para chegar no dia 30/07/2026?",
+      "perfilEsperado": "reposicoes",
+      "criterios": ["listar parcelas sem soma-las", "nao aumentar o estoque oficial"]
+    },
+    {
+      "id": "quantidade-reposicao-dia",
+      "categoria": "reposicoes",
+      "pergunta": "Qual quantidade de cada produto esta prevista para chegar no dia 30/07/2026?",
+      "perfilEsperado": "reposicoes",
+      "criterios": ["somar quantidade pendente por produto", "informar que parcelas foram somadas", "nao tratar como estoque disponivel"]
+    },
+    {
+      "id": "recebimentos-atrasados",
+      "categoria": "reposicoes",
+      "pergunta": "Quais pedidos de compra foram recebidos com atraso?",
+      "perfilEsperado": "reposicoes",
+      "criterios": ["usar NF, data de entrada e quantidade recebida", "preservar parcelas", "nao confiar apenas na anotacao do fornecedor"]
+    },
+    {
+      "id": "fallback-hibrido-ambiguidade",
+      "categoria": "roteamento",
+      "pergunta": "Como estamos?",
+      "perfilEsperado": "hibrido",
+      "criterios": ["oferecer somente fachadas de negocio", "nao liberar automaticamente tools Silver ou Bronze"]
     }
   ]
 }

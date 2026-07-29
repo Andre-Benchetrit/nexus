@@ -6,6 +6,8 @@ Indicadores e definicoes de negocio: [`docs/GOLD.md`](docs/GOLD.md).
 
 Atualizacao escalavel do lake: [`docs/AUTOMACAO.md`](docs/AUTOMACAO.md).
 
+OneDrive como fonte corporativa: [`docs/ONEDRIVE.md`](docs/ONEDRIVE.md).
+
 O Nexus é o hub de entrada do data lake. Ele busca dados em bancos, APIs e arquivos e os guarda de forma padronizada para consumo posterior por análises, APIs e IAs.
 
 ## Modelo mental

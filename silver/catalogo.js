@@ -17,6 +17,7 @@ const fatoPedidoItem = require('./postgres/fatos/fato_pedido_item');
 const fatoNotaFiscalItem = require('./postgres/fatos/fato_nota_fiscal_item');
 const fatoEstoqueAtual = require('./postgres/fatos/fato_estoque_atual');
 const fatoMovimentoEstoque = require('./postgres/fatos/fato_movimento_estoque');
+const fatoAgendamentoCompra = require('./onedrive/fatos/fato_agendamento_compra');
 
 const objetos = {
   dim_cliente: dimCliente,
@@ -37,7 +38,8 @@ const objetos = {
   fato_pedido_item: fatoPedidoItem,
   fato_nota_fiscal_item: fatoNotaFiscalItem,
   fato_estoque_atual: fatoEstoqueAtual,
-  fato_movimento_estoque: fatoMovimentoEstoque
+  fato_movimento_estoque: fatoMovimentoEstoque,
+  fato_agendamento_compra: fatoAgendamentoCompra
 };
 
 function obterObjeto(nome) {

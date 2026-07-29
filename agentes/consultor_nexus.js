@@ -5,14 +5,22 @@ dotenv.config({ path: path.join(__dirname, '.env'), quiet: true });
 dotenv.config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
 
 const { criarProvider, PROVIDER_PADRAO } = require('./providers');
-const { obterInstrucoes } = require('./instrucoes');
+const { obterInstrucaoPerfil, obterInstrucoes } = require('./instrucoes');
 const {
   instrumentarFerramentas,
   obterFerramentasDoPerfil
 } = require('./ferramentas');
-const { pedeMesmaCobertura, resolverPerfilComContexto } = require('./roteador');
+const {
+  pedeMesmaCobertura,
+  resolverRoteamentoComContexto
+} = require('./roteador');
 const { completarAnoEmDatas, obterDataReferencia } = require('./contexto_temporal');
 const { criarMemoria, pareceContinuacao } = require('./memoria');
+const { planejarRecuperacaoTool } = require('./recuperacao_tools');
+const {
+  aplicarGarantiasResposta,
+  normalizarResultadoTool
+} = require('./resposta');
 
 const MAX_RODADAS_NEGOCIO = 4;
 const MAX_RODADAS_GENERICAS = 4;
@@ -46,33 +54,50 @@ async function executarAgente(pergunta, dependencias = {}) {
   const perguntaParaRoteamento = pareceContinuacao(texto) && ultimaPergunta
     ? `${ultimaPergunta} ${texto}`
     : texto;
-  const perfil = dependencias.tools
-    ? 'customizado'
-    : resolverPerfilComContexto(
+  const roteamento = dependencias.tools
+    ? {
+      perfil: 'customizado',
+      confianca: 'explicita',
+      origem: 'tools_customizadas'
+    }
+    : resolverRoteamentoComContexto(
       texto,
       historicoCurto,
       dependencias.perfilTools || 'automatico'
     );
-  const ferramentas = dependencias.tools || obterFerramentasDoPerfil(perfil, dependencias);
-  const toolsComProgresso = instrumentarFerramentas(
-    ferramentas,
+  const perfilInicial = roteamento.perfil;
+  let perfilEfetivo = perfilInicial;
+  let ferramentas = dependencias.tools ||
+    obterFerramentasDoPerfil(perfilInicial, dependencias);
+  const resultadosTools = [];
+  const instrumentar = (itens) => instrumentarFerramentas(
+    itens,
     dependencias.onEvento,
-    { mostrarArgumentos: dependencias.debugTools === true }
+    {
+      mostrarArgumentos: dependencias.debugTools === true,
+      onResultado(nome, resultado) {
+        resultadosTools.push({
+          nome,
+          resultado: normalizarResultadoTool(resultado)
+        });
+      }
+    }
   );
   const maxRodadas = dependencias.maxRodadas || (
-    ['indicadores', 'vendas', 'catalogo', 'negocio'].includes(perfil)
+    ['indicadores', 'vendas', 'catalogo', 'negocio'].includes(perfilInicial)
       ? MAX_RODADAS_NEGOCIO
       : MAX_RODADAS_GENERICAS
   );
   dependencias.onEvento?.(
-    `Perfil ${perfil}: ${ferramentas.map(({ definicao }) => definicao.name).join(', ')}.`
+    `Perfil ${perfilInicial} (${roteamento.confianca}/${roteamento.origem}): ` +
+    `${ferramentas.map(({ definicao }) => definicao.name).join(', ')}.`
   );
   if (perguntaNormalizada !== texto) {
     dependencias.onEvento?.(`Data sem ano interpretada com ${dataReferencia.slice(0, 4)}.`);
   }
 
   const instrucoesBase = obterInstrucoes(
-    perfil === 'customizado' ? 'completo' : perfil,
+    perfilInicial === 'customizado' ? 'completo' : perfilInicial,
     dataReferencia
   );
   const contextoMemoria = memoria?.montarContexto(perguntaParaRoteamento);
@@ -87,23 +112,63 @@ async function executarAgente(pergunta, dependencias = {}) {
       'periodo, limitado ao ultimo dia do mes. Consulte novamente a tool.'
     )
     : '';
-  const resultado = await criarProviderConfigurado(dependencias).executar({
+  const instrucoesComuns = [instrucoesBase, contextoMemoria, contextoCobertura]
+    .filter(Boolean);
+  const provider = criarProviderConfigurado(dependencias);
+  const executarProvider = (itens, instrucoesExtras = []) => provider.executar({
     pergunta: perguntaNormalizada,
-    instrucoes: [instrucoesBase, contextoMemoria, contextoCobertura]
+    instrucoes: [...instrucoesComuns, ...instrucoesExtras]
       .filter(Boolean)
       .join('\n\n'),
-    tools: toolsComProgresso,
+    tools: instrumentar(itens),
     maxRodadas,
     onEvento: dependencias.onEvento
   });
+  let resultado;
+  let recuperacao = null;
+  try {
+    resultado = await executarProvider(ferramentas);
+  } catch (erro) {
+    const roteamentoAutomatico = !dependencias.tools &&
+      (dependencias.perfilTools || 'automatico') === 'automatico';
+    recuperacao = roteamentoAutomatico
+      ? planejarRecuperacaoTool(erro, ferramentas, dependencias)
+      : null;
+    if (!recuperacao) throw erro;
+
+    dependencias.onEvento?.(
+      `Roteamento ampliado: ${recuperacao.nome} foi solicitada pelo provider.`
+    );
+    resultadosTools.length = 0;
+    ferramentas = [
+      ...ferramentas,
+      recuperacao.ferramenta
+    ].map((ferramenta) => ({ ...ferramenta, terminal: false }));
+    perfilEfetivo = recuperacao.perfil;
+    resultado = await executarProvider(ferramentas, [
+      obterInstrucaoPerfil(recuperacao.perfil),
+      `Recuperacao de roteamento: a fachada ${recuperacao.nome} agora esta disponivel.`
+    ]);
+  }
+  const resultadoFormatado = {
+    ...resultado,
+    texto: aplicarGarantiasResposta(resultado.texto, resultadosTools),
+    roteamento: {
+      perfilInicial,
+      perfilEfetivo,
+      confianca: roteamento.confianca,
+      origem: roteamento.origem,
+      toolRecuperada: recuperacao?.nome || null
+    }
+  };
   memoria?.registrarInteracao({
     pergunta: perguntaNormalizada,
-    resposta: resultado.texto,
+    resposta: resultadoFormatado.texto,
     provider: resultado.provider,
     modelo: resultado.modelo,
-    perfil
+    perfil: perfilEfetivo
   });
-  return resultado;
+  return resultadoFormatado;
 }
 
 function lerArgumentos(argumentos) {

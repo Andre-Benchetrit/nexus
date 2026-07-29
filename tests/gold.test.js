@@ -55,6 +55,11 @@ const fatoMovimentoEstoqueTeste = {
   chavePrimaria: 'id_sequencia',
   consulta: { colunasPadrao: ['id_sequencia'] }
 };
+const fatoAgendamentoCompraTeste = {
+  nome: 'fato_agendamento_compra',
+  chavePrimaria: 'id_agendamento_compra',
+  consulta: { colunasPadrao: ['id_agendamento_compra'] }
+};
 const catalogoSilver = {
   fato_venda: fatoVendaTeste,
   fato_venda_item: fatoVendaItemTeste,
@@ -62,7 +67,8 @@ const catalogoSilver = {
   fato_nota_fiscal: fatoNotaFiscalTeste,
   fato_pedido_item: fatoPedidoItemTeste,
   fato_estoque_atual: fatoEstoqueAtualTeste,
-  fato_movimento_estoque: fatoMovimentoEstoqueTeste
+  fato_movimento_estoque: fatoMovimentoEstoqueTeste,
+  fato_agendamento_compra: fatoAgendamentoCompraTeste
 };
 const nomesGoldTeste = [
   'kpi_vendas_diario',
@@ -307,6 +313,35 @@ async function criarFatoMovimentoEstoqueSilver() {
   }));
 }
 
+async function criarFatoAgendamentoCompraSilver() {
+  const diretorio = path.join(
+    raizLake, 'silver', 'fato_agendamento_compra',
+    'dt_processamento=2026-07-19', 'execucao=20260719T120400000Z'
+  );
+  await fs.mkdir(diretorio, { recursive: true });
+  const arquivo = path.join(diretorio, 'dados.parquet').replace(/\\/g, '/').replace(/'/g, "''");
+  const con = criarConexaoDuckDB();
+  try {
+    await runDuckDB(con, `COPY (
+      SELECT * FROM (VALUES
+        (1::BIGINT, 1, DATE '2026-07-20', NULL::DATE, 'PREVISTO', false, false),
+        (2::BIGINT, 1, DATE '2026-07-17', DATE '2026-07-18', 'RECEBIDO', true, false),
+        (3::BIGINT, 2, DATE '2026-07-10', NULL::DATE, 'ATRASADO', false, true)
+      ) AS dados(
+        id_agendamento_compra, id_produto, data_prevista, data_entrada,
+        status_logistico, tem_evidencia_recebimento, entrega_atrasada
+      )
+    ) TO '${arquivo}' (FORMAT PARQUET)`);
+  } finally {
+    await fecharConexaoDuckDB(con);
+  }
+  await fs.writeFile(path.join(diretorio, 'manifest.json'), JSON.stringify({
+    objeto: 'fato_agendamento_compra', status: 'sucesso',
+    inicio: '2026-07-19T12:04:00.000Z', fim: '2026-07-19T12:05:00.000Z',
+    totalLinhas: 3, checksum: 'teste-agendamento', arquivo: 'dados.parquet'
+  }));
+}
+
 test.before(async () => {
   raizLake = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-gold-'));
   await criarFatoVendaSilver();
@@ -316,6 +351,7 @@ test.before(async () => {
   await criarFatoPedidoItemSilver();
   await criarFatoEstoqueAtualSilver();
   await criarFatoMovimentoEstoqueSilver();
+  await criarFatoAgendamentoCompraSilver();
   resultados = [];
   for (const [indice, objeto] of ordenarObjetosPorDependencias(nomesGoldTeste).entries()) {
     resultados.push(await construirGold(objeto, {
@@ -358,6 +394,29 @@ test('classifica ruptura atual e cobertura futura de estoque', async () => {
     { id_produto: 3, classificacao_risco: 'SAUDAVEL', dias_cobertura: 200 },
     { id_produto: 4, classificacao_risco: 'SEM_ESTOQUE_SEM_GIRO', dias_cobertura: null }
   ]);
+});
+
+test('mantem reposicao como sinal separado do estoque oficial', async () => {
+  const resultado = await leitor.consultar('risco_ruptura_produto', {
+    filtros: { id_produto: 1 },
+    colunas: [
+      'estoque_disponivel',
+      'tem_reposicao_prevista',
+      'proxima_data_prevista',
+      'tem_recebimento_indicado_7d',
+      'estoque_zero_com_recebimento_indicado_7d',
+      'reposicao_incluida_no_estoque_calculado'
+    ],
+    limite: 1
+  });
+  assert.deepEqual(resultado.dados[0], {
+    estoque_disponivel: 0,
+    tem_reposicao_prevista: true,
+    proxima_data_prevista: new Date('2026-07-20T00:00:00.000Z'),
+    tem_recebimento_indicado_7d: true,
+    estoque_zero_com_recebimento_indicado_7d: true,
+    reposicao_incluida_no_estoque_calculado: false
+  });
 });
 
 test('registra fotografia diaria de rupturas e marca mais afetada', async () => {

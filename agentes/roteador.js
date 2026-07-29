@@ -1,8 +1,8 @@
 const PERFIS = Object.freeze([
-  'automatico', 'indicadores', 'influencias', 'estoque', 'desempenho', 'frete',
-  'operacao',
-  'vendas', 'catalogo',
-  'negocio', 'silver', 'bronze', 'completo'
+  'automatico', 'indicadores', 'influencias', 'estoque', 'estoque_reposicoes',
+  'desempenho', 'frete', 'operacao', 'reposicoes',
+  'vendas', 'catalogo', 'pessoas',
+  'negocio', 'hibrido', 'silver', 'bronze', 'completo'
 ]);
 
 function normalizarTexto(texto) {
@@ -12,7 +12,7 @@ function normalizarTexto(texto) {
     .toLowerCase();
 }
 
-function classificarPergunta(pergunta) {
+function classificarPorRegras(pergunta) {
   const texto = normalizarTexto(pergunta);
   const auditoria = /\bbronze\b|dado[s]? bruto[s]?|auditori|versoes do registro|alteracoes do registro/.test(texto);
   if (auditoria) return 'bronze';
@@ -23,10 +23,13 @@ function classificarPergunta(pergunta) {
     /ruptur|risco.{0,20}estoque|sem estoque/.test(texto);
   if (resumoAdministrativo || resumoMultidominio) return 'indicadores';
 
-  const estoque = /ruptur|\bcobertura\b|risco.{0,20}estoque|sem estoque|reposi|(?:podem?|vai|irao).{0,15}(?:acabar|faltar)|estoque.{0,30}(acabar|dura|dias|critico|faltar)/.test(texto);
+  const estoque = /ruptur|\bcobertura\b|risco.{0,20}estoque|sem estoque|(?:podem?|vai|irao).{0,15}(?:acabar|faltar)|estoque.{0,30}(acabar|dura|dias|critico|faltar|disponivel|atual|produto|sku)|(?:quanto|quantas?|qual).{0,25}\bestoque\b/.test(texto);
+  const reposicoes = /pedidos? de compra|compras? agendadas?|\bagendament|nfs? de entrada|reposi[cç][aã]o|(?:produto|mercadoria).{0,30}(?:chegar|recebid)|(?:chegar|recebid).{0,30}(?:produto|mercadoria|fornecedor)/.test(texto);
+  if (estoque && reposicoes) return 'estoque_reposicoes';
   if (estoque) return 'estoque';
+  if (reposicoes) return 'reposicoes';
 
-  const influencias = /influenci|contribui|fatores?.{0,35}(respons|explic|caus|por tras)|caus.{0,25}(queda|alta|crescimento|variacao)|respons.vel.{0,25}(queda|alta|crescimento|variacao|diferenca)/.test(texto);
+  const influencias = /influenci|contribui|fatores?.{0,45}(respons|explic|caus|por tras|levar|motiv|origin|gerar|provoc)|(?:caus|levou|levaram|motiv).{0,30}(queda|alta|crescimento|variacao|diferenca)|respons.vel.{0,25}(queda|alta|crescimento|variacao|diferenca)/.test(texto);
   if (influencias) return 'influencias';
 
   if (/frete|custo de entrega|custo logistico/.test(texto)) return 'frete';
@@ -58,15 +61,30 @@ function classificarPergunta(pergunta) {
   const vendasDiretas = /vend|fatur|receita|notas? fiscais?|\bnotas?\b|\bnf\b|marketplace|ticket medio|mais compr|devol|quantos? pedidos|pedidos? (por|do|da|de|em|entre)|ultimos? pedidos/.test(texto);
   if (vendasDiretas) return 'vendas';
 
+  if (/funcionari|colaborador|transportadoras?/.test(texto)) return 'pessoas';
+
   const cadastroSilver = /cliente|regras? de transporte|tipos? de pedido|plataformas? disponiveis/.test(texto);
   if (cadastroSilver) return 'silver';
 
   if (/\bpedidos?\b/.test(texto)) return 'vendas';
 
-  const catalogo = /catalog|estoque|produto|marca|grupo|subgrupo|categoria|sku|\bean\b|linha branca|composicao/.test(texto);
+  const catalogo = /catalog|produto|marca|grupo|subgrupo|categoria|sku|\bean\b|linha branca|composicao/.test(texto);
   if (catalogo) return 'catalogo';
 
-  return 'negocio';
+  return 'hibrido';
+}
+
+function analisarRoteamento(pergunta) {
+  const perfil = classificarPorRegras(pergunta);
+  return {
+    perfil,
+    confianca: perfil === 'hibrido' ? 'baixa' : 'alta',
+    origem: perfil === 'hibrido' ? 'fallback_hibrido' : 'regra_deterministica'
+  };
+}
+
+function classificarPergunta(pergunta) {
+  return analisarRoteamento(pergunta).perfil;
 }
 
 function resolverPerfil(pergunta, solicitado = 'automatico') {
@@ -97,10 +115,30 @@ function obterPerfilAnterior(historico = []) {
 }
 
 function resolverPerfilComContexto(pergunta, historico = [], solicitado = 'automatico') {
-  if (solicitado !== 'automatico') return resolverPerfil(pergunta, solicitado);
+  return resolverRoteamentoComContexto(pergunta, historico, solicitado).perfil;
+}
+
+function resolverRoteamentoComContexto(
+  pergunta,
+  historico = [],
+  solicitado = 'automatico'
+) {
+  if (solicitado !== 'automatico') {
+    return {
+      perfil: resolverPerfil(pergunta, solicitado),
+      confianca: 'explicita',
+      origem: 'perfil_solicitado'
+    };
+  }
   if (pedeMesmaCobertura(pergunta)) {
     const anterior = obterPerfilAnterior(historico);
-    if (anterior) return anterior;
+    if (anterior) {
+      return {
+        perfil: anterior,
+        confianca: 'contextual',
+        origem: 'mesma_cobertura'
+      };
+    }
   }
   const ultimaPergunta = historico.at(-1)?.pergunta;
   const texto = ultimaPergunta && /^(e |agora |tambem |nesse|nessa|desses|dessas)/.test(
@@ -108,15 +146,23 @@ function resolverPerfilComContexto(pergunta, historico = [], solicitado = 'autom
   )
     ? `${ultimaPergunta} ${pergunta}`
     : pergunta;
-  return resolverPerfil(texto);
+  const roteamento = analisarRoteamento(texto);
+  return {
+    ...roteamento,
+    origem: texto === pergunta
+      ? roteamento.origem
+      : 'continuacao_contextual'
+  };
 }
 
 module.exports = {
   PERFIS,
+  analisarRoteamento,
   classificarPergunta,
   normalizarTexto,
   obterPerfilAnterior,
   pedeMesmaCobertura,
   resolverPerfil,
-  resolverPerfilComContexto
+  resolverPerfilComContexto,
+  resolverRoteamentoComContexto
 };

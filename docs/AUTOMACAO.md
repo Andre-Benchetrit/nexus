@@ -146,6 +146,9 @@ outro orquestrador.
 ## Novas fontes
 
 Entidades e modelos novos sao descobertos pelos catalogos. Uma fonte diferente
-de PostgreSQL, como OneDrive, precisa apenas de um adaptador de extracao com o
-mesmo retorno de manifesto e de seu registro em `pipeline/executar.js`.
-Silver, Gold, controle, dependencias e agendamento continuam iguais.
+de PostgreSQL precisa de um adaptador de extracao com o mesmo retorno de
+manifesto. O registro central fica em `exportadores/adaptadores.js`; Silver,
+Gold, controle, dependencias e agendamento continuam iguais.
+
+O adaptador OneDrive ja esta registrado. Consulte [ONEDRIVE.md](ONEDRIVE.md)
+para conexoes, permissoes, comandos e contrato de planilhas.

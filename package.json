@@ -15,6 +15,11 @@
     "lake:atualizar": "node scripts/atualizar-lake.js",
     "lake:plano": "node scripts/atualizar-lake.js --dry-run",
     "lake:status": "node scripts/atualizar-lake.js --status",
+    "onedrive:status": "node scripts/onedrive.js status",
+    "onedrive:descobrir": "node scripts/onedrive.js descobrir",
+    "onedrive:listar": "node scripts/onedrive.js listar",
+    "onedrive:buscar": "node scripts/onedrive.js buscar",
+    "onedrive:sincronizar": "node scripts/exportar.js agendamento_compra",
     "consultar:gold": "node scripts/consultar-gold.js",
     "agente:nexus": "node agentes/consultor_nexus.js",
     "agente:bronze": "node agentes/consultor_nexus.js",
@@ -33,6 +38,7 @@
     "fast-csv": "^5.0.7",
     "openai": "^6.46.0",
     "pg": "^8.22.0",
-    "pg-copy-streams": "^7.0.0"
+    "pg-copy-streams": "^7.0.0",
+    "read-excel-file": "^8.0.3"
   }
 }

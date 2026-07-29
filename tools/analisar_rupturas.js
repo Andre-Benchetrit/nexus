@@ -1,7 +1,6 @@
 const { criarLeitorGold } = require('../duckdb/gold');
 const {
   serializar,
-  validarLimite,
   validarLista,
   validarObjeto
 } = require('./core/validacao');
@@ -20,7 +19,7 @@ const ALERTAS_PADRAO = Object.freeze(['RUPTURA_ATUAL', 'CRITICO', 'ALTO', 'MEDIO
 const definicaoAnalisarRupturas = {
   type: 'function',
   name: 'analisar_rupturas',
-  description: 'Consulta risco de ruptura da empresa 10. Cobertura usa estoque disponivel e saidas de venda dos ultimos 90 dias, sem reposicoes futuras.',
+  description: 'Risco de ruptura da empresa 10: estoque Sysemp, demanda de 90 dias e reposicao como sinal. Limite=produtos.',
   strict: true,
   parameters: {
     type: 'object',
@@ -40,7 +39,11 @@ const definicaoAnalisarRupturas = {
       },
       marca: { type: ['string', 'null'] },
       produto: { type: ['string', 'null'] },
-      limite: { type: 'integer', minimum: 1, maximum: 20 }
+      limite: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 365
+      }
     },
     required: ['operacao', 'classificacoes', 'marca', 'produto', 'limite'],
     additionalProperties: false
@@ -59,6 +62,14 @@ function normalizarClassificacoes(valor, operacao) {
     }
   }
   return unicas;
+}
+
+function normalizarLimite(valor) {
+  const limite = valor ?? 10;
+  if (!Number.isInteger(limite) || limite < 1 || limite > 365) {
+    throw new Error('limite deve ser um inteiro entre 1 e 365.');
+  }
+  return Math.min(limite, 20);
 }
 
 function montarFiltros(argumentos, classificacoes) {
@@ -104,7 +115,7 @@ async function executarAnalisarRupturas(argumentos, dependencias = {}) {
   if (!operacoes.includes(argumentos.operacao)) {
     throw new Error(`Operacao de rupturas invalida: ${argumentos.operacao}`);
   }
-  const limite = validarLimite(argumentos.limite, 10, 20);
+  const limite = normalizarLimite(argumentos.limite);
   const classificacoes = normalizarClassificacoes(
     argumentos.classificacoes,
     argumentos.operacao
@@ -183,7 +194,15 @@ async function executarAnalisarRupturas(argumentos, dependencias = {}) {
         'data_estimada_ruptura',
         'classificacao_risco',
         'prioridade_risco',
-        'premissa_sem_reposicao'
+        'premissa_sem_reposicao',
+        'tem_reposicao_prevista',
+        'proxima_data_prevista',
+        'tem_entrega_atrasada',
+        'data_entrega_atrasada_mais_antiga',
+        'tem_recebimento_indicado_7d',
+        'data_ultimo_recebimento_indicado',
+        'estoque_zero_com_recebimento_indicado_7d',
+        'reposicao_incluida_no_estoque_calculado'
       ],
       limite: 500
     });
@@ -203,5 +222,6 @@ module.exports = {
   ALERTAS_PADRAO,
   CLASSIFICACOES,
   definicaoAnalisarRupturas,
-  executarAnalisarRupturas
+  executarAnalisarRupturas,
+  normalizarLimite
 };

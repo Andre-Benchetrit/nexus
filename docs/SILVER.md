@@ -33,17 +33,42 @@ silver/postgres/
     fato_nota_fiscal_item.js
     fato_estoque_atual.js
     fato_movimento_estoque.js
+onedrive/
+  fatos/
+    fato_agendamento_compra.js
 ```
 
 ## Fluxo
 
 ```text
-PostgreSQL -> Bronze (projecao controlada) -> DuckDB (limpeza e joins)
-           -> Silver (Parquet validado) -> tools -> agentes
+PostgreSQL/OneDrive -> Bronze -> DuckDB (limpeza e joins)
+                    -> Silver (Parquet validado) -> tools -> agentes
 ```
 
 Uma tabela nova entra primeiro no Bronze. A partir dela, o Silver gera dimensoes
 e fatos enriquecidas. Isso preserva a origem para auditoria e reprocessamento.
+
+## Agendamentos de compra
+
+`fato_agendamento_compra` preserva uma linha por parcela da aba `BASE`. Mantem
+somente cinco meses pela data prevista e relaciona produto primeiro por
+`id_produto`, usando SKU apenas como alternativa.
+
+NF de entrada, data de entrada e quantidade recebida prevalecem sobre a anotacao
+manual do fornecedor. Os estados sao `PREVISTO`, `ATRASADO`, `NAO_RECEBIDO`,
+`RECEBIDO_PARCIAL` e `RECEBIDO`.
+
+Quando `data_entrada_original` esta no futuro em relacao a extracao e a inversao
+dia/mes produz uma data valida ate a extracao, o Silver usa a data corrigida e
+marca `data_entrada_corrigida_dia_mes=true`. A data original permanece publicada
+para auditoria.
+
+As parcelas nao sao consolidadas no fato. A soma acontece apenas na tool de
+reposicoes quando a pergunta solicita quantidade. A operacao
+`ultimo_recebimento` consolida excepcionalmente todas as parcelas do produto na
+data de entrada mais recente e apresenta todos os pedidos e NFs. O campo
+`afeta_estoque_oficial` e sempre falso: estoque disponivel continua vindo
+exclusivamente do Sysemp.
 
 ## Graos de venda
 

@@ -162,8 +162,12 @@ function criarLeitorBronze(opcoes = {}) {
     const viewAtual = nomeViewAtual(entidade);
     const chavesPrimarias = normalizarChavesPrimarias(entidade.extracao?.chavePrimaria);
     const cursor = entidade.extracao?.cursor;
+    const estrategiaVisaoAtual = entidade.extracao?.estrategiaVisaoAtual || 'por_chave_cursor';
 
-    if (!chavesPrimarias.length || !cursor) {
+    if (
+      estrategiaVisaoAtual !== 'ultima_execucao' &&
+      (!chavesPrimarias.length || !cursor)
+    ) {
       throw new Error(`Entidade ${nome} precisa de chavePrimaria e cursor para consulta atual.`);
     }
 
@@ -178,18 +182,30 @@ function criarLeitorBronze(opcoes = {}) {
       )
     `);
 
-    await runDuckDB(con, `
-      CREATE OR REPLACE TEMP VIEW ${citarIdentificador(viewAtual)} AS
-      SELECT *
-      FROM ${citarIdentificador(viewHistorica)}
-      QUALIFY row_number() OVER (
-        PARTITION BY ${chavesPrimarias.map(citarIdentificador).join(', ')}
-        ORDER BY
-          ${citarIdentificador(cursor)} DESC NULLS LAST,
-          ${citarIdentificador('execucao')} DESC NULLS LAST,
-          ${citarIdentificador('filename')} DESC
-      ) = 1
-    `);
+    if (estrategiaVisaoAtual === 'ultima_execucao') {
+      await runDuckDB(con, `
+        CREATE OR REPLACE TEMP VIEW ${citarIdentificador(viewAtual)} AS
+        SELECT *
+        FROM ${citarIdentificador(viewHistorica)}
+        WHERE ${citarIdentificador('execucao')} = (
+          SELECT max(${citarIdentificador('execucao')})
+          FROM ${citarIdentificador(viewHistorica)}
+        )
+      `);
+    } else {
+      await runDuckDB(con, `
+        CREATE OR REPLACE TEMP VIEW ${citarIdentificador(viewAtual)} AS
+        SELECT *
+        FROM ${citarIdentificador(viewHistorica)}
+        QUALIFY row_number() OVER (
+          PARTITION BY ${chavesPrimarias.map(citarIdentificador).join(', ')}
+          ORDER BY
+            ${citarIdentificador(cursor)} DESC NULLS LAST,
+            ${citarIdentificador('execucao')} DESC NULLS LAST,
+            ${citarIdentificador('filename')} DESC
+        ) = 1
+      `);
+    }
 
     const schema = await allComParametros(
       con,
