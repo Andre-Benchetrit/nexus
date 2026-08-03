@@ -97,14 +97,16 @@ const METRICAS_PADRAO = Object.freeze([
 const definicaoAnalisarIndicadores = {
   type: 'function',
   name: 'analisar_indicadores',
-  description: 'KPIs Gold: painel diario completo; resumir; comparar periodos; tendencia diaria.',
+  description:
+    'KPIs Gold: painel diario completo ou focado; resumir; comparar periodos; tendencia diaria. Datas explicitas nunca sao substituidas por outra data.',
   strict: true,
   parameters: {
     type: 'object',
     properties: {
       operacao: { type: 'string', enum: ['painel', 'resumir', 'comparar', 'tendencia'] },
       metricas: {
-        description: 'No painel, use null.',
+        description:
+          'No painel, use null para o resumo administrativo completo ou informe ate 4 metricas para uma resposta focada.',
         anyOf: [
           {
             type: 'array',
@@ -116,7 +118,7 @@ const definicaoAnalisarIndicadores = {
         ]
       },
       data_inicial: {
-        description: 'Painel mais recente: null.',
+        description: 'Data literal em AAAA-MM-DD. Painel mais recente: null.',
         type: ['string', 'null']
       },
       data_final: {
@@ -244,6 +246,7 @@ async function resolverPeriodo(argumentos, cobertura) {
   if (argumentos.data_final && !argumentos.data_inicial) {
     throw new Error('data_final exige data_inicial.');
   }
+  const temDataExplicita = Boolean(argumentos.data_inicial || argumentos.data_final);
   const dataPadrao = (
     argumentos.operacao === 'painel' &&
     !argumentos.data_inicial &&
@@ -260,6 +263,7 @@ async function resolverPeriodo(argumentos, cobertura) {
     : fim;
   let ajusteCobertura = null;
   if (
+    !temDataExplicita &&
     argumentos.recencia === 'mais_recente_completo' &&
     cobertura.ultimo_dia_completo &&
     inicio <= cobertura.ultimo_dia_completo &&
@@ -276,21 +280,44 @@ async function resolverPeriodo(argumentos, cobertura) {
     inicio = deslocarData(fim, -(argumentos.limite - 1));
   }
   if (inicio > fim) throw new Error('data_inicial nao pode ser posterior a data_final.');
-  if (argumentos.operacao === 'painel' && inicio > cobertura.fim) {
+  if (
+    argumentos.operacao === 'painel' &&
+    temDataExplicita &&
+    (inicio < cobertura.inicio || fim > cobertura.fim)
+  ) {
     return {
-      inicio: cobertura.fim,
-      fim: cobertura.fim,
-      ajuste_cobertura: {
-        data_solicitada: fim,
-        data_utilizada: cobertura.fim,
-        motivo: 'data solicitada posterior a ultima data comercial disponivel'
-      }
+      inicio,
+      fim,
+      data_solicitada: fimSolicitado,
+      indisponivel: true,
+      ajuste_cobertura: null
     };
   }
   if (inicio < cobertura.inicio || fim > cobertura.fim) {
     throw new Error(`Periodo fora da cobertura Gold: ${cobertura.inicio} a ${cobertura.fim}.`);
   }
-  return { inicio, fim, ajuste_cobertura: ajusteCobertura };
+  return {
+    inicio,
+    fim,
+    data_solicitada: temDataExplicita ? fimSolicitado : null,
+    indisponivel: false,
+    ajuste_cobertura: ajusteCobertura
+  };
+}
+
+function respostaPainelIndisponivel(periodo, cobertura, modo) {
+  return serializar({
+    operacao: 'painel',
+    modo,
+    data_solicitada: periodo.data_solicitada || periodo.fim,
+    data_analisada: null,
+    dados_disponiveis: false,
+    dados_parciais: null,
+    metricas: modo === 'focado' ? null : undefined,
+    ultima_data_disponivel: cobertura.fim,
+    ultimo_dia_completo: cobertura.ultimo_dia_completo,
+    cobertura
+  });
 }
 
 function dividirEmLotes(valores, tamanho) {
@@ -369,6 +396,17 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
   if (!Number.isInteger(limite) || limite < 1 || limite > 31) {
     throw new Error('limite deve estar entre 1 e 31.');
   }
+  if (
+    argumentos.operacao === 'painel' &&
+    argumentos.metricas != null &&
+    !argumentos.data_inicial &&
+    !argumentos.data_final &&
+    !argumentos.recencia
+  ) {
+    throw new Error(
+      'Painel focado exige uma data explicita ou recencia mais_recente/mais_recente_completo.'
+    );
+  }
   const leitor = (dependencias.criarLeitor || criarLeitorGold)();
   try {
     const cobertura = await obterCobertura(leitor);
@@ -376,8 +414,31 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
     const metricas = normalizarMetricas(argumentos.metricas);
 
     if (argumentos.operacao === 'painel') {
+      const modo = argumentos.metricas == null ? 'completo' : 'focado';
+      if (periodo.indisponivel) {
+        return respostaPainelIndisponivel(periodo, cobertura, modo);
+      }
       if (periodo.inicio !== periodo.fim) {
         throw new Error('painel aceita somente um dia; use resumir para totalizar um intervalo.');
+      }
+      if (modo === 'focado') {
+        const resultado = await leitor.consultar('painel_executivo_diario', {
+          filtros: filtroPeriodo(periodo.fim, periodo.fim),
+          colunas: ['data_referencia', 'dados_parciais', ...metricas],
+          limite: 1
+        });
+        const dados = resultado.dados[0] || null;
+        if (!dados) return respostaPainelIndisponivel(periodo, cobertura, modo);
+        return serializar({
+          operacao: 'painel',
+          modo,
+          data_solicitada: periodo.data_solicitada,
+          data_analisada: dados.data_referencia,
+          dados_disponiveis: true,
+          dados_parciais: Boolean(dados.dados_parciais),
+          metricas: Object.fromEntries(metricas.map((nome) => [nome, dados[nome]])),
+          cobertura
+        });
       }
       const [resultado, estoqueAtual] = await Promise.all([
         leitor.consultar('painel_executivo_diario', {
@@ -403,9 +464,16 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
         }),
         obterEstoqueAtual(leitor)
       ]);
+      const dados = resultado.dados[0] || null;
+      if (!dados) return respostaPainelIndisponivel(periodo, cobertura, modo);
       return serializar({
         operacao: 'painel',
-        dados: resultado.dados[0] || null,
+        modo,
+        data_solicitada: periodo.data_solicitada,
+        data_analisada: dados.data_referencia,
+        dados_disponiveis: true,
+        dados_parciais: Boolean(dados.dados_parciais),
+        dados,
         estoque_atual: estoqueAtual,
         ajuste_cobertura: periodo.ajuste_cobertura || null,
         cobertura

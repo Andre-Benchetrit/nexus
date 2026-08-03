@@ -14,7 +14,7 @@ const {
   lerUltimaExecucao
 } = require('../pipeline/controle');
 const { executarPipeline } = require('../pipeline/executar');
-const { lerArgumentos } = require('../scripts/atualizar-lake');
+const { lerArgumentos, resumirExecucao } = require('../scripts/atualizar-lake');
 
 async function diretorioTemporario(t) {
   const diretorio = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-pipeline-'));
@@ -34,11 +34,16 @@ function catalogosTeste() {
     extracao: { modo: 'snapshot' }
   };
   const catalogoBronze = { pedidos: incremental, produtos: snapshot };
-  const dim = { nome: 'dim_produto', tipo: 'dimensao' };
-  const fato = { nome: 'fato_pedido', tipo: 'fato' };
+  const dim = {
+    nome: 'dim_produto', tipo: 'dimensao', fontesBronze: ['produtos']
+  };
+  const fato = {
+    nome: 'fato_pedido', tipo: 'fato', fontesBronze: ['pedidos'],
+    fontesSilver: ['dim_produto']
+  };
   const catalogoSilver = { dim_produto: dim, fato_pedido: fato };
-  const kpi = { nome: 'kpi_pedido', tipo: 'indicador' };
-  const painel = { nome: 'painel', tipo: 'painel' };
+  const kpi = { nome: 'kpi_pedido', tipo: 'indicador', fontesSilver: ['fato_pedido'] };
+  const painel = { nome: 'painel', tipo: 'painel', fontesGold: ['kpi_pedido'] };
   const catalogoGold = { kpi_pedido: kpi, painel };
   return {
     catalogoBronze,
@@ -212,8 +217,83 @@ test('falha interrompe dependentes, registra erro e libera a trava', async (t) =
   );
 
   assert.deepEqual(chamadas, ['bronze']);
-  assert.equal((await lerUltimaExecucao(raizLake)).status, 'erro');
+  const ultima = await lerUltimaExecucao(raizLake);
+  assert.equal(ultima.status, 'erro');
+  assert.equal(ultima.etapas[1].status, 'bloqueada');
+  assert.equal(ultima.etapas[1].bloqueadaPor[0].chave, 'bronze:pedidos');
   await assert.rejects(fs.access(caminhosControle(raizLake).trava));
+});
+
+test('falha isolada preserva ramos independentes e gera execucao parcial', async (t) => {
+  const raizLake = await diretorioTemporario(t);
+  const chamadas = [];
+  const catalogoBronze = {
+    agendamento: { nome: 'agendamento', fonte: 'onedrive', extracao: { modo: 'snapshot' } }
+  };
+  const catalogoSilver = {
+    fato_agendamento: {
+      nome: 'fato_agendamento', fontesBronze: ['agendamento']
+    },
+    fato_pedido: { nome: 'fato_pedido' }
+  };
+  const catalogoGold = {
+    kpi_estoque: { nome: 'kpi_estoque', fontesSilver: ['fato_agendamento'] },
+    kpi_vendas: { nome: 'kpi_vendas', fontesSilver: ['fato_pedido'] }
+  };
+  const plano = {
+    versao: 1,
+    modo: 'dias_completos',
+    etapas: {
+      bronze: [{
+        camada: 'bronze', nome: 'agendamento', fonte: 'onedrive', acao: 'exportar'
+      }],
+      silver: [
+        { camada: 'silver', nome: 'fato_agendamento', acao: 'construir' },
+        { camada: 'silver', nome: 'fato_pedido', acao: 'construir' }
+      ],
+      gold: [
+        { camada: 'gold', nome: 'kpi_estoque', acao: 'construir' },
+        { camada: 'gold', nome: 'kpi_vendas', acao: 'construir' }
+      ]
+    }
+  };
+
+  const resultado = await executarPipeline({ raizLake }, {
+    estado: { versao: 1, entidades: {} },
+    criarPlano: async () => plano,
+    catalogoBronze,
+    catalogoSilver,
+    catalogoGold,
+    adaptadoresFonte: {
+      onedrive: async () => {
+        chamadas.push('bronze:agendamento');
+        throw new Error('planilha invalida');
+      }
+    },
+    construirSilver: async (objeto) => {
+      chamadas.push(`silver:${objeto.nome}`);
+      return { totalLinhas: 1 };
+    },
+    construirGold: async (objeto) => {
+      chamadas.push(`gold:${objeto.nome}`);
+      return { totalLinhas: 1 };
+    }
+  });
+
+  assert.equal(resultado.execucao.status, 'parcial');
+  assert.deepEqual(chamadas, [
+    'bronze:agendamento', 'silver:fato_pedido', 'gold:kpi_vendas'
+  ]);
+  assert.deepEqual(
+    resultado.execucao.etapas.map(({ camada, nome, status }) => ({ camada, nome, status })),
+    [
+      { camada: 'bronze', nome: 'agendamento', status: 'erro' },
+      { camada: 'silver', nome: 'fato_agendamento', status: 'bloqueada' },
+      { camada: 'silver', nome: 'fato_pedido', status: 'sucesso' },
+      { camada: 'gold', nome: 'kpi_estoque', status: 'bloqueada' },
+      { camada: 'gold', nome: 'kpi_vendas', status: 'sucesso' }
+    ]
+  );
 });
 
 test('interpreta opcoes de automacao pela linha de comando', () => {
@@ -234,4 +314,22 @@ test('interpreta opcoes de automacao pela linha de comando', () => {
     }
   );
   assert.equal(dataNoFuso(new Date('2026-07-28T01:00:00Z')), '2026-07-27');
+});
+
+test('resume sucesso, falhas e bloqueios para o status operacional', () => {
+  assert.deepEqual(resumirExecucao({
+    id: 'run-1', status: 'parcial', modo: 'intradiario',
+    iniciadoEm: 'inicio', finalizadoEm: 'fim', duracaoMs: 10,
+    etapas: [
+      { status: 'sucesso' }, { status: 'erro' }, { status: 'bloqueada' }
+    ],
+    falhas: [{ etapa: 'bronze:a' }],
+    bloqueios: [{ etapa: 'silver:b' }]
+  }), {
+    id: 'run-1', status: 'parcial', modo: 'intradiario',
+    iniciadoEm: 'inicio', finalizadoEm: 'fim', duracaoMs: 10,
+    etapas: { sucesso: 1, ignoradas: 0, erros: 1, bloqueadas: 1 },
+    falhas: [{ etapa: 'bronze:a' }],
+    bloqueios: [{ etapa: 'silver:b' }]
+  });
 });

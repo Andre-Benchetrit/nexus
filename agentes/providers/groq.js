@@ -59,13 +59,6 @@ function criarProviderGroq(opcoes = {}) {
       const ferramentas = tools?.length
         ? tools
         : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
-      const definicoes = ferramentas.map((tool) => tool.definicao);
-      const ferramentasPorNome = new Map(
-        ferramentas.map((tool) => [tool.definicao.name, tool])
-      );
-      const definicoesPorNome = new Map(
-        ferramentas.map((tool) => [tool.definicao.name, tool.definicao])
-      );
       const messages = [
         { role: 'system', content: instrucoes },
         { role: 'user', content: pergunta }
@@ -73,11 +66,19 @@ function criarProviderGroq(opcoes = {}) {
       let deveFinalizar = false;
 
       for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
+        const definicoes = ferramentas.map((tool) => tool.definicao);
+        const ferramentasPorNome = new Map(
+          ferramentas.map((tool) => [tool.definicao.name, tool])
+        );
+        const definicoesPorNome = new Map(
+          ferramentas.map((tool) => [tool.definicao.name, tool.definicao])
+        );
         onEvento?.(`Groq: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
         const resposta = await client.chat.completions.create({
           model: modelo,
           messages,
           tools: converterTools(definicoes),
+          parallel_tool_calls: false,
           tool_choice: deveFinalizar ? 'none' : 'auto',
           temperature: 0.1
         });
@@ -116,7 +117,10 @@ function criarProviderGroq(opcoes = {}) {
               definicoesPorNome.get(nome)?.parameters
             );
             resultado = await ferramenta.executar(argumentos);
-            if (ferramenta.terminal === true) deveFinalizar = true;
+            const terminal = typeof ferramenta.terminal === 'function'
+              ? ferramenta.terminal(argumentos, resultado)
+              : ferramenta.terminal;
+            if (terminal === true) deveFinalizar = true;
           } catch (erro) {
             resultado = JSON.stringify({ erro: erro.message });
           }

@@ -536,27 +536,20 @@ test('tool Gold resume varias metricas sem reinterpretar formulas', async () => 
   });
 });
 
-test('resumo com recencia completa exclui o ultimo dia parcial', async () => {
-  const resposta = JSON.parse(await executarAnalisarIndicadores({
-    operacao: 'resumir',
-    metricas: ['faturamento_emitido'],
-    data_inicial: '2026-07-17',
-    data_final: '2026-07-19',
-    recencia: 'mais_recente_completo',
-    limite: 7
-  }, {
-    criarLeitor: () => criarLeitorGold({ raizLake, catalogo: catalogoGold })
-  }));
-
-  assert.deepEqual(resposta.periodo, {
-    inicio: '2026-07-17',
-    fim: '2026-07-17'
-  });
-  assert.deepEqual(resposta.ajuste_cobertura, {
-    data_solicitada: '2026-07-19',
-    data_utilizada: '2026-07-17',
-    motivo: 'ultimo dia parcial excluido da totalizacao'
-  });
+test('periodo explicito fora da cobertura nao e substituido', async () => {
+  await assert.rejects(
+    executarAnalisarIndicadores({
+      operacao: 'resumir',
+      metricas: ['faturamento_emitido'],
+      data_inicial: '2026-07-17',
+      data_final: '2026-07-19',
+      recencia: 'mais_recente_completo',
+      limite: 7
+    }, {
+      criarLeitor: () => criarLeitorGold({ raizLake, catalogo: catalogoGold })
+    }),
+    /Periodo fora da cobertura Gold/
+  );
 });
 
 test('tool painel inclui o bloco de estoque atual com data propria', async () => {
@@ -594,22 +587,56 @@ test('resumo recente sem datas e tratado como painel administrativo completo', a
   assert.notEqual(resposta.dados, null);
 });
 
-test('painel posterior a cobertura recua explicitamente para o ultimo dia disponivel', async () => {
+test('painel posterior a cobertura informa indisponibilidade sem trocar a data', async () => {
   const resposta = JSON.parse(await executarAnalisarIndicadores({
     operacao: 'painel',
-    metricas: null,
+    metricas: ['pedidos_pagos'],
     data_inicial: '2026-07-19',
     data_final: '2026-07-19',
     limite: 1
   }, {
     criarLeitor: () => criarLeitorGold({ raizLake, catalogo: catalogoGold })
   }));
-  assert.equal(resposta.dados.data_referencia, '2026-07-18T00:00:00.000Z');
-  assert.deepEqual(resposta.ajuste_cobertura, {
-    data_solicitada: '2026-07-19',
-    data_utilizada: '2026-07-18',
-    motivo: 'data solicitada posterior a ultima data comercial disponivel'
+  assert.equal(resposta.data_solicitada, '2026-07-19');
+  assert.equal(resposta.data_analisada, null);
+  assert.equal(resposta.dados_disponiveis, false);
+  assert.equal(resposta.ultima_data_disponivel, '2026-07-18');
+  assert.equal(resposta.ultimo_dia_completo, '2026-07-17');
+});
+
+test('painel focado retorna apenas metricas pedidas e sinaliza parcial', async () => {
+  const resposta = JSON.parse(await executarAnalisarIndicadores({
+    operacao: 'painel',
+    metricas: ['pedidos_pagos', 'valor_pedidos_pagos'],
+    data_inicial: '2026-07-18',
+    data_final: '2026-07-18',
+    recencia: null,
+    limite: 1
+  }, {
+    criarLeitor: () => criarLeitorGold({ raizLake, catalogo: catalogoGold })
+  }));
+  assert.equal(resposta.modo, 'focado');
+  assert.equal(resposta.data_analisada, '2026-07-18T00:00:00.000Z');
+  assert.equal(resposta.dados_parciais, true);
+  assert.deepEqual(resposta.metricas, {
+    pedidos_pagos: '1',
+    valor_pedidos_pagos: 300
   });
+  assert.equal(Object.hasOwn(resposta, 'estoque_atual'), false);
+});
+
+test('painel focado ambiguo exige data ou recencia', async () => {
+  await assert.rejects(
+    executarAnalisarIndicadores({
+      operacao: 'painel',
+      metricas: ['pedidos_pagos'],
+      data_inicial: null,
+      data_final: null,
+      recencia: null,
+      limite: 1
+    }),
+    /Painel focado exige/
+  );
 });
 
 test('tendencia explicita retorna todo o intervalo sem truncar pelo limite sugerido', async () => {

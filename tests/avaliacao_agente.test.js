@@ -10,6 +10,7 @@ const { resolverPerfilComContexto } = require('../agentes/roteador');
 test('todos os casos permanentes seguem o perfil esperado', () => {
   const casos = carregarCasos();
   assert.ok(casos.length >= 20);
+  assert.equal(new Set(casos.map((caso) => caso.id)).size, casos.length);
   for (const caso of casos) {
     assert.equal(
       resolverPerfilComContexto(

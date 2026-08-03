@@ -240,16 +240,18 @@ npm run agente:nexus -- --perfil operacao "Qual plataforma teve mais cancelament
 npm run agente:nexus -- --perfil frete "Quanto cobramos de frete hoje?"
 npm run agente:nexus -- --perfil indicadores "Compare o faturamento deste mes com o anterior"
 npm run agente:nexus -- --perfil estoque "Quais produtos podem acabar nos proximos 15 dias?"
+npm run agente:nexus -- --perfil produto "Resolva este EAN para o SKU do produto"
 npm run agente:nexus -- --perfil catalogo "Quais grupos predominam no catalogo?"
 npm run agente:nexus -- --perfil pessoas "Quais transportadoras estao ativas?"
 npm run agente:nexus -- --perfil hibrido "Como estamos?"
+npm run agente:nexus -- --perfil gold "Quais indicadores Gold estao disponiveis?"
 npm run agente:nexus -- --perfil silver "Quantos clientes existem?"
 npm run agente:nexus -- --perfil bronze "Liste os dados brutos disponiveis"
 npm run agente:nexus -- --perfil completo "Quais dados temos?"
 ```
 
 Perfis disponiveis: `automatico`, `indicadores`, `influencias`, `desempenho`,
-`operacao`, `frete`, `estoque`, `estoque_reposicoes`, `reposicoes`, `vendas`,
+`operacao`, `frete`, `estoque`, `estoque_reposicoes`, `reposicoes`, `produto`, `vendas`,
 `catalogo`, `pessoas`, `negocio`, `hibrido`, `silver`, `bronze` e `completo`.
 
 A lista completa das tools e de seus perfis esta em [`TOOLS.md`](TOOLS.md).
@@ -257,6 +259,11 @@ A lista completa das tools e de seus perfis esta em [`TOOLS.md`](TOOLS.md).
 Datas informadas apenas como `DD/MM` recebem automaticamente o ano da data de
 referencia da FID (`America/Sao_Paulo`). Em rankings de transportadora, a tool
 agrupa por `id_transportadora` e exclui registros sem transportadora informada.
+"Hoje" usa literalmente a data nesse fuso. Se ainda nao houver Gold para ela, o
+agente informa indisponibilidade em vez de trocar silenciosamente pela ultima
+data carregada.
+Timestamps de atualizacao e processamento permanecem UTC no armazenamento, mas
+as tools e respostas os apresentam no horario de Sao Paulo.
 
 Para medir o contexto fixo sem consumir API:
 
@@ -271,10 +278,11 @@ npm run agente:bronze -- --provider gemini --model gemini-3.1-flash-lite "Quanto
 ```
 
 Para perguntas comuns, o agente envia somente a fachada de negocio reconhecida.
-Perguntas ambiguas usam o perfil `hibrido`, que oferece as fachadas
-`analisar_*`, mas nao as tools tecnicas. As tools genericas `consultar_bronze`,
-`agregar_bronze`, `consultar_silver` e `agregar_silver` continuam disponiveis
-apenas nos perfis tecnicos ou no perfil `completo`.
+Perguntas automaticas recebem as fachadas do perfil e o gateway compacto
+`solicitar_aprofundamento`. Ele pode liberar uma unica camada tecnica na mesma
+execucao sem carregar previamente todos os schemas. Gold e Silver servem para
+complemento; Bronze somente para auditoria, historico ou divergencia. Os perfis
+`gold`, `silver`, `bronze` e `completo` continuam disponiveis para diagnostico.
 
 Para localizar notas de varios pedidos marketplace, cole os identificadores como
 texto. O resultado informa as NFs, os pedidos ausentes, os encontrados sem NF e
@@ -402,6 +410,10 @@ Consulte o estado e a ultima execucao:
 ```powershell
 npm run lake:status
 ```
+
+O status pode ser `sucesso`, `parcial` ou `erro`. Em uma execucao parcial, os
+ramos independentes sao publicados, as dependencias afetadas aparecem como
+`bloqueadas` e o comando retorna codigo `2` para alertar a automacao.
 
 Tambem e possivel limitar uma execucao:
 

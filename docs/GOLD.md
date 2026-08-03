@@ -175,6 +175,11 @@ npm run consultar:gold -- painel_executivo_diario `
   --ordenar data_referencia --direcao desc --limite 7
 ```
 
+O agente tambem possui `consultar_gold` e `agregar_gold`, com objetos e colunas
+derivados deste catalogo. Em roteamento automatico, esses contratos sao
+carregados somente quando `solicitar_aprofundamento` libera a camada Gold.
+Metricas recorrentes continuam preferindo as fachadas abaixo.
+
 ## Tool `analisar_indicadores`
 
 Operacoes:
@@ -204,18 +209,24 @@ Metricas iniciais:
 - `ticket_medio_faturado`;
 - `prazo_medio_emissao_dias`.
 
-Sem data explicita, `painel` usa o dia mais recente que tenha o conjunto
-comercial completo. Tambem e possivel pedir explicitamente
-`recencia=mais_recente` ou `recencia=mais_recente_completo`.
+Com `metricas=null`, `painel` devolve o resumo administrativo completo. Com uma
+lista de metricas, devolve um envelope focado com `data_solicitada`,
+`data_analisada`, `dados_disponiveis`, `dados_parciais` e somente os indicadores
+pedidos. Um painel focado sem data exige `recencia=mais_recente` ou
+`recencia=mais_recente_completo`.
+
+Sem data explicita, o painel administrativo completo usa o dia comercial
+completo mais recente. A palavra "hoje" e resolvida literalmente no fuso
+`America/Sao_Paulo`, mesmo quando o dia ainda e parcial.
 
 Na operacao `painel`, a resposta inclui ainda o resumo de estoque do dia:
 quantidades em ruptura e risco, marca mais afetada e horario do saldo utilizado.
 Esses campos nao sao somados em consultas de intervalo. A resposta tambem
 explicita `estoque_atual` com sua propria data; assim, uma fonte de estoque mais
 recente nao transforma vendas ainda nao carregadas em vendas zeradas.
-Quando o provider enviar ao painel uma data posterior a cobertura comercial, a
-tool utiliza a ultima data disponivel e devolve `ajuste_cobertura` com as duas
-datas. O ajuste e explicito e se aplica somente a operacao `painel`.
+Uma data explicita nunca e substituida. Quando ela estiver fora da cobertura ou
+nao possuir linha publicada, a tool informa indisponibilidade e apresenta a
+ultima data disponivel apenas como referencia separada.
 
 O perfil `indicadores` usa apenas essa tool e permanece compacto. Listagens de
 pedidos continuam no Silver, rankings de produtos permanecem na fato de itens e

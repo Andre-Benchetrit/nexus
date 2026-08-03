@@ -107,9 +107,17 @@ automacao: {
 
 ## Falhas e retomada
 
-O pipeline para ao primeiro erro e nao executa camadas dependentes com fontes
-incompletas. Etapas Bronze concluidas preservam seus manifestos e watermarks.
-Ao executar novamente, o planejamento continua de onde cada entidade parou.
+Uma falha bloqueia apenas objetos dependentes. Ramos independentes continuam e
+preservam seus manifestos e watermarks. A execucao termina como:
+
+- `sucesso`: nenhuma etapa falhou ou foi bloqueada;
+- `parcial`: pelo menos um ramo concluiu e outro falhou ou foi bloqueado;
+- `erro`: nenhuma etapa executavel conseguiu concluir.
+
+Execucoes parciais retornam codigo de processo `2`, permitindo que o agendador
+alerte sem descartar as camadas publicadas com sucesso. `lake:status` registra
+falhas e dependencias bloqueadoras. Ao executar novamente, o planejamento
+continua de onde cada entidade parou.
 
 Uma trava com menos de 24 horas impede outra instancia. Travas mais antigas sao
 consideradas residuos de processo interrompido e podem ser recuperadas

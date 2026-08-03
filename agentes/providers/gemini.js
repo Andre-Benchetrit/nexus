@@ -89,16 +89,10 @@ function criarProviderGemini(opcoes = {}) {
     const ferramentas = tools?.length
       ? tools
       : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
-    const ferramentasPorNome = new Map(
-      ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
-    );
-    const declaracoes = ferramentas.map((ferramenta) => (
-      converterToolParaGemini(ferramenta.definicao)
-    ));
     const contents = [{ role: 'user', parts: [{ text: pergunta }] }];
     const config = {
       systemInstruction: instrucoes,
-      tools: [{ functionDeclarations: declaracoes }],
+      tools: [{ functionDeclarations: [] }],
       toolConfig: {
         functionCallingConfig: { mode: 'VALIDATED' }
       }
@@ -106,6 +100,12 @@ function criarProviderGemini(opcoes = {}) {
     let deveFinalizar = false;
 
     for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
+      const ferramentasPorNome = new Map(
+        ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
+      );
+      config.tools[0].functionDeclarations = ferramentas.map((ferramenta) => (
+        converterToolParaGemini(ferramenta.definicao)
+      ));
       config.toolConfig.functionCallingConfig.mode = deveFinalizar ? 'NONE' : 'VALIDATED';
       onEvento?.(`Gemini: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
       const resposta = await client.models.generateContent({
@@ -138,7 +138,10 @@ function criarProviderGemini(opcoes = {}) {
             chamada.args || {}, ferramenta.definicao.parameters
           );
           output = await ferramenta.executar(argumentos);
-          if (ferramenta.terminal === true) deveFinalizar = true;
+          const terminal = typeof ferramenta.terminal === 'function'
+            ? ferramenta.terminal(argumentos, output)
+            : ferramenta.terminal;
+          if (terminal === true) deveFinalizar = true;
         } catch (erro) {
           output = JSON.stringify({ erro: erro.message });
         }

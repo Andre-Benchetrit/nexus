@@ -15,6 +15,18 @@ const {
   executarAgregarSilver
 } = require('../tools/agregar_silver');
 const {
+  definicaoConsultarGold,
+  executarConsultarGold
+} = require('../tools/consultar_gold');
+const {
+  definicaoAgregarGold,
+  executarAgregarGold
+} = require('../tools/agregar_gold');
+const {
+  definicaoSolicitarAprofundamento,
+  executarSolicitarAprofundamento
+} = require('../tools/solicitar_aprofundamento');
+const {
   definicaoAnalisarVendas,
   executarAnalisarVendas
 } = require('../tools/analisar_vendas');
@@ -54,6 +66,10 @@ const {
   definicaoAnalisarOperacao,
   executarAnalisarOperacao
 } = require('../tools/analisar_operacao');
+const {
+  definicaoResolverProduto,
+  executarResolverProduto
+} = require('../tools/resolver_produto');
 
 const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_indicadores',
@@ -78,15 +94,23 @@ const PERFIL_POR_FERRAMENTA = Object.freeze({
   analisar_operacao: 'operacao',
   analisar_vendas: 'vendas',
   analisar_catalogo: 'catalogo',
-  analisar_pessoas: 'pessoas'
+  analisar_pessoas: 'pessoas',
+  resolver_produto: 'produto',
+  consultar_gold: 'gold',
+  agregar_gold: 'gold',
+  consultar_silver: 'silver',
+  agregar_silver: 'silver',
+  consultar_bronze: 'bronze',
+  agregar_bronze: 'bronze'
 });
 
 const PERFIS_TOOLS = Object.freeze({
+  produto: ['resolver_produto'],
   indicadores: ['analisar_indicadores'],
   influencias: ['analisar_influencias'],
-  estoque: ['analisar_rupturas'],
-  estoque_reposicoes: ['analisar_rupturas', 'analisar_reposicoes'],
-  reposicoes: ['analisar_reposicoes'],
+  estoque: ['resolver_produto', 'analisar_rupturas'],
+  estoque_reposicoes: ['resolver_produto', 'analisar_rupturas', 'analisar_reposicoes'],
+  reposicoes: ['resolver_produto', 'analisar_reposicoes'],
   desempenho: ['analisar_desempenho'],
   frete: ['analisar_frete'],
   operacao: ['analisar_operacao'],
@@ -95,10 +119,12 @@ const PERFIS_TOOLS = Object.freeze({
   pessoas: ['analisar_pessoas'],
   negocio: ['analisar_vendas', 'analisar_catalogo'],
   hibrido: FERRAMENTAS_NEGOCIO,
+  gold: ['consultar_gold', 'agregar_gold'],
   silver: ['consultar_silver', 'agregar_silver'],
   bronze: ['consultar_bronze', 'agregar_bronze'],
   completo: [
     ...FERRAMENTAS_NEGOCIO,
+    'consultar_gold', 'agregar_gold',
     'consultar_silver', 'agregar_silver',
     'consultar_bronze', 'agregar_bronze'
   ]
@@ -106,6 +132,20 @@ const PERFIS_TOOLS = Object.freeze({
 
 function criarRegistroFerramentas(dependencias = {}) {
   return new Map([
+    ['solicitar_aprofundamento', {
+      definicao: definicaoSolicitarAprofundamento,
+      terminal: false,
+      executar: dependencias.executarSolicitarAprofundamentoTool || ((argumentos) => (
+        executarSolicitarAprofundamento(argumentos, {
+          liberar: dependencias.liberarAprofundamento
+        })
+      ))
+    }],
+    ['resolver_produto', {
+      definicao: definicaoResolverProduto,
+      terminal: false,
+      executar: dependencias.executarResolverProdutoTool || executarResolverProduto
+    }],
     ['analisar_indicadores', {
       definicao: definicaoAnalisarIndicadores,
       terminal: true,
@@ -158,18 +198,32 @@ function criarRegistroFerramentas(dependencias = {}) {
     }],
     ['consultar_silver', {
       definicao: definicaoConsultarSilver,
+      terminal: ({ operacao } = {}) => !['listar_objetos', 'descrever_objeto'].includes(operacao),
       executar: dependencias.executarConsultarSilverTool || executarConsultarSilver
     }],
     ['agregar_silver', {
       definicao: definicaoAgregarSilver,
+      terminal: true,
       executar: dependencias.executarAgregarSilverTool || executarAgregarSilver
+    }],
+    ['consultar_gold', {
+      definicao: definicaoConsultarGold,
+      terminal: ({ operacao } = {}) => !['listar_objetos', 'descrever_objeto'].includes(operacao),
+      executar: dependencias.executarConsultarGoldTool || executarConsultarGold
+    }],
+    ['agregar_gold', {
+      definicao: definicaoAgregarGold,
+      terminal: true,
+      executar: dependencias.executarAgregarGoldTool || executarAgregarGold
     }],
     ['consultar_bronze', {
       definicao: definicaoConsultarBronze,
+      terminal: ({ operacao } = {}) => !['listar_entidades', 'descrever_entidade'].includes(operacao),
       executar: dependencias.executarTool || executarConsultarBronze
     }],
     ['agregar_bronze', {
       definicao: definicaoAgregarBronze,
+      terminal: true,
       executar: dependencias.executarAgregarTool || executarAgregarBronze
     }]
   ]);
@@ -182,7 +236,7 @@ function obterFerramentasDoPerfil(perfil, dependencias = {}) {
   const permiteMultiplasChamadas = nomes.length > 1;
   return nomes.map((nome) => {
     const ferramenta = registro.get(nome);
-    if (permiteMultiplasChamadas) {
+    if (permiteMultiplasChamadas && ferramentaDeNegocio(nome)) {
       return { ...ferramenta, terminal: false };
     }
     return ferramenta;
@@ -201,28 +255,35 @@ function ferramentaDeNegocio(nome) {
   return FERRAMENTAS_NEGOCIO.includes(nome);
 }
 
+function ferramentaTecnica(nome) {
+  return /^(consultar|agregar)_(gold|silver|bronze)$/.test(nome);
+}
+
 function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
-  if (!onEvento) return ferramentas;
   return ferramentas.map((ferramenta) => ({
     ...ferramenta,
     async executar(argumentos) {
       const inicio = Date.now();
       let sucesso = false;
-      onEvento(`Executando tool ${ferramenta.definicao.name}...`);
+      const argumentosEfetivos = opcoes.normalizarArgumentos
+        ? opcoes.normalizarArgumentos(ferramenta.definicao.name, argumentos)
+        : argumentos;
+      opcoes.antesDeExecutar?.(ferramenta.definicao.name, argumentosEfetivos);
+      onEvento?.(`Executando tool ${ferramenta.definicao.name}...`);
       if (opcoes.mostrarArgumentos) {
-        onEvento(`Argumentos: ${JSON.stringify(argumentos).slice(0, 1200)}`);
+        onEvento?.(`Argumentos: ${JSON.stringify(argumentosEfetivos).slice(0, 1200)}`);
       }
       try {
-        const resultado = await ferramenta.executar(argumentos);
-        opcoes.onResultado?.(ferramenta.definicao.name, resultado);
+        const resultado = await ferramenta.executar(argumentosEfetivos);
+        opcoes.onResultado?.(ferramenta.definicao.name, resultado, argumentosEfetivos);
         sucesso = true;
         return resultado;
       } catch (erro) {
-        const resumo = JSON.stringify(argumentos).slice(0, 700);
-        onEvento(`Tool ${ferramenta.definicao.name} rejeitada: ${erro.message} Argumentos: ${resumo}`);
+        const resumo = JSON.stringify(argumentosEfetivos).slice(0, 700);
+        onEvento?.(`Tool ${ferramenta.definicao.name} rejeitada: ${erro.message} Argumentos: ${resumo}`);
         throw erro;
       } finally {
-        onEvento(
+        onEvento?.(
           `Tool ${ferramenta.definicao.name} ${sucesso ? 'concluida' : 'finalizada com erro'} ` +
           `em ${Date.now() - inicio} ms.`
         );
@@ -234,6 +295,7 @@ function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
 module.exports = {
   FERRAMENTAS_NEGOCIO,
   ferramentaDeNegocio,
+  ferramentaTecnica,
   obterFerramentaPorNome,
   obterPerfilDaFerramenta,
   PERFIS_TOOLS,

@@ -12,6 +12,9 @@ test('corrige inversao dia mes somente quando elimina data futura', () => {
   );
 
   assert.ok(fatoAgendamentoCompra.colunas.includes('data_entrada_original'));
+  assert.ok(fatoAgendamentoCompra.colunas.includes('id_linha_agendamento_origem'));
+  assert.match(sql, /a\.linha_origem/);
+  assert.match(sql, /a\.item_id_origem/);
   assert.ok(
     fatoAgendamentoCompra.colunas.includes('data_entrada_corrigida_dia_mes')
   );

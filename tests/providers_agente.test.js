@@ -11,6 +11,13 @@ const {
 } = require('../agentes/providers/gemini');
 const { criarProvider } = require('../agentes/providers');
 
+function definicaoMinima(name) {
+  return {
+    type: 'function', name, description: name, strict: true,
+    parameters: { type: 'object', properties: {}, required: [], additionalProperties: false }
+  };
+}
+
 test('provider OpenAI executa a tool e devolve o resultado ao modelo', async () => {
   const requisicoes = [];
   const respostas = [
@@ -174,6 +181,63 @@ test('converte o schema estrito para o formato opcional do Gemini', () => {
   const vendas = converterToolParaGemini(definicaoAnalisarVendas);
   assert.deepEqual(vendas.parameters.required, ['operacao', 'nivel', 'filtros']);
   assert.deepEqual(vendas.parameters.properties.filtros.items.required, ['campo', 'operador']);
+});
+
+test('OpenAI reconhece tools adicionadas durante o loop', async () => {
+  const requisicoes = [];
+  const respostas = [
+    { id: '1', output_text: '', output: [{ type: 'function_call', name: 'gateway', call_id: 'g1', arguments: '{}' }] },
+    { id: '2', output_text: '', output: [{ type: 'function_call', name: 'consulta_nova', call_id: 'c1', arguments: '{}' }] },
+    { id: '3', output_text: 'ok', output: [] }
+  ];
+  const cliente = { responses: { async create(req) { requisicoes.push(req); return respostas.shift(); } } };
+  const tools = [];
+  tools.push({
+    definicao: definicaoMinima('gateway'), terminal: false,
+    executar: async () => {
+      tools.push({ definicao: definicaoMinima('consulta_nova'), terminal: true, executar: async () => '{}' });
+      return '{}';
+    }
+  });
+  const resultado = await criarProviderOpenAI({ cliente }).executar({
+    pergunta: 'x', instrucoes: 'x', tools, maxRodadas: 4
+  });
+  assert.equal(resultado.texto, 'ok');
+  assert.deepEqual(requisicoes[0].tools.map((item) => item.name), ['gateway']);
+  assert.deepEqual(requisicoes[1].tools.map((item) => item.name), ['gateway', 'consulta_nova']);
+});
+
+test('Gemini reconhece tools adicionadas durante o loop', async () => {
+  const requisicoes = [];
+  const respostas = [
+    { candidates: [{ content: { role: 'model', parts: [] } }], functionCalls: [{ id: 'g1', name: 'gateway', args: {} }], text: '' },
+    { candidates: [{ content: { role: 'model', parts: [] } }], functionCalls: [{ id: 'c1', name: 'consulta_nova', args: {} }], text: '' },
+    { candidates: [{ content: { role: 'model', parts: [{ text: 'ok' }] } }], functionCalls: [], text: 'ok' }
+  ];
+  const cliente = { models: { async generateContent(req) {
+    requisicoes.push(structuredClone(req));
+    return respostas.shift();
+  } } };
+  const tools = [];
+  tools.push({
+    definicao: definicaoMinima('gateway'), terminal: false,
+    executar: async () => {
+      tools.push({ definicao: definicaoMinima('consulta_nova'), terminal: true, executar: async () => '{}' });
+      return '{}';
+    }
+  });
+  const resultado = await criarProviderGemini({ cliente }).executar({
+    pergunta: 'x', instrucoes: 'x', tools, maxRodadas: 4
+  });
+  assert.equal(resultado.texto, 'ok');
+  assert.deepEqual(
+    requisicoes[0].config.tools[0].functionDeclarations.map((item) => item.name),
+    ['gateway']
+  );
+  assert.deepEqual(
+    requisicoes[1].config.tools[0].functionDeclarations.map((item) => item.name),
+    ['gateway', 'consulta_nova']
+  );
 });
 
 test('seleciona provider explicitamente e rejeita nome desconhecido', () => {

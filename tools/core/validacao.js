@@ -1,9 +1,11 @@
 const { OPERADORES_FILTRO } = require('./contratos');
+const { normalizarTimestampSaida } = require('./tempo');
 
 function serializar(valor) {
-  return JSON.stringify(valor, (_, item) => (
-    typeof item === 'bigint' ? item.toString() : item
-  ));
+  return JSON.stringify(valor, (campo, item) => {
+    if (typeof item === 'bigint') return item.toString();
+    return normalizarTimestampSaida(campo, item);
+  });
 }
 
 function validarObjeto(argumentos) {

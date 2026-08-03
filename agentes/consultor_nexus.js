@@ -7,16 +7,24 @@ dotenv.config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
 const { criarProvider, PROVIDER_PADRAO } = require('./providers');
 const { obterInstrucaoPerfil, obterInstrucoes } = require('./instrucoes');
 const {
+  ferramentaTecnica,
   instrumentarFerramentas,
+  obterFerramentaPorNome,
   obterFerramentasDoPerfil
 } = require('./ferramentas');
 const {
   pedeMesmaCobertura,
   resolverRoteamentoComContexto
 } = require('./roteador');
-const { completarAnoEmDatas, obterDataReferencia } = require('./contexto_temporal');
+const {
+  completarAnoEmDatas,
+  extrairContextoTemporal,
+  obterDataReferencia
+} = require('./contexto_temporal');
+const { aplicarPoliticaArgumentos } = require('./politicas_tools');
 const { criarMemoria, pareceContinuacao } = require('./memoria');
 const { planejarRecuperacaoTool } = require('./recuperacao_tools');
+const { resumirCatalogo } = require('./catalogo_aprofundamento');
 const {
   aplicarGarantiasResposta,
   normalizarResultadoTool
@@ -24,6 +32,7 @@ const {
 
 const MAX_RODADAS_NEGOCIO = 4;
 const MAX_RODADAS_GENERICAS = 4;
+const MAX_RODADAS_APROFUNDAMENTO = 6;
 const INSTRUCOES = obterInstrucoes('completo');
 
 function criarProviderConfigurado(dependencias) {
@@ -39,11 +48,26 @@ function criarProviderConfigurado(dependencias) {
   });
 }
 
+function assinaturaEstavel(valor) {
+  if (Array.isArray(valor)) return valor.map(assinaturaEstavel);
+  if (!valor || typeof valor !== 'object') return valor;
+  return Object.fromEntries(
+    Object.keys(valor).sort().map((chave) => [chave, assinaturaEstavel(valor[chave])])
+  );
+}
+
+function contextoPermiteBronze(pergunta, justificativa) {
+  const texto = `${pergunta} ${justificativa}`
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return /auditor|diverg|histor|origem|dado bruto|registro bruto|confer|validar/.test(texto);
+}
+
 async function executarAgente(pergunta, dependencias = {}) {
   if (!pergunta || !pergunta.trim()) throw new Error('Informe uma pergunta.');
   const texto = pergunta.trim();
   const dataReferencia = dependencias.dataReferencia || obterDataReferencia();
   const perguntaNormalizada = completarAnoEmDatas(texto, dataReferencia);
+  const contextoTemporal = extrairContextoTemporal(perguntaNormalizada, dataReferencia);
   const memoriaDesabilitada = dependencias.memoria === false
     || (dependencias.provider && dependencias.memoria == null);
   const memoria = memoriaDesabilitada
@@ -67,27 +91,105 @@ async function executarAgente(pergunta, dependencias = {}) {
     );
   const perfilInicial = roteamento.perfil;
   let perfilEfetivo = perfilInicial;
+  const roteamentoAutomatico = !dependencias.tools &&
+    (dependencias.perfilTools || 'automatico') === 'automatico';
   let ferramentas = dependencias.tools ||
     obterFerramentasDoPerfil(perfilInicial, dependencias);
   const resultadosTools = [];
+  const assinaturasExecutadas = new Set();
+  const usosTecnicos = { descoberta: 0, final: 0 };
+  let aprofundamento = null;
+  let ferramentasInstrumentadas = [];
+
+  async function liberarAprofundamento(solicitacao) {
+    if (!roteamentoAutomatico) {
+      throw new Error('Aprofundamento automatico exige o perfil automatico.');
+    }
+    if (aprofundamento) {
+      throw new Error(`Aprofundamento ja liberado para ${aprofundamento.camada}.`);
+    }
+    if (
+      solicitacao.camada === 'bronze' &&
+      !contextoPermiteBronze(perguntaNormalizada, solicitacao.justificativa)
+    ) {
+      throw new Error('Bronze foi negado: use-o somente para auditoria, historico ou divergencia.');
+    }
+    const novas = obterFerramentasDoPerfil(solicitacao.camada, dependencias)
+      .filter((item) => !ferramentasInstrumentadas.some(
+        (atual) => atual.definicao.name === item.definicao.name
+      ));
+    aprofundamento = { ...solicitacao, ferramentas: novas.map((item) => item.definicao.name) };
+    perfilEfetivo = `${perfilInicial}+${solicitacao.camada}`;
+    ferramentasInstrumentadas.push(...instrumentar(novas));
+    dependencias.onEvento?.(
+      `Aprofundamento ${solicitacao.camada} liberado (${solicitacao.finalidade}): ` +
+      solicitacao.justificativa
+    );
+    return {
+      liberado: true,
+      camada: solicitacao.camada,
+      finalidade: solicitacao.finalidade,
+      ferramentas: aprofundamento.ferramentas,
+      catalogo: resumirCatalogo(solicitacao.camada),
+      instrucao: 'Use somente os nomes de colunas deste catalogo. Para ranking de linhas prontas, use consultar com ordenacao; contar retorna apenas quantidade de linhas. Se ainda houver duvida, descreva um objeto. Nao solicite aprofundamento novamente.'
+    };
+  }
+
+  if (roteamentoAutomatico) {
+    const gateway = obterFerramentaPorNome('solicitar_aprofundamento', {
+      ...dependencias,
+      liberarAprofundamento
+    });
+    ferramentas = [
+      ...ferramentas.map((item) => ({ ...item, terminal: false })),
+      gateway
+    ];
+  }
   const instrumentar = (itens) => instrumentarFerramentas(
     itens,
     dependencias.onEvento,
     {
       mostrarArgumentos: dependencias.debugTools === true,
-      onResultado(nome, resultado) {
+      normalizarArgumentos: (nome, argumentos) => aplicarPoliticaArgumentos(
+        nome,
+        argumentos,
+        { temporal: contextoTemporal }
+      ),
+      antesDeExecutar(nome, argumentos) {
+        const assinatura = `${nome}:${JSON.stringify(assinaturaEstavel(argumentos))}`;
+        if (assinaturasExecutadas.has(assinatura)) {
+          throw new Error(`Chamada repetida bloqueada para ${nome}.`);
+        }
+        assinaturasExecutadas.add(assinatura);
+        if (!ferramentaTecnica(nome)) return;
+        const descoberta = nome.startsWith('consultar_') &&
+          /^(listar_|descrever_)/.test(argumentos.operacao || '');
+        const tipo = descoberta ? 'descoberta' : 'final';
+        if (usosTecnicos[tipo] >= 1) {
+          throw new Error(`Limite de uma chamada tecnica de ${tipo} por pergunta excedido.`);
+        }
+      },
+      onResultado(nome, resultado, argumentos) {
         resultadosTools.push({
           nome,
           resultado: normalizarResultadoTool(resultado)
         });
+        if (ferramentaTecnica(nome)) {
+          const descoberta = nome.startsWith('consultar_') &&
+            /^(listar_|descrever_)/.test(argumentos.operacao || '');
+          usosTecnicos[descoberta ? 'descoberta' : 'final'] += 1;
+        }
       }
     }
   );
-  const maxRodadas = dependencias.maxRodadas || (
-    ['indicadores', 'vendas', 'catalogo', 'negocio'].includes(perfilInicial)
-      ? MAX_RODADAS_NEGOCIO
-      : MAX_RODADAS_GENERICAS
-  );
+  ferramentasInstrumentadas = instrumentar(ferramentas);
+  const maxRodadas = dependencias.maxRodadas || (roteamentoAutomatico
+    ? MAX_RODADAS_APROFUNDAMENTO
+    : (
+      ['indicadores', 'vendas', 'catalogo', 'negocio'].includes(perfilInicial)
+        ? MAX_RODADAS_NEGOCIO
+        : MAX_RODADAS_GENERICAS
+    ));
   dependencias.onEvento?.(
     `Perfil ${perfilInicial} (${roteamento.confianca}/${roteamento.origem}): ` +
     `${ferramentas.map(({ definicao }) => definicao.name).join(', ')}.`
@@ -120,17 +222,15 @@ async function executarAgente(pergunta, dependencias = {}) {
     instrucoes: [...instrucoesComuns, ...instrucoesExtras]
       .filter(Boolean)
       .join('\n\n'),
-    tools: instrumentar(itens),
+    tools: itens,
     maxRodadas,
     onEvento: dependencias.onEvento
   });
   let resultado;
   let recuperacao = null;
   try {
-    resultado = await executarProvider(ferramentas);
+    resultado = await executarProvider(ferramentasInstrumentadas);
   } catch (erro) {
-    const roteamentoAutomatico = !dependencias.tools &&
-      (dependencias.perfilTools || 'automatico') === 'automatico';
     recuperacao = roteamentoAutomatico
       ? planejarRecuperacaoTool(erro, ferramentas, dependencias)
       : null;
@@ -145,7 +245,8 @@ async function executarAgente(pergunta, dependencias = {}) {
       recuperacao.ferramenta
     ].map((ferramenta) => ({ ...ferramenta, terminal: false }));
     perfilEfetivo = recuperacao.perfil;
-    resultado = await executarProvider(ferramentas, [
+    ferramentasInstrumentadas = instrumentar(ferramentas);
+    resultado = await executarProvider(ferramentasInstrumentadas, [
       obterInstrucaoPerfil(recuperacao.perfil),
       `Recuperacao de roteamento: a fachada ${recuperacao.nome} agora esta disponivel.`
     ]);
@@ -158,7 +259,8 @@ async function executarAgente(pergunta, dependencias = {}) {
       perfilEfetivo,
       confianca: roteamento.confianca,
       origem: roteamento.origem,
-      toolRecuperada: recuperacao?.nome || null
+      toolRecuperada: recuperacao?.nome || null,
+      aprofundamento
     }
   };
   memoria?.registrarInteracao({
@@ -246,5 +348,6 @@ module.exports = {
   INSTRUCOES,
   MAX_RODADAS_GENERICAS,
   MAX_RODADAS_NEGOCIO,
+  MAX_RODADAS_APROFUNDAMENTO,
   PROVIDER_PADRAO
 };

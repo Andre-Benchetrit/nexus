@@ -225,7 +225,11 @@ async function criarPlanoPipeline(opcoes = {}, dependencias = {}) {
       camada: 'silver',
       nome: objeto.nome,
       tipo: objeto.tipo,
-      acao: 'construir'
+      acao: 'construir',
+      dependencias: {
+        bronze: [...(objeto.fontesBronze || [])],
+        silver: [...(objeto.fontesSilver || [])]
+      }
     }))
     : [];
 
@@ -240,7 +244,11 @@ async function criarPlanoPipeline(opcoes = {}, dependencias = {}) {
       camada: 'gold',
       nome: objeto.nome,
       tipo: objeto.tipo,
-      acao: 'construir'
+      acao: 'construir',
+      dependencias: {
+        silver: [...(objeto.fontesSilver || [])],
+        gold: [...(objeto.fontesGold || [])]
+      }
     }))
     : [];
 

@@ -1,9 +1,13 @@
-const { obterFerramentasDoPerfil } = require('./ferramentas');
+const { obterFerramentaPorNome, obterFerramentasDoPerfil } = require('./ferramentas');
 const { obterInstrucoes } = require('./instrucoes');
 
 function medirContexto(perfil) {
   const instrucoes = obterInstrucoes(perfil, '2026-07-20');
-  const definicoes = obterFerramentasDoPerfil(perfil).map(({ definicao }) => definicao);
+  const ferramentas = obterFerramentasDoPerfil(perfil);
+  if (!['gold', 'silver', 'bronze', 'completo'].includes(perfil)) {
+    ferramentas.push(obterFerramentaPorNome('solicitar_aprofundamento'));
+  }
+  const definicoes = ferramentas.map(({ definicao }) => definicao);
   const caracteresPrompt = instrucoes.length;
   const caracteresTools = JSON.stringify(definicoes).length;
   const caracteresTotal = caracteresPrompt + caracteresTools;
@@ -19,10 +23,10 @@ function medirContexto(perfil) {
 
 function medirTodosPerfis() {
   return [
-    'indicadores', 'estoque', 'estoque_reposicoes', 'reposicoes',
+    'indicadores', 'estoque', 'estoque_reposicoes', 'reposicoes', 'produto',
     'desempenho', 'frete', 'operacao',
     'vendas', 'catalogo', 'pessoas',
-    'negocio', 'hibrido', 'silver', 'bronze', 'completo'
+    'negocio', 'hibrido', 'gold', 'silver', 'bronze', 'completo'
   ]
     .map(medirContexto);
 }

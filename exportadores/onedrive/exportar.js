@@ -95,14 +95,15 @@ function obterItemId(entidade, env) {
   return String(itemId).trim();
 }
 
-function configuracaoExcel(entidade, env) {
+function configuracaoExcel(entidade, env, metadadosOrigem = {}) {
   const extracao = entidade.extracao;
   return {
     planilha: extracao.planilha || (
       extracao.planilhaEnv ? String(env[extracao.planilhaEnv] || '').trim() || null : null
     ),
     linhaCabecalho: extracao.linhaCabecalho || 1,
-    colunas: extracao.colunas || []
+    colunas: extracao.colunas || [],
+    metadadosOrigem
   };
 }
 
@@ -175,7 +176,11 @@ async function exportarOneDrive(entidade, opcoes = {}, dependencias = {}) {
     }
     const excel = await (dependencias.lerPlanilha || lerPlanilha)(
       download.buffer,
-      configuracaoExcel(entidade, env)
+      configuracaoExcel(entidade, env, {
+        conexao: conexao.id,
+        itemId: item.id,
+        arquivo: item.name
+      })
     );
     await fsp.writeFile(original, download.buffer);
     await fsp.writeFile(csvTemporario, criarCsv(excel.colunas, excel.linhas), 'utf8');

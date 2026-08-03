@@ -111,7 +111,7 @@ test('mesma cobertura herda indicadores e recebe o dia de corte anterior', async
 
   assert.deepEqual(
     contexto.tools.map(({ definicao }) => definicao.name),
-    ['analisar_indicadores']
+    ['analisar_indicadores', 'solicitar_aprofundamento']
   );
   assert.match(contexto.instrucoes, /2026-07-21/);
   assert.equal(memoria.listarCurta().at(-1).perfil, 'indicadores');

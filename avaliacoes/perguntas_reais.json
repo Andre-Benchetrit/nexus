@@ -68,6 +68,27 @@
       "criterios": ["usar o painel completo", "incluir os tres dominios"]
     },
     {
+      "id": "pedidos-pagos-hoje",
+      "categoria": "indicadores",
+      "pergunta": "Bom dia Nexus. Quantos pedidos pagos temos na data de hoje? Coloque a data analisada para termos certeza.",
+      "perfilEsperado": "indicadores",
+      "criterios": ["usar hoje literalmente", "informar a data analisada", "sinalizar dados parciais"]
+    },
+    {
+      "id": "pedidos-pagos-hoje-incompleto",
+      "categoria": "indicadores",
+      "pergunta": "Quantos pedidos pagos temos hoje? Pegue hoje mesmo que ainda nao esteja completo.",
+      "perfilEsperado": "indicadores",
+      "criterios": ["nao recuar para o ultimo dia completo", "informar a data analisada", "sinalizar dados parciais"]
+    },
+    {
+      "id": "valor-pedidos-pagos-hoje",
+      "categoria": "indicadores",
+      "pergunta": "Quantos pedidos pagos temos hoje e qual o valor total dos pedidos pagos? Informe a data analisada e use hoje mesmo que incompleto.",
+      "perfilEsperado": "indicadores",
+      "criterios": ["usar pedidos_pagos", "usar valor_pedidos_pagos", "manter data e valores retornados pela tool"]
+    },
+    {
       "id": "produto-mais-vendido",
       "categoria": "desempenho",
       "pergunta": "Qual produto mais vendeu no dia 17/07/2026? Informe quantidade e valor total.",
@@ -252,7 +273,35 @@
       "categoria": "roteamento",
       "pergunta": "Como estamos?",
       "perfilEsperado": "hibrido",
-      "criterios": ["oferecer somente fachadas de negocio", "nao liberar automaticamente tools Silver ou Bronze"]
+      "criterios": ["oferecer fachadas de negocio e o gateway compacto", "nao carregar schemas tecnicos antes de uma solicitacao"]
+    },
+    {
+      "id": "aprofundamento-gold",
+      "categoria": "aprofundamento",
+      "pergunta": "No painel diario, confira no Gold uma metrica oficial adicional que a analise inicial nao tenha retornado.",
+      "perfilEsperado": "indicadores",
+      "criterios": ["usar primeiro a fachada", "liberar somente Gold se faltar a metrica", "nao redefinir a metrica oficial"]
+    },
+    {
+      "id": "aprofundamento-silver",
+      "categoria": "aprofundamento",
+      "pergunta": "Quais campos do cadastro de clientes podem ser consultados para investigar um detalhe nao coberto?",
+      "perfilEsperado": "silver",
+      "criterios": ["descrever o objeto antes de consultar campo desconhecido", "nao acessar Bronze"]
+    },
+    {
+      "id": "aprofundamento-auditoria-bronze",
+      "categoria": "aprofundamento",
+      "pergunta": "Audite no Bronze o historico deste registro porque existe divergencia com a camada modelada.",
+      "perfilEsperado": "bronze",
+      "criterios": ["usar visao historica", "tratar Bronze como auditoria", "nao substituir regra oficial de negocio"]
+    },
+    {
+      "id": "sem-dado-seguro",
+      "categoria": "aprofundamento",
+      "pergunta": "Explique uma informacao que nao esteja em nenhuma base disponivel no Nexus.",
+      "perfilEsperado": "hibrido",
+      "criterios": ["nao inventar dados", "informar que a base nao cobre a pergunta", "nao ampliar mais de uma camada"]
     }
   ]
 }

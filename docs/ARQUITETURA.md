@@ -68,9 +68,10 @@ implementacoes falsas sem alterar o agente.
 
 O roteador classifica palavras de negocio localmente. Isso nao consome API e
 evita enviar todas as tools em cada pergunta. Quando a frase nao possui sinais
-suficientes, o perfil `hibrido` oferece todas as fachadas de negocio, mas nunca
-as tools tecnicas. Uma fachada conhecida que tenha faltado pode ser adicionada
-em uma unica nova tentativa; nao existe escalada recursiva.
+suficientes, o perfil `hibrido` oferece todas as fachadas de negocio e um
+gateway compacto. `solicitar_aprofundamento` adiciona dinamicamente apenas Gold,
+Silver ou Bronze ao loop atual. Existe uma unica ampliacao e nunca escalada
+recursiva; Bronze fica restrito a auditoria.
 
 ## Perfis de tools
 
@@ -88,6 +89,7 @@ em uma unica nova tentativa; nao existe escalada recursiva.
 | `pessoas` | funcionarios e transportadoras | `analisar_pessoas` |
 | `negocio` | perfil manual legado | vendas e catalogo |
 | `hibrido` | pergunta realmente ambigua | todas as fachadas de negocio |
+| `gold` | consulta avancada de indicadores | tools Gold genericas |
 | `silver` | consulta avancada modelada | tools Silver genericas |
 | `bronze` | auditoria e dados brutos | tools Bronze genericas |
 | `completo` | diagnostico manual | todas as tools |
@@ -100,6 +102,7 @@ O perfil padrao e `automatico`. Pode ser substituido no terminal:
 ```powershell
 npm run agente:nexus -- --perfil silver "Quantos clientes existem?"
 npm run agente:nexus -- --perfil bronze "Audite as versoes desse cliente"
+npm run agente:nexus -- --perfil gold "Descreva os indicadores Gold disponiveis"
 ```
 
 ## Orcamento de contexto
@@ -115,17 +118,18 @@ mantem os perfis comuns dentro de limites para impedir crescimento acidental.
 
 Medicao atual aproximada:
 
-- indicadores: 648 tokens;
-- estoque: 549;
-- desempenho: 791;
-- frete: 624;
-- operacao: 590;
-- vendas: 846;
-- catalogo: 554;
-- negocio: 1.071;
-- hibrido: 3.457;
-- Silver generico: 1.578;
-- Bronze generico: 1.618.
+- indicadores com gateway: 893 tokens;
+- estoque com gateway: 1.051;
+- desempenho com gateway: 990;
+- frete com gateway: 823;
+- operacao com gateway: 790;
+- vendas com gateway: 1.045;
+- catalogo com gateway: 753;
+- negocio com gateway: 1.270;
+- hibrido com gateway: 3.776;
+- Gold generico, carregado sob demanda: 1.523;
+- Silver generico, carregado sob demanda: 1.636;
+- Bronze generico, carregado sob demanda: 1.668.
 
 ## Como adicionar uma capacidade
 

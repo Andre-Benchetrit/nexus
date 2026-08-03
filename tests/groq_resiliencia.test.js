@@ -11,6 +11,13 @@ const { criarProviderResiliente } = require('../agentes/providers/resiliente');
 const { normalizarArgumentosPeloSchema } = require('../agentes/providers/schema');
 const { lerArgumentos } = require('../agentes/consultor_nexus');
 
+function definicaoMinima(name) {
+  return {
+    type: 'function', name, description: name, strict: true,
+    parameters: { type: 'object', properties: {}, required: [], additionalProperties: false }
+  };
+}
+
 test('provider Groq executa uma tool pelo Chat Completions', async () => {
   const requisicoes = [];
   const respostas = [
@@ -67,6 +74,37 @@ test('provider Groq executa uma tool pelo Chat Completions', async () => {
   assert.equal(requisicoes[0].tool_choice, 'auto');
   assert.equal(requisicoes[1].tool_choice, 'none');
   assert.equal(requisicoes[1].messages.at(-1).tool_call_id, 'call_groq_1');
+});
+
+test('Groq reconhece tools adicionadas durante o loop', async () => {
+  const requisicoes = [];
+  const chamada = (id, name) => ({
+    id, choices: [{ message: { role: 'assistant', content: null, tool_calls: [{
+      id: `call_${id}`, type: 'function', function: { name, arguments: '{}' }
+    }] } }]
+  });
+  const respostas = [
+    chamada('1', 'gateway'),
+    chamada('2', 'consulta_nova'),
+    { id: '3', choices: [{ message: { role: 'assistant', content: 'ok' } }] }
+  ];
+  const cliente = { chat: { completions: { async create(req) {
+    requisicoes.push(req); return respostas.shift();
+  } } } };
+  const tools = [];
+  tools.push({
+    definicao: definicaoMinima('gateway'), terminal: false,
+    executar: async () => {
+      tools.push({ definicao: definicaoMinima('consulta_nova'), terminal: true, executar: async () => '{}' });
+      return '{}';
+    }
+  });
+  const resultado = await criarProviderGroq({ cliente }).executar({
+    pergunta: 'x', instrucoes: 'x', tools, maxRodadas: 4
+  });
+  assert.equal(resultado.texto, 'ok');
+  assert.deepEqual(requisicoes[0].tools.map((item) => item.function.name), ['gateway']);
+  assert.deepEqual(requisicoes[1].tools.map((item) => item.function.name), ['gateway', 'consulta_nova']);
 });
 
 test('converte tools para o formato Chat Completions do Groq', () => {

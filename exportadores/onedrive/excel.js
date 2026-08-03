@@ -105,6 +105,20 @@ async function lerPlanilha(buffer, configuracao = {}) {
   }
 
   const colunas = mapearColunas(cabecalhos, configuracao.colunas || []);
+  const colunasTecnicas = [
+    { original: null, destino: 'conexao_origem', tecnica: true },
+    { original: null, destino: 'item_id_origem', tecnica: true },
+    { original: null, destino: 'arquivo_origem', tecnica: true },
+    { original: null, destino: 'planilha_origem', tecnica: true },
+    { original: null, destino: 'linha_origem', tecnica: true }
+  ];
+  const destinos = new Set(colunas.map(({ destino }) => destino));
+  for (const coluna of colunasTecnicas) {
+    if (destinos.has(coluna.destino)) {
+      throw new Error(`Coluna reservada para rastreabilidade: ${coluna.destino}.`);
+    }
+  }
+  const metadados = configuracao.metadadosOrigem || {};
   const linhas = [];
   for (let numero = linhaCabecalho; numero < registrosExcel.length; numero += 1) {
     const row = registrosExcel[numero] || [];
@@ -115,13 +129,24 @@ async function lerPlanilha(buffer, configuracao = {}) {
       registro[coluna.destino] = valor;
       if (valor != null && valor !== '') preenchida = true;
     }
-    if (preenchida) linhas.push(registro);
+    if (preenchida) {
+      Object.assign(registro, {
+        conexao_origem: metadados.conexao || null,
+        item_id_origem: metadados.itemId || null,
+        arquivo_origem: metadados.arquivo || null,
+        planilha_origem: nomePlanilha,
+        linha_origem: String(numero + 1)
+      });
+      linhas.push(registro);
+    }
   }
 
   return {
     nomePlanilha,
     linhaCabecalho,
-    colunas: colunas.map(({ original, destino }) => ({ original, destino })),
+    colunas: [...colunas, ...colunasTecnicas].map(
+      ({ original, destino, tecnica }) => ({ original, destino, tecnica: Boolean(tecnica) })
+    ),
     linhas
   };
 }

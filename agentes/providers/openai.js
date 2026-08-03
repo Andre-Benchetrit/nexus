@@ -35,12 +35,11 @@ function criarProviderOpenAI(opcoes = {}) {
     const ferramentas = tools?.length
       ? tools
       : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
-    const ferramentasPorNome = new Map(
-      ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
-    );
-
     let deveFinalizar = false;
     for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
+      const ferramentasPorNome = new Map(
+        ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
+      );
       onEvento?.(`OpenAI: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
       const resposta = await client.responses.create({
         model: modelo,
@@ -74,7 +73,10 @@ function criarProviderOpenAI(opcoes = {}) {
             JSON.parse(chamada.arguments), ferramenta.definicao.parameters
           );
           output = await ferramenta.executar(argumentos);
-          if (ferramenta.terminal === true) deveFinalizar = true;
+          const terminal = typeof ferramenta.terminal === 'function'
+            ? ferramenta.terminal(argumentos, output)
+            : ferramenta.terminal;
+          if (terminal === true) deveFinalizar = true;
         } catch (erro) {
           output = JSON.stringify({ erro: erro.message });
         }

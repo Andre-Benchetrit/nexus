@@ -200,5 +200,8 @@ portanto uma simples mudanca de nome nao exige reconfiguracao.
   recebimento do produto por dia, preservando pedidos e NFs;
 - datas de entrada futuras causadas por inversao dia/mes sao corrigidas no
   Silver com a data original e uma flag de auditoria.
+- cada linha Bronze recebe conexao, item, arquivo, aba e numero fisico da linha;
+  essa origem forma a chave tecnica Silver. O `INDEX` da planilha e preservado
+  apenas para auditoria, pois pode ser reutilizado em parcelas diferentes.
 
 A proxima origem planejada e a biblioteca compartilhada `FID - ONEDRIVE`.

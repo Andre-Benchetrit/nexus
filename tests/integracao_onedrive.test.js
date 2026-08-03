@@ -18,7 +18,8 @@ const { criarCaminhosExportacao } = require('../exportadores/core/caminhos');
 const { lerPlanilha } = require('../exportadores/onedrive/excel');
 const { exportarOneDrive } = require('../exportadores/onedrive/exportar');
 
-async function criarXlsx() {
+async function criarXlsx(opcoes = {}) {
+  const segundoSku = opcoes.segundoSku || 'ABC-2';
   const arquivos = {
     '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8"?>
       <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -54,7 +55,7 @@ async function criarXlsx() {
             <c r="C2" t="inlineStr"><is><t>2026-08-01T00:00:00.000Z</t></is></c>
           </row>
           <row r="3">
-            <c r="A3" t="inlineStr"><is><t>ABC-2</t></is></c>
+            <c r="A3" t="inlineStr"><is><t>${segundoSku}</t></is></c>
             <c r="B3"><v>5</v></c>
             <c r="C3" t="inlineStr"><is><t>2026-08-03T00:00:00.000Z</t></is></c>
           </row>
@@ -187,10 +188,15 @@ test('le Excel, normaliza cabecalhos e valida colunas obrigatorias', async () =>
   assert.equal(resultado.nomePlanilha, 'Agendamentos');
   assert.deepEqual(
     resultado.colunas.map((coluna) => coluna.destino),
-    ['sku', 'quantidade', 'previsao']
+    [
+      'sku', 'quantidade', 'previsao', 'conexao_origem', 'item_id_origem',
+      'arquivo_origem', 'planilha_origem', 'linha_origem'
+    ]
   );
   assert.equal(resultado.linhas[0].sku, 'ABC-1');
   assert.equal(resultado.linhas[0].previsao, '2026-08-01T00:00:00.000Z');
+  assert.equal(resultado.linhas[0].planilha_origem, 'Agendamentos');
+  assert.equal(resultado.linhas[0].linha_origem, '2');
 
   await assert.rejects(
     lerPlanilha(buffer, {
@@ -272,4 +278,25 @@ test('exporta XLSX para Bronze e reutiliza eTag inalterada', async (t) => {
   );
   await fs.access(primeira.caminhos.parquet);
   await fs.access(path.join(primeira.caminhos.diretorio, 'origem.xlsx'));
+});
+
+test('linha fisica diferencia registros mesmo quando o indice da planilha se repete', async () => {
+  const resultado = await lerPlanilha(await criarXlsx({ segundoSku: 'ABC-1' }), {
+    planilha: 'Agendamentos',
+    colunas: [{ origem: 'SKU', destino: 'id_linha_agendamento' }],
+    metadadosOrigem: {
+      conexao: 'automacoes_onedrive',
+      itemId: 'item-1',
+      arquivo: 'BASE AGENDAMENTO.xlsx'
+    }
+  });
+
+  assert.deepEqual(
+    resultado.linhas.map(({ id_linha_agendamento }) => id_linha_agendamento),
+    ['ABC-1', 'ABC-1']
+  );
+  assert.deepEqual(
+    resultado.linhas.map(({ linha_origem }) => linha_origem),
+    ['2', '3']
+  );
 });

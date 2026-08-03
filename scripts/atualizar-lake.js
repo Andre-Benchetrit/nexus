@@ -47,6 +47,29 @@ function resumirPlano(plano) {
   };
 }
 
+function resumirExecucao(execucao) {
+  if (!execucao) return null;
+  const contar = (status) => (execucao.etapas || []).filter(
+    (item) => item.status === status
+  ).length;
+  return {
+    id: execucao.id,
+    status: execucao.status,
+    modo: execucao.modo,
+    iniciadoEm: execucao.iniciadoEm,
+    finalizadoEm: execucao.finalizadoEm,
+    duracaoMs: execucao.duracaoMs,
+    etapas: {
+      sucesso: contar('sucesso'),
+      ignoradas: contar('ignorada'),
+      erros: contar('erro'),
+      bloqueadas: contar('bloqueada')
+    },
+    falhas: execucao.falhas || [],
+    bloqueios: execucao.bloqueios || []
+  };
+}
+
 async function main() {
   const opcoes = lerArgumentos(process.argv.slice(2));
   const raizLake = path.resolve(__dirname, '..', 'lake');
@@ -55,7 +78,11 @@ async function main() {
       lerEstado(raizLake),
       lerUltimaExecucao(raizLake)
     ]);
-    console.log(JSON.stringify({ estado, ultimaExecucao }, null, 2));
+    console.log(JSON.stringify({
+      estado,
+      resumoUltimaExecucao: resumirExecucao(ultimaExecucao),
+      ultimaExecucao
+    }, null, 2));
     return;
   }
 
@@ -75,9 +102,12 @@ async function main() {
     duracaoMs: resultado.execucao.duracaoMs,
     etapas: {
       sucesso: resultado.execucao.etapas.filter((item) => item.status === 'sucesso').length,
-      ignoradas: resultado.execucao.etapas.filter((item) => item.status === 'ignorada').length
+      ignoradas: resultado.execucao.etapas.filter((item) => item.status === 'ignorada').length,
+      erros: resultado.execucao.etapas.filter((item) => item.status === 'erro').length,
+      bloqueadas: resultado.execucao.etapas.filter((item) => item.status === 'bloqueada').length
     }
   }, null, 2));
+  if (resultado.execucao.status === 'parcial') process.exitCode = 2;
 }
 
 if (require.main === module) {
@@ -87,4 +117,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { lerArgumentos, resumirPlano };
+module.exports = { lerArgumentos, resumirExecucao, resumirPlano };

@@ -1,8 +1,8 @@
 const PERFIS = Object.freeze([
   'automatico', 'indicadores', 'influencias', 'estoque', 'estoque_reposicoes',
   'desempenho', 'frete', 'operacao', 'reposicoes',
-  'vendas', 'catalogo', 'pessoas',
-  'negocio', 'hibrido', 'silver', 'bronze', 'completo'
+  'vendas', 'catalogo', 'pessoas', 'produto',
+  'negocio', 'hibrido', 'gold', 'silver', 'bronze', 'completo'
 ]);
 
 function normalizarTexto(texto) {

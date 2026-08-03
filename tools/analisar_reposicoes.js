@@ -22,8 +22,13 @@ const CAMPOS_QUANTIDADE = Object.freeze({
 const definicaoAnalisarReposicoes = {
   type: 'function',
   name: 'analisar_reposicoes',
-  description:
-    'Consulta parcelas de compras agendadas do OneDrive. Lista parcelas sem soma-las; soma quantidades somente quando operacao=somar_quantidade. Nunca altera nem representa o estoque oficial do Sysemp.',
+  description: `
+    Consulta parcelas de compras agendadas do OneDrive. Lista parcelas sem soma-las; soma quantidades somente quando operacao=somar_quantidade. Nunca altera nem representa o estoque oficial do Sysemp.
+    IMPORTANTE:
+    - Esta ferramenta consulta produtos exclusivamente por SKU.
+    - Não aceita EAN/código de barras, código de fábrica ou descrição.
+    - Caso o usuário forneça outro identificador, use primeiro
+    resolver_produto para obter o SKU e depois execute esta ferramenta.`,
   strict: true,
   parameters: {
     type: 'object',

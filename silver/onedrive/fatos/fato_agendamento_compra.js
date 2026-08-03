@@ -5,7 +5,7 @@ module.exports = {
   tipo: 'fato',
   descricao:
     'Parcelas de compras agendadas e seus sinais logísticos, sem alterar o estoque oficial.',
-  versaoContrato: 2,
+  versaoContrato: 3,
   chavePrimaria: 'id_agendamento_compra',
   fontePrincipal: 'agendamento_compra',
   fontesBronze: ['agendamento_compra'],
@@ -13,6 +13,7 @@ module.exports = {
   preservaTotalEntrada: false,
   colunas: [
     'id_agendamento_compra',
+    'id_linha_agendamento_origem',
     'numero_pedido_compra',
     'fornecedor',
     'fornecedor_anotacao',
@@ -129,7 +130,14 @@ module.exports = {
         ) = 1
       ), tipada AS (
         SELECT
-          try_cast(a.id_linha_agendamento AS BIGINT) AS id_agendamento_compra,
+          concat_ws(
+            '|',
+            coalesce(nullif(trim(a.conexao_origem), ''), 'onedrive'),
+            coalesce(nullif(trim(a.item_id_origem), ''), 'item_desconhecido'),
+            coalesce(nullif(trim(a.planilha_origem), ''), 'planilha_desconhecida'),
+            trim(a.linha_origem)
+          ) AS id_agendamento_compra,
+          try_cast(a.id_linha_agendamento AS BIGINT) AS id_linha_agendamento_origem,
           nullif(trim(a.numero_pedido_compra), '') AS numero_pedido_compra,
           nullif(trim(a.fornecedor_anotacao), '') AS fornecedor_anotacao,
           regexp_matches(
@@ -229,6 +237,7 @@ module.exports = {
       )
       SELECT
         id_agendamento_compra,
+        id_linha_agendamento_origem,
         numero_pedido_compra,
         nullif(trim(regexp_replace(
           fornecedor_anotacao,
