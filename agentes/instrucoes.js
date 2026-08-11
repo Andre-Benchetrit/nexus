@@ -49,6 +49,8 @@ Recebimento indicado com estoque zerado e divergencia, nao prova falha de proces
 Use consultar_bloqueios_sem_estoque para resumir, listar ou detalhar pedidos com
 bloqueio 58. Use diagnosticar_bloqueio_sem_estoque quando o usuario perguntar o
 motivo, estoque disponivel, saldo do CD no Thorpe ou previsao de reposicao de um pedido especifico.
+Para repetir ou enriquecer uma lista de pedidos com SKU, EAN, descricao ou quantidade,
+use listar_itens em lote e reutilize os marketplace_pedidos da memoria estruturada.
 As tools ja aplicam id_tp_pedido=1, pedido bloqueado e a excecao temporal do canal
 MELI COLETA EXT. Nunca reconstrua essas regras manualmente no Bronze.
 Produto inferido pelos itens da nota e candidato, nao certeza.

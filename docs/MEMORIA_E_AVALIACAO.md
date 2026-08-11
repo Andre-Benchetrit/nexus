@@ -2,10 +2,15 @@
 
 ## Memoria curta
 
-O Nexus guarda localmente as tres ultimas interacoes de cada sessao. Cada item
-contem a pergunta, uma versao compactada da resposta, o perfil utilizado e
-referencias temporais detectadas. Esse contexto serve para continuacoes como
-`e por marca?`, `compare com o periodo anterior` ou `use a mesma cobertura`.
+O Nexus guarda localmente as dez ultimas interacoes estruturadas de cada sessao.
+Cada item contem pergunta original e autonoma, rota, plano, tools executadas,
+argumentos seguros, entidades, identificadores, periodo, filtros, campos,
+cobertura e resumo factual. Sessoes v1 sao lidas normalmente e migradas de forma
+atomica na gravacao seguinte.
+
+Identificadores vindos das tools nao sao truncados pelo resumo textual. Isso
+permite resolver continuacoes como `esses pedidos novamente com EAN` sem perder
+a lista original.
 
 Numeros anteriores nunca substituem uma nova consulta: dados mutaveis devem ser
 confirmados pelas tools. Os arquivos ficam em `memoria/.runtime/`, fora do Git.
@@ -67,10 +72,14 @@ Para executar respostas reais diretamente no Groq:
 ```powershell
 npm run avaliar:agente -- --executar --provider groq --limite 5
 npm run avaliar:agente -- --executar --provider groq --categoria vendas --debug
+npm run avaliar:agente -- --executar --provider openai --router-mode v2 `
+  --router-provider openai --caso continuacao-bloqueios-com-ean --debug
 ```
 
 Relatorios reais sao gravados em `avaliacoes/resultados/` e ignorados pelo Git,
-pois podem conter dados internos. A avaliacao automatica verifica roteamento,
-erros internos e respostas vazias. Os criterios semanticos continuam visiveis
+pois podem conter dados internos. A avaliacao automatica registra roteamento
+estruturado, intencao, plano, tools executadas, erros internos e respostas
+vazias. Casos podem declarar `intencaoEsperada` e `ferramentasEsperadas`.
+Os criterios semanticos continuam visiveis
 no relatorio para revisao humana. Quando um problema for corrigido, sua pergunta
 deve permanecer na bateria e ganhar um teste deterministico sempre que possivel.

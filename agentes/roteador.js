@@ -107,6 +107,12 @@ function pedeMesmaCobertura(pergunta) {
   return /\b(mesma|igual).{0,12}cobertura\b|\bmesmo.{0,12}(corte|limite de dados)\b/.test(texto);
 }
 
+function referenciaContextual(pergunta) {
+  const texto = normalizarTexto(pergunta);
+  return /^(e |agora |tambem |nesse|nessa|nesses|nessas|desses|dessas|deles|delas|pode me passar|passe|repita|inclua|adicione|acrescente)/.test(texto)
+    || /\b(esses|essas|estes|estas|os mesmos|as mesmas|novamente|resultado anterior|dados anteriores)\b/.test(texto);
+}
+
 function obterPerfilAnterior(historico = []) {
   for (let indice = historico.length - 1; indice >= 0; indice -= 1) {
     const item = historico[indice];
@@ -114,7 +120,7 @@ function obterPerfilAnterior(historico = []) {
       return item.perfil;
     }
     const pergunta = normalizarTexto(item.pergunta);
-    if (!/^(e |agora |tambem |nesse|nessa|desses|dessas)/.test(pergunta)) {
+    if (!referenciaContextual(pergunta)) {
       return classificarPergunta(pergunta);
     }
   }
@@ -148,9 +154,7 @@ function resolverRoteamentoComContexto(
     }
   }
   const ultimaPergunta = historico.at(-1)?.pergunta;
-  const texto = ultimaPergunta && /^(e |agora |tambem |nesse|nessa|desses|dessas)/.test(
-    normalizarTexto(pergunta)
-  )
+  const texto = ultimaPergunta && referenciaContextual(pergunta)
     ? `${ultimaPergunta} ${pergunta}`
     : pergunta;
   const roteamento = analisarRoteamento(texto);
@@ -169,6 +173,7 @@ module.exports = {
   normalizarTexto,
   obterPerfilAnterior,
   pedeMesmaCobertura,
+  referenciaContextual,
   resolverPerfil,
   resolverPerfilComContexto,
   resolverRoteamentoComContexto

@@ -271,6 +271,27 @@ Para medir o contexto fixo sem consumir API:
 npm run agente:contexto
 ```
 
+O roteador semantico pode usar provider e modelo diferentes do modelo principal:
+
+```powershell
+npm run agente:nexus -- --router-mode shadow --router-provider openai --router-model gpt-5.6-luna "Como estamos?"
+npm run agente:nexus -- --router-mode v2 --sessao financeiro "E no periodo anterior?"
+```
+
+Configuracao equivalente:
+
+```text
+NEXUS_ROUTER_MODE=shadow
+NEXUS_ROUTER_PROVIDER=openai
+NEXUS_ROUTER_MODEL=gpt-5.6-luna
+NEXUS_MAX_RODADAS=10
+NEXUS_SESSION_HISTORY_LIMIT=10
+```
+
+`legacy` usa apenas as regras anteriores; `shadow` compara sem alterar a resposta;
+`v2` executa o plano semantico validado. `--perfil` continua tendo precedencia.
+O teto de seguranca tambem pode ser ajustado por `--max-rodadas` entre 1 e 20.
+
 O comando antigo continua como alias compativel:
 
 ```powershell
@@ -300,6 +321,12 @@ LLM_FALLBACK_PROVIDER=groq
 LLM_RETRY_ATTEMPTS=1
 LLM_RETRY_DELAY_MS=500
 LLM_REQUEST_TIMEOUT_MS=20000
+
+NEXUS_ROUTER_MODE=shadow
+# NEXUS_ROUTER_PROVIDER=openai
+# NEXUS_ROUTER_MODEL=gpt-5.6-luna
+NEXUS_MAX_RODADAS=10
+NEXUS_SESSION_HISTORY_LIMIT=10
 
 GEMINI_API_KEY=sua_chave_gemini
 GEMINI_MODEL=gemini-3.1-flash-lite

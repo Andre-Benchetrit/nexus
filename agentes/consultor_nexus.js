@@ -7,6 +7,7 @@ dotenv.config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
 const { criarProvider, PROVIDER_PADRAO } = require('./providers');
 const { obterInstrucaoPerfil, obterInstrucoes } = require('./instrucoes');
 const {
+  ferramentaDeNegocio,
   ferramentaTecnica,
   instrumentarFerramentas,
   obterFerramentaPorNome,
@@ -14,6 +15,7 @@ const {
 } = require('./ferramentas');
 const {
   pedeMesmaCobertura,
+  referenciaContextual,
   resolverRoteamentoComContexto
 } = require('./roteador');
 const {
@@ -22,17 +24,32 @@ const {
   obterDataReferencia
 } = require('./contexto_temporal');
 const { aplicarPoliticaArgumentos } = require('./politicas_tools');
-const { criarMemoria, pareceContinuacao } = require('./memoria');
+const {
+  criarMemoria,
+  extrairReferenciasTemporais,
+  pareceContinuacao
+} = require('./memoria');
 const { planejarRecuperacaoTool } = require('./recuperacao_tools');
 const { resumirCatalogo } = require('./catalogo_aprofundamento');
+const {
+  dominioCobreSolicitacao,
+  extrairReferenciasResultado,
+  obterCapacidade,
+  validarPlanoSugerido
+} = require('./capacidades');
+const {
+  decisaoDoLegado,
+  interpretarRotaSemantica,
+  resolverModoRoteador
+} = require('./roteador_semantico');
 const {
   aplicarGarantiasResposta,
   normalizarResultadoTool
 } = require('./resposta');
 
-const MAX_RODADAS_NEGOCIO = 4;
-const MAX_RODADAS_GENERICAS = 4;
-const MAX_RODADAS_APROFUNDAMENTO = 6;
+const MAX_RODADAS_NEGOCIO = 10;
+const MAX_RODADAS_GENERICAS = 10;
+const MAX_RODADAS_APROFUNDAMENTO = 10;
 const INSTRUCOES = obterInstrucoes('completo');
 
 function criarProviderConfigurado(dependencias) {
@@ -62,6 +79,33 @@ function contextoPermiteBronze(pergunta, justificativa) {
   return /auditor|diverg|histor|origem|dado bruto|registro bruto|confer|validar/.test(texto);
 }
 
+function estabilizarDecisaoComHistorico(decisao, pergunta, historico = []) {
+  const anterior = historico.at(-1);
+  const dominioAnterior = anterior?.rota?.dominioPrimario ||
+    String(anterior?.perfil || '').split('+')[0] || null;
+  if (
+    !dominioAnterior ||
+    dominioAnterior === decisao.dominioPrimario ||
+    !referenciaContextual(pergunta)
+  ) return decisao;
+  if (!dominioCobreSolicitacao(
+    dominioAnterior,
+    decisao.intencao,
+    decisao.camposSolicitados
+  )) return decisao;
+  return {
+    ...decisao,
+    dominioPrimario: dominioAnterior,
+    dominiosSecundarios: decisao.dominiosSecundarios.filter(
+      (dominio) => dominio !== dominioAnterior
+    ),
+    codigosMotivo: [
+      ...decisao.codigosMotivo,
+      'dominio_anterior_preservado_por_capacidade'
+    ]
+  };
+}
+
 async function executarAgente(pergunta, dependencias = {}) {
   if (!pergunta || !pergunta.trim()) throw new Error('Informe uma pergunta.');
   const texto = pergunta.trim();
@@ -78,7 +122,7 @@ async function executarAgente(pergunta, dependencias = {}) {
   const perguntaParaRoteamento = pareceContinuacao(texto) && ultimaPergunta
     ? `${ultimaPergunta} ${texto}`
     : texto;
-  const roteamento = dependencias.tools
+  const roteamentoLegado = dependencias.tools
     ? {
       perfil: 'customizado',
       confianca: 'explicita',
@@ -89,17 +133,129 @@ async function executarAgente(pergunta, dependencias = {}) {
       historicoCurto,
       dependencias.perfilTools || 'automatico'
     );
+  const modoRoteador = dependencias.tools ? 'legacy' : resolverModoRoteador(dependencias);
+  const decisaoLegada = dependencias.tools
+    ? null
+    : decisaoDoLegado(perguntaParaRoteamento, roteamentoLegado, historicoCurto);
+  let decisaoSemantica = null;
+  let erroRoteadorSemantico = null;
+  if (
+    !dependencias.tools &&
+    (dependencias.perfilTools || 'automatico') === 'automatico' &&
+    modoRoteador !== 'legacy'
+  ) {
+    try {
+      decisaoSemantica = await interpretarRotaSemantica(
+        perguntaNormalizada,
+        memoria?.montarContextoEstruturado?.() || [],
+        dependencias
+      );
+      decisaoSemantica = estabilizarDecisaoComHistorico(
+        decisaoSemantica,
+        perguntaNormalizada,
+        historicoCurto
+      );
+      dependencias.onEvento?.(
+        `Roteador semantico: ${JSON.stringify({
+          modo: modoRoteador,
+          dominio: decisaoSemantica.dominioPrimario,
+          secundarios: decisaoSemantica.dominiosSecundarios,
+          intencao: decisaoSemantica.intencao,
+          confianca: decisaoSemantica.confianca,
+          ferramentasSugeridas: decisaoSemantica.planoSugerido.map((item) => item.ferramenta),
+          capacidadesAusentes: decisaoSemantica.capacidadesAusentes
+        })}`
+      );
+      if (modoRoteador === 'shadow') {
+        const divergiu = decisaoSemantica.dominioPrimario !== decisaoLegada.dominioPrimario;
+        dependencias.onEvento?.(
+          `Roteador shadow: ${JSON.stringify({
+            divergiu,
+            legado: decisaoLegada.dominioPrimario,
+            v2: decisaoSemantica.dominioPrimario
+          })}`
+        );
+      }
+    } catch (erro) {
+      erroRoteadorSemantico = erro;
+      dependencias.onEvento?.(
+        `Roteador semantico indisponivel; usando fallback local: ${erro.message}`
+      );
+    }
+  }
+  const usarDecisaoSemantica = modoRoteador === 'v2' && decisaoSemantica;
+  const decisaoRota = usarDecisaoSemantica ? decisaoSemantica : decisaoLegada;
+  const planoValidado = decisaoRota
+    ? validarPlanoSugerido(decisaoRota)
+    : { ferramentas: [], rejeitadas: [], capacidadesAusentes: [] };
+  const roteamento = usarDecisaoSemantica
+    ? {
+      perfil: decisaoRota.dominioPrimario,
+      confianca: decisaoRota.confianca,
+      origem: 'roteador_semantico'
+    }
+    : roteamentoLegado;
   const perfilInicial = roteamento.perfil;
-  let perfilEfetivo = perfilInicial;
+  let perfilEfetivo = usarDecisaoSemantica
+    ? [perfilInicial, ...decisaoRota.dominiosSecundarios].join('+')
+    : perfilInicial;
   const roteamentoAutomatico = !dependencias.tools &&
     (dependencias.perfilTools || 'automatico') === 'automatico';
-  let ferramentas = dependencias.tools ||
-    obterFerramentasDoPerfil(perfilInicial, dependencias);
+  let ferramentas;
+  if (dependencias.tools) {
+    ferramentas = dependencias.tools;
+  } else if (usarDecisaoSemantica) {
+    ferramentas = planoValidado.ferramentas
+      .map((nome) => obterFerramentaPorNome(nome, dependencias))
+      .filter(Boolean);
+    if (ferramentas.length > 1) {
+      ferramentas = ferramentas.map((item) => ferramentaDeNegocio(item.definicao.name)
+        ? { ...item, terminal: false }
+        : item);
+    }
+  } else {
+    ferramentas = obterFerramentasDoPerfil(perfilInicial, dependencias);
+  }
   const resultadosTools = [];
   const assinaturasExecutadas = new Set();
   const usosTecnicos = { descoberta: 0, final: 0 };
   let aprofundamento = null;
   let ferramentasInstrumentadas = [];
+
+  if (usarDecisaoSemantica && (
+    decisaoRota.precisaEsclarecimento ||
+    (decisaoRota.dominioPrimario === 'hibrido' && decisaoRota.confianca < 0.45) ||
+    planoValidado.ferramentas.length === 0
+  )) {
+    const resposta = decisaoRota.perguntaEsclarecimento ||
+      'Pode especificar qual informacao de negocio voce deseja consultar?';
+    memoria?.registrarInteracao({
+      pergunta: perguntaNormalizada,
+      perguntaAutonoma: decisaoRota.perguntaAutonoma,
+      resposta,
+      provider: decisaoRota.provider,
+      modelo: decisaoRota.modelo,
+      perfil: decisaoRota.dominioPrimario,
+      rota: decisaoRota,
+      plano: planoValidado
+    });
+    return {
+      texto: resposta,
+      provider: decisaoRota.provider || 'roteador',
+      modelo: decisaoRota.modelo || null,
+      rodadas: 1,
+      roteamento: {
+        perfilInicial,
+        perfilEfetivo,
+        confianca: decisaoRota.confianca,
+        origem: decisaoRota.origem,
+        modo: modoRoteador,
+        decisao: decisaoRota,
+        plano: planoValidado,
+        esclarecimento: true
+      }
+    };
+  }
 
   async function liberarAprofundamento(solicitacao) {
     if (!roteamentoAutomatico) {
@@ -107,6 +263,14 @@ async function executarAgente(pergunta, dependencias = {}) {
     }
     if (aprofundamento) {
       throw new Error(`Aprofundamento ja liberado para ${aprofundamento.camada}.`);
+    }
+    if (
+      usarDecisaoSemantica &&
+      !planoValidado.capacidadesAusentes.length
+    ) {
+      throw new Error(
+        'Aprofundamento negado: a rota validada nao registrou capacidade ausente.'
+      );
     }
     if (
       solicitacao.camada === 'bronze' &&
@@ -135,7 +299,13 @@ async function executarAgente(pergunta, dependencias = {}) {
     };
   }
 
-  if (roteamentoAutomatico) {
+  const exporGatewayAprofundamento = roteamentoAutomatico && (
+    !usarDecisaoSemantica || planoValidado.capacidadesAusentes.length > 0
+  ) && (
+    !usarDecisaoSemantica ||
+    !ferramentas.some((item) => ferramentaTecnica(item.definicao.name))
+  );
+  if (exporGatewayAprofundamento) {
     const gateway = obterFerramentaPorNome('solicitar_aprofundamento', {
       ...dependencias,
       liberarAprofundamento
@@ -170,9 +340,12 @@ async function executarAgente(pergunta, dependencias = {}) {
         }
       },
       onResultado(nome, resultado, argumentos) {
+        const normalizado = normalizarResultadoTool(resultado);
         resultadosTools.push({
           nome,
-          resultado: normalizarResultadoTool(resultado)
+          argumentos,
+          resultado: normalizado,
+          referencias: extrairReferenciasResultado(normalizado)
         });
         if (ferramentaTecnica(nome)) {
           const descoberta = nome.startsWith('consultar_') &&
@@ -183,25 +356,45 @@ async function executarAgente(pergunta, dependencias = {}) {
     }
   );
   ferramentasInstrumentadas = instrumentar(ferramentas);
-  const maxRodadas = dependencias.maxRodadas || (roteamentoAutomatico
+  const maxRodadas = Number(
+    dependencias.maxRodadas || process.env.NEXUS_MAX_RODADAS || (roteamentoAutomatico
     ? MAX_RODADAS_APROFUNDAMENTO
     : (
       ['indicadores', 'vendas', 'catalogo', 'negocio'].includes(perfilInicial)
         ? MAX_RODADAS_NEGOCIO
         : MAX_RODADAS_GENERICAS
-    ));
+    ))
+  );
+  if (!Number.isInteger(maxRodadas) || maxRodadas < 1 || maxRodadas > 20) {
+    throw new Error('maxRodadas deve ser um inteiro entre 1 e 20.');
+  }
   dependencias.onEvento?.(
     `Perfil ${perfilInicial} (${roteamento.confianca}/${roteamento.origem}): ` +
     `${ferramentas.map(({ definicao }) => definicao.name).join(', ')}.`
   );
+  if (usarDecisaoSemantica) {
+    dependencias.onEvento?.(
+      `Plano validado: ${JSON.stringify({
+        aceitas: planoValidado.ferramentas,
+        rejeitadas: planoValidado.rejeitadas,
+        capacidadesAusentes: planoValidado.capacidadesAusentes
+      })}`
+    );
+  }
   if (perguntaNormalizada !== texto) {
     dependencias.onEvento?.(`Data sem ano interpretada com ${dataReferencia.slice(0, 4)}.`);
   }
 
+  const perfilInstrucoes = perfilInicial === 'customizado' || perfilInicial === 'hibrido'
+    ? (perfilInicial === 'customizado' ? 'completo' : 'hibrido')
+    : perfilInicial;
   const instrucoesBase = obterInstrucoes(
-    perfilInicial === 'customizado' ? 'completo' : perfilInicial,
+    perfilInstrucoes,
     dataReferencia
   );
+  const instrucoesDominiosSecundarios = (decisaoRota?.dominiosSecundarios || [])
+    .map(obterInstrucaoPerfil)
+    .filter(Boolean);
   const contextoMemoria = memoria?.montarContexto(perguntaParaRoteamento);
   const ultimaDataCompleta = [...historicoCurto]
     .reverse()
@@ -214,11 +407,32 @@ async function executarAgente(pergunta, dependencias = {}) {
       'periodo, limitado ao ultimo dia do mes. Consulte novamente a tool.'
     )
     : '';
-  const instrucoesComuns = [instrucoesBase, contextoMemoria, contextoCobertura]
+  const contextoRota = usarDecisaoSemantica
+    ? `Rota validada: ${JSON.stringify({
+      perguntaAutonoma: decisaoRota.perguntaAutonoma,
+      dominioPrimario: decisaoRota.dominioPrimario,
+      dominiosSecundarios: decisaoRota.dominiosSecundarios,
+      intencao: decisaoRota.intencao,
+      entidades: decisaoRota.entidades,
+      periodo: decisaoRota.periodo,
+      filtros: planoValidado.filtrosAceitos,
+      camposSolicitados: decisaoRota.camposSolicitados,
+      ferramentas: planoValidado.ferramentas
+    })}`
+    : '';
+  const instrucoesComuns = [
+    instrucoesBase,
+    ...instrucoesDominiosSecundarios,
+    contextoRota,
+    contextoMemoria,
+    contextoCobertura
+  ]
     .filter(Boolean);
   const provider = criarProviderConfigurado(dependencias);
   const executarProvider = (itens, instrucoesExtras = []) => provider.executar({
-    pergunta: perguntaNormalizada,
+    pergunta: usarDecisaoSemantica
+      ? decisaoRota.perguntaAutonoma || perguntaNormalizada
+      : perguntaNormalizada,
     instrucoes: [...instrucoesComuns, ...instrucoesExtras]
       .filter(Boolean)
       .join('\n\n'),
@@ -234,6 +448,16 @@ async function executarAgente(pergunta, dependencias = {}) {
     recuperacao = roteamentoAutomatico
       ? planejarRecuperacaoTool(erro, ferramentas, dependencias)
       : null;
+    if (recuperacao && usarDecisaoSemantica) {
+      const capacidade = obterCapacidade(recuperacao.nome);
+      const dominiosPermitidos = new Set([
+        decisaoRota.dominioPrimario,
+        ...decisaoRota.dominiosSecundarios
+      ]);
+      if (!capacidade || !dominiosPermitidos.has(capacidade.dominio)) {
+        recuperacao = null;
+      }
+    }
     if (!recuperacao) throw erro;
 
     dependencias.onEvento?.(
@@ -260,15 +484,52 @@ async function executarAgente(pergunta, dependencias = {}) {
       confianca: roteamento.confianca,
       origem: roteamento.origem,
       toolRecuperada: recuperacao?.nome || null,
-      aprofundamento
+      aprofundamento,
+      modo: modoRoteador,
+      decisao: decisaoRota,
+      plano: planoValidado,
+      ferramentasExecutadas: resultadosTools.map((item) => item.nome),
+      shadow: modoRoteador === 'shadow' && decisaoSemantica ? {
+        dominioLegado: decisaoLegada.dominioPrimario,
+        dominioV2: decisaoSemantica.dominioPrimario,
+        divergiu: decisaoLegada.dominioPrimario !== decisaoSemantica.dominioPrimario
+      } : null,
+      fallbackSemantico: erroRoteadorSemantico?.message || null
     }
   };
+  const entidadesMemoria = {};
+  for (const item of resultadosTools) {
+    for (const [chave, valores] of Object.entries(item.referencias || {})) {
+      entidadesMemoria[chave] ||= [];
+      entidadesMemoria[chave].push(...valores);
+    }
+  }
+  for (const [chave, valores] of Object.entries(entidadesMemoria)) {
+    entidadesMemoria[chave] = [...new Set(valores)];
+  }
   memoria?.registrarInteracao({
     pergunta: perguntaNormalizada,
+    perguntaAutonoma: decisaoRota?.perguntaAutonoma || perguntaNormalizada,
     resposta: resultadoFormatado.texto,
     provider: resultado.provider,
     modelo: resultado.modelo,
-    perfil: perfilEfetivo
+    perfil: perfilEfetivo,
+    rota: decisaoRota,
+    plano: planoValidado,
+    ferramentas: resultadosTools.map((item) => ({
+      nome: item.nome,
+      argumentos: item.argumentos,
+      referencias: item.referencias,
+      atualizadoEm: item.resultado?.atualizado_em || item.resultado?.ultimaConstrucao || null
+    })),
+    entidades: entidadesMemoria,
+    periodo: decisaoRota?.periodo,
+    filtros: planoValidado.filtrosAceitos || decisaoRota?.filtros,
+    campos: decisaoRota?.camposSolicitados,
+    referencias: {
+      ...entidadesMemoria,
+      ...extrairReferenciasTemporais(resultadoFormatado.texto)
+    }
   });
   return resultadoFormatado;
 }
@@ -283,11 +544,16 @@ function lerArgumentos(argumentos) {
     ['--fallback-model', 'modeloFallback'],
     ['--timeout', 'timeoutMs'],
     ['--perfil', 'perfilTools'],
-    ['--sessao', 'sessaoMemoria']
+    ['--sessao', 'sessaoMemoria'],
+    ['--router-mode', 'routerMode'],
+    ['--router-provider', 'routerProviderNome'],
+    ['--router-model', 'routerModelo'],
+    ['--max-rodadas', 'maxRodadas']
   ]);
 
   for (let indice = 0; indice < argumentos.length; indice += 1) {
     const argumento = argumentos[indice];
+    if (argumento === '--') continue;
     if (argumento === '--no-fallback') {
       opcoes.semFallback = true;
       continue;
@@ -313,6 +579,12 @@ function lerArgumentos(argumentos) {
         throw new Error('--timeout deve ser um inteiro entre 1000 e 120000 milissegundos.');
       }
       opcoes[destino] = timeout;
+    } else if (argumento === '--max-rodadas') {
+      const maxRodadas = Number(valor);
+      if (!Number.isInteger(maxRodadas) || maxRodadas < 1 || maxRodadas > 20) {
+        throw new Error('--max-rodadas deve ser um inteiro entre 1 e 20.');
+      }
+      opcoes[destino] = maxRodadas;
     } else {
       opcoes[destino] = valor;
     }

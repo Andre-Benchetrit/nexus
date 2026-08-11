@@ -186,6 +186,29 @@ test('tool resume pedidos e ocorrencias como metricas diferentes', async () => {
   assert.equal(resumo.quantidade_ocorrencias, 3n);
 });
 
+test('tool lista itens de varios pedidos com EAN em uma unica chamada', async () => {
+  const resultado = await obterBloqueiosSemEstoque({
+    operacao: 'listar_itens',
+    marketplace_pedido: null,
+    marketplace_pedidos: ['PED-1', 'PED-MELI-HOJE'],
+    id_nota_saida: null,
+    ids_notas_saida: null,
+    limite: 100
+  }, {
+    criarLeitorGold: () => criarLeitorGold({ raizLake, catalogo: catalogoGold })
+  });
+  assert.equal(resultado.operacao, 'listar_itens');
+  assert.deepEqual(
+    new Set(resultado.dados.map((linha) => linha.marketplace_pedido)),
+    new Set(['PED-1', 'PED-MELI-HOJE'])
+  );
+  assert.deepEqual(
+    new Set(resultado.dados.map((linha) => linha.ean)),
+    new Set(['EAN-1', 'EAN-3'])
+  );
+  assert.equal(resultado.dados.every((linha) => linha.produto_inferido === false), true);
+});
+
 test('classifica estoque e distancia da reposicao sem depender do LLM', () => {
   assert.equal(classificarProduto({
     estoqueEncontrado: true,

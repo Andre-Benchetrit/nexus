@@ -68,11 +68,16 @@ implementacoes falsas sem alterar o agente.
 ### Router hibrido
 
 O roteador classifica palavras de negocio localmente. Isso nao consome API e
-evita enviar todas as tools em cada pergunta. Quando a frase nao possui sinais
-suficientes, o perfil `hibrido` oferece todas as fachadas de negocio e um
-gateway compacto. `solicitar_aprofundamento` adiciona dinamicamente apenas Gold,
-Silver ou Bronze ao loop atual. Existe uma unica ampliacao e nunca escalada
-recursiva; Bronze fica restrito a auditoria.
+evita enviar todas as tools em cada pergunta. O roteador v2 usa uma LLM separada
+para produzir dominio, intencao, entidades, campos e plano sugerido. O registro
+de capacidades valida esse plano antes de qualquer tool ser exposta. Regras
+locais continuam soberanas para perfil explicito, seguranca e Bronze.
+
+Os modos sao `legacy`, `shadow` e `v2`. `shadow` e o padrao inicial: calcula a
+rota semantica, registra a divergencia e ainda executa a rota legada. Em `v2`,
+uma ambiguidade material gera uma pergunta de esclarecimento sem consultar dados.
+Gold e Silver so ficam disponiveis quando a rota registra uma capacidade ausente;
+Bronze continua restrito a auditoria.
 
 ## Perfis de tools
 
@@ -115,8 +120,10 @@ O comando abaixo mede prompt e schemas, sem chamar API:
 npm run agente:contexto
 ```
 
-A estimativa usa quatro caracteres por token apenas como referencia. Os testes
-mantem os perfis comuns dentro de limites para impedir crescimento acidental.
+A estimativa usa quatro caracteres por token apenas como referencia. Tokens sao
+telemetria: contexto necessario para uma resposta verdadeira nao deve ser
+removido para cumprir um limite artificial. A suite conserva apenas um teto de
+seguranca contra crescimento patologico.
 
 Medicao atual aproximada:
 
@@ -140,8 +147,9 @@ Medicao atual aproximada:
 2. Exponha apenas campos seguros no catalogo.
 3. Se a pergunta for recorrente, crie uma facade de negocio pequena.
 4. Registre a tool em `agentes/ferramentas.js`.
-5. Acrescente a rota somente quando houver sinais deterministas suficientes.
-6. Teste contrato, validacao, resultado real e orcamento de contexto.
+5. Registre dominio, intencoes, entidades, campos e operacoes em
+   `agentes/capacidades.js`.
+6. Teste contrato, plano validado, resultado real, continuidade e telemetria.
 
 ## Camada Gold
 

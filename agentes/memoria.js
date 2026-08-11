@@ -4,9 +4,9 @@ const path = require('node:path');
 const RAIZ = path.resolve(__dirname, '..');
 const CAMINHO_CONHECIMENTO = path.join(RAIZ, 'memoria', 'conhecimento.json');
 const DIRETORIO_RUNTIME = path.join(RAIZ, 'memoria', '.runtime');
-const LIMITE_CURTA_PADRAO = 3;
+const LIMITE_CURTA_PADRAO = 10;
 const LIMITE_RESUMO_PERGUNTA = 180;
-const LIMITE_RESUMO_RESPOSTA = 320;
+const LIMITE_RESUMO_RESPOSTA = 1_000;
 
 const PALAVRAS_VAZIAS = new Set([
   'a', 'as', 'ao', 'aos', 'com', 'como', 'da', 'das', 'de', 'do', 'dos', 'e',
@@ -95,19 +95,58 @@ function extrairReferenciasTemporais(resposta) {
 function pareceContinuacao(pergunta) {
   const texto = normalizar(pergunta);
   if (!texto) return false;
-  return /^(e |agora |nesse|nessa|nesses|nessas|desses|dessas|deles|delas|tambem|compare|detalhe|separe|mostre os|mostre as)/.test(texto)
-    || /\b(anterior|acima|mesmo periodo|esses dados|esse resultado)\b/.test(texto);
+  return /^(e |agora |nesse|nessa|nesses|nessas|desses|dessas|deles|delas|tambem|compare|detalhe|separe|mostre os|mostre as|pode me passar|passe|repita|inclua|adicione|acrescente)/.test(texto)
+    || /\b(anterior|acima|mesmo periodo|esses dados|esse resultado|esses pedidos|os mesmos|novamente)\b/.test(texto);
+}
+
+const CHAVES_SENSIVEIS = /token|secret|senha|password|credential|api[_-]?key|sql|caminho|path/i;
+
+function sanitizarEstrutura(valor) {
+  if (Array.isArray(valor)) return valor.map(sanitizarEstrutura);
+  if (!valor || typeof valor !== 'object') {
+    return typeof valor === 'bigint' ? String(valor) : valor;
+  }
+  return Object.fromEntries(
+    Object.entries(valor)
+      .filter(([chave]) => !CHAVES_SENSIVEIS.test(chave))
+      .map(([chave, item]) => [chave, sanitizarEstrutura(item)])
+  );
+}
+
+function normalizarInteracao(item) {
+  return {
+    pergunta: item.pergunta || '',
+    perguntaAutonoma: item.perguntaAutonoma || item.pergunta || '',
+    resposta: item.resposta || '',
+    provider: item.provider || null,
+    modelo: item.modelo || null,
+    perfil: item.perfil || item.rota?.dominioPrimario || null,
+    rota: item.rota || null,
+    plano: item.plano || null,
+    ferramentas: item.ferramentas || [],
+    entidades: item.entidades || {},
+    periodo: item.periodo || item.rota?.periodo || null,
+    filtros: item.filtros || item.rota?.filtros || [],
+    campos: item.campos || item.rota?.camposSolicitados || [],
+    referencias: item.referencias || {},
+    criadaEm: item.criadaEm || null
+  };
 }
 
 function criarMemoria(opcoes = {}) {
   const sessao = validarSessao(opcoes.sessao || 'padrao');
-  const limiteCurta = Number(opcoes.limiteCurta || LIMITE_CURTA_PADRAO);
+  const limiteCurta = Number(
+    opcoes.limiteCurta || process.env.NEXUS_SESSION_HISTORY_LIMIT || LIMITE_CURTA_PADRAO
+  );
+  if (!Number.isInteger(limiteCurta) || limiteCurta < 1 || limiteCurta > 50) {
+    throw new Error('Limite da memoria curta deve ser um inteiro entre 1 e 50.');
+  }
   const arquivoCurta = opcoes.caminhoCurta || caminhoSessao(sessao);
   const arquivoLonga = opcoes.caminhoLonga || CAMINHO_CONHECIMENTO;
 
   function listarCurta() {
     const dados = lerJson(arquivoCurta, { versao: 1, sessao, interacoes: [] });
-    return (dados.interacoes || []).slice(-limiteCurta);
+    return (dados.interacoes || []).slice(-limiteCurta).map(normalizarInteracao);
   }
 
   function listarLonga({ somenteAtivos = false } = {}) {
@@ -134,7 +173,12 @@ function criarMemoria(opcoes = {}) {
         'Memoria curta (use apenas para resolver referencias da conversa; reconfirme dados mutaveis nas tools):',
         ...curta.map((item, indice) => (
           `${indice + 1}. Pergunta: ${item.pergunta}\n` +
+          `   Pergunta autonoma: ${item.perguntaAutonoma || item.pergunta}\n` +
           `   Perfil: ${item.perfil || 'nao registrado'}\n` +
+          (item.rota ? `   Rota: ${JSON.stringify(item.rota)}\n` : '') +
+          (Object.keys(item.entidades || {}).length
+            ? `   Entidades: ${JSON.stringify(item.entidades)}\n`
+            : '') +
           `   Resposta resumida: ${item.resposta}` +
           (
             item.referencias?.ultimaDataCompleta
@@ -153,21 +197,72 @@ function criarMemoria(opcoes = {}) {
     return blocos.join('\n');
   }
 
-  function registrarInteracao({ pergunta, resposta, provider, modelo, perfil, referencias }) {
+  function montarContextoEstruturado() {
+    return listarCurta().map((item) => ({
+      pergunta: item.pergunta,
+      perguntaAutonoma: item.perguntaAutonoma,
+      dominio: item.rota?.dominioPrimario || item.perfil,
+      dominiosSecundarios: item.rota?.dominiosSecundarios || [],
+      intencao: item.rota?.intencao || null,
+      entidades: item.entidades,
+      periodo: item.periodo,
+      filtros: item.filtros,
+      campos: item.campos,
+      ferramentas: item.ferramentas.map((ferramenta) => ({
+        nome: ferramenta.nome,
+        argumentos: ferramenta.argumentos,
+        referencias: ferramenta.referencias,
+        atualizadoEm: ferramenta.atualizadoEm || null
+      })),
+      referencias: item.referencias,
+      resposta: item.resposta,
+      criadaEm: item.criadaEm
+    }));
+  }
+
+  function registrarInteracao({
+    pergunta,
+    perguntaAutonoma,
+    resposta,
+    provider,
+    modelo,
+    perfil,
+    rota,
+    plano,
+    ferramentas = [],
+    entidades = {},
+    periodo,
+    filtros,
+    campos,
+    referencias
+  }) {
     const dados = lerJson(arquivoCurta, { versao: 1, sessao, interacoes: [] });
     dados.interacoes = [
-      ...(dados.interacoes || []),
+      ...(dados.interacoes || []).map(normalizarInteracao),
       {
         pergunta: resumir(pergunta, LIMITE_RESUMO_PERGUNTA),
+        perguntaAutonoma: resumir(
+          perguntaAutonoma || rota?.perguntaAutonoma || pergunta,
+          LIMITE_RESUMO_PERGUNTA * 2
+        ),
         resposta: resumir(resposta, LIMITE_RESUMO_RESPOSTA),
         provider: provider || null,
         modelo: modelo || null,
         perfil: perfil || null,
-        referencias: referencias || extrairReferenciasTemporais(resposta),
+        rota: rota ? sanitizarEstrutura(rota) : null,
+        plano: plano ? sanitizarEstrutura(plano) : null,
+        ferramentas: sanitizarEstrutura(ferramentas),
+        entidades: sanitizarEstrutura(entidades),
+        periodo: sanitizarEstrutura(periodo || rota?.periodo || null),
+        filtros: sanitizarEstrutura(filtros || rota?.filtros || []),
+        campos: sanitizarEstrutura(campos || rota?.camposSolicitados || []),
+        referencias: sanitizarEstrutura(
+          referencias || extrairReferenciasTemporais(resposta)
+        ),
         criadaEm: new Date().toISOString()
       }
     ].slice(-limiteCurta);
-    gravarJson(arquivoCurta, dados);
+    gravarJson(arquivoCurta, { versao: 2, sessao, interacoes: dados.interacoes });
   }
 
   function adicionarConhecimento({ conteudo, categoria = 'correcao', gatilhos = [] }) {
@@ -203,7 +298,7 @@ function criarMemoria(opcoes = {}) {
   }
 
   function limparCurta() {
-    gravarJson(arquivoCurta, { versao: 1, sessao, interacoes: [] });
+    gravarJson(arquivoCurta, { versao: 2, sessao, interacoes: [] });
   }
 
   return {
@@ -213,6 +308,7 @@ function criarMemoria(opcoes = {}) {
     listarCurta,
     listarLonga,
     montarContexto,
+    montarContextoEstruturado,
     registrarInteracao,
     removerConhecimento,
     sessao
@@ -226,5 +322,6 @@ module.exports = {
   extrairReferenciasTemporais,
   pareceContinuacao,
   pontuarConhecimento,
-  resumir
+  resumir,
+  sanitizarEstrutura
 };

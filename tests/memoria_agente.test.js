@@ -21,9 +21,9 @@ function criarMemoriaTemporaria(t) {
   });
 }
 
-test('memoria curta preserva somente as tres ultimas interacoes resumidas', (t) => {
+test('memoria curta preserva as dez ultimas interacoes estruturadas', (t) => {
   const memoria = criarMemoriaTemporaria(t);
-  for (let indice = 1; indice <= 4; indice += 1) {
+  for (let indice = 1; indice <= 11; indice += 1) {
     memoria.registrarInteracao({
       pergunta: `Pergunta ${indice}`,
       resposta: `Resposta ${indice}`,
@@ -33,9 +33,38 @@ test('memoria curta preserva somente as tres ultimas interacoes resumidas', (t) 
   }
 
   const historico = memoria.listarCurta();
-  assert.equal(historico.length, 3);
+  assert.equal(historico.length, 10);
   assert.equal(historico[0].pergunta, 'Pergunta 2');
-  assert.equal(historico[2].resposta, 'Resposta 4');
+  assert.equal(historico[9].resposta, 'Resposta 11');
+});
+
+test('migra sessao v1 para v2 preservando a interacao antiga', (t) => {
+  const diretorio = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-memoria-v1-'));
+  t.after(() => fs.rmSync(diretorio, { recursive: true, force: true }));
+  const caminhoCurta = path.join(diretorio, 'curta.json');
+  fs.writeFileSync(caminhoCurta, JSON.stringify({
+    versao: 1,
+    sessao: 'teste',
+    interacoes: [{ pergunta: 'Pergunta antiga', resposta: 'Resposta antiga', perfil: 'vendas' }]
+  }));
+  const memoria = criarMemoria({
+    sessao: 'teste',
+    caminhoCurta,
+    caminhoLonga: path.join(diretorio, 'longa.json')
+  });
+  memoria.registrarInteracao({
+    pergunta: 'Pergunta nova',
+    resposta: 'Resposta nova',
+    perfil: 'catalogo',
+    rota: { dominioPrimario: 'catalogo', intencao: 'listar' },
+    entidades: { ean: ['7890000000000'] }
+  });
+  const persistido = JSON.parse(fs.readFileSync(caminhoCurta, 'utf8'));
+  assert.equal(persistido.versao, 2);
+  assert.equal(persistido.interacoes.length, 2);
+  assert.equal(persistido.interacoes[0].perguntaAutonoma, 'Pergunta antiga');
+  assert.equal(memoria.listarCurta()[0].perguntaAutonoma, 'Pergunta antiga');
+  assert.deepEqual(memoria.listarCurta()[1].entidades.ean, ['7890000000000']);
 });
 
 test('memoria longa recupera apenas aprendizados relacionados ao contexto', (t) => {

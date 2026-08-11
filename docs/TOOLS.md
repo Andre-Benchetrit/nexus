@@ -21,7 +21,7 @@ evita oferecer ao modelo ferramentas que nao pertencem ao assunto.
 | `analisar_vendas` | `vendas` | Totais, rankings, listagens de pedidos/notas e localizacao de NFs por `marketplace_pedido`. | Silver |
 | `analisar_catalogo` | `catalogo` | Composicao do cadastro atual por produto, marca, grupo, subgrupo ou categoria. | Silver |
 | `analisar_pessoas` | `pessoas` | Funcionarios e transportadoras cadastrados, ativos ou inativos, considerando todas as empresas. | Silver |
-| `consultar_bloqueios_sem_estoque` | `bloqueios_estoque` | Resume, lista ou detalha pedidos com o bloqueio 58, aplicando deterministicamente a excecao do canal MELI COLETA EXT. | Gold |
+| `consultar_bloqueios_sem_estoque` | `bloqueios_estoque` | Resume, lista, detalha ou enriquece em lote pedidos com o bloqueio 58, incluindo SKU/EAN e aplicando a excecao do canal MELI COLETA EXT. | Gold |
 | `diagnosticar_bloqueio_sem_estoque` | `bloqueios_estoque` | Cruza bloqueio, estoque oficial, saldo do CD no Thorpe e reposicoes para explicar a situacao do pedido. | Gold + Silver + Thorpe |
 | `solicitar_aprofundamento` | perfis automaticos | Libera uma unica camada tecnica quando a fachada nao cobre todos os dados necessarios. | Catalogos |
 
@@ -91,12 +91,12 @@ tool como `2026-08-03T09:32:29.487-03:00`.
 
 ## Como o roteamento automatico se recupera
 
-Perguntas reconhecidas por regras locais recebem apenas o menor perfil e a tool
-compacta `solicitar_aprofundamento`. Quando nenhuma regra tem confianca
-suficiente, o perfil `hibrido` oferece as fachadas de negocio e esse mesmo
-gateway, sem carregar schemas tecnicos antecipadamente.
+No modo v2, a LLM de roteamento sugere um plano e o registro de capacidades
+valida dominio, intencao, campos, filtros e camada. A resposta principal recebe
+somente as tools aprovadas. No modo shadow, a mesma decisao e calculada apenas
+para comparacao e a rota legada ainda controla a execucao.
 
-Quando uma fachada nao basta, o modelo pode liberar uma unica camada na mesma
+Quando o plano registra que uma fachada nao basta, o modelo pode liberar uma unica camada na mesma
 conversa: Gold para metricas oficiais, Silver para detalhes modelados e Bronze
 somente para auditoria, historico ou divergencia. Apos a liberacao, cabe uma
 descoberta de schema e uma consulta ou agregacao final. Chamadas identicas sao
