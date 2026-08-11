@@ -12,6 +12,8 @@ const notaSaidaItens = require('./postgres/entidades/nota_saida_itens');
 const produtoInventario = require('./postgres/entidades/produto_inventario');
 const logEstoque = require('./postgres/entidades/log_estoque');
 const agendamentoCompra = require('./onedrive/entidades/agendamento_compra');
+const bloqueios = require('./postgres/entidades/bloqueios');
+const notaSaidaBloqueada = require('./postgres/entidades/nota_saida_bloqueada');
 
 const entidades = {
   nota_saida: notaSaida,
@@ -27,7 +29,9 @@ const entidades = {
   nota_saida_itens: notaSaidaItens,
   produto_inventario: produtoInventario,
   log_estoque: logEstoque,
-  agendamento_compra: agendamentoCompra
+  agendamento_compra: agendamentoCompra,
+  bloqueios: bloqueios,
+  nota_saida_bloqueada: notaSaidaBloqueada
 };
 
 function obterEntidade(nome) {

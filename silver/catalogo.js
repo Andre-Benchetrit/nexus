@@ -9,6 +9,7 @@ const dimTipoPedido = require('./postgres/dimensoes/dim_tipo_pedido');
 const dimTransporteRegra = require('./postgres/dimensoes/dim_transporte_regra');
 const dimPlataformaEcommerce = require('./postgres/dimensoes/dim_plataforma_ecommerce');
 const dimProduto = require('./postgres/dimensoes/dim_produto');
+const dimBloqueio = require('./postgres/dimensoes/dim_bloqueio');
 const fatoVenda = require('./postgres/fatos/fato_venda');
 const fatoVendaItem = require('./postgres/fatos/fato_venda_item');
 const fatoPedido = require('./postgres/fatos/fato_pedido');
@@ -18,6 +19,8 @@ const fatoNotaFiscalItem = require('./postgres/fatos/fato_nota_fiscal_item');
 const fatoEstoqueAtual = require('./postgres/fatos/fato_estoque_atual');
 const fatoMovimentoEstoque = require('./postgres/fatos/fato_movimento_estoque');
 const fatoAgendamentoCompra = require('./onedrive/fatos/fato_agendamento_compra');
+const fatoNotaSaidaBloqueioItem = require('./postgres/fatos/fato_nota_saida_bloqueio_item');
+const fatoNotaSaidaBloqueio = require('./postgres/fatos/fato_nota_saida_bloqueio');
 
 const objetos = {
   dim_cliente: dimCliente,
@@ -31,6 +34,7 @@ const objetos = {
   dim_transporte_regra: dimTransporteRegra,
   dim_plataforma_ecommerce: dimPlataformaEcommerce,
   dim_produto: dimProduto,
+  dim_bloqueio: dimBloqueio,
   fato_venda: fatoVenda,
   fato_venda_item: fatoVendaItem,
   fato_pedido: fatoPedido,
@@ -39,7 +43,9 @@ const objetos = {
   fato_nota_fiscal_item: fatoNotaFiscalItem,
   fato_estoque_atual: fatoEstoqueAtual,
   fato_movimento_estoque: fatoMovimentoEstoque,
-  fato_agendamento_compra: fatoAgendamentoCompra
+  fato_agendamento_compra: fatoAgendamentoCompra,
+  fato_nota_saida_bloqueio_item: fatoNotaSaidaBloqueioItem,
+  fato_nota_saida_bloqueio: fatoNotaSaidaBloqueio
 };
 
 function obterObjeto(nome) {

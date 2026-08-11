@@ -145,6 +145,7 @@ test.before(async () => {
       DATE '2026-07-16' AS data_emissao, 'F' AS situacao,
       'MKT-500' AS marketplace_pedido, 'RJ' AS entrega_uf,
       DATE '2026-07-20' AS entrega_data,
+      DATE '2026-07-18' AS entrega_limite, 'T' AS bloqueada,
       30::DECIMAL(15,4) AS total_nota_fiscal, 'F' AS nf_cancelada,
       '100' AS nfe_cstat,
       5::DECIMAL(15,4) AS valor_frete,

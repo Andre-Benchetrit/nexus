@@ -24,6 +24,7 @@ function medirContexto(perfil) {
 function medirTodosPerfis() {
   return [
     'indicadores', 'estoque', 'estoque_reposicoes', 'reposicoes', 'produto',
+    'bloqueios_estoque',
     'desempenho', 'frete', 'operacao',
     'vendas', 'catalogo', 'pessoas',
     'negocio', 'hibrido', 'gold', 'silver', 'bronze', 'completo'

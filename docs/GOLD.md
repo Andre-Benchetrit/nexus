@@ -129,6 +129,33 @@ uma ruptura sem mascarar o saldo oficial.
 registra uma chegada recente e o saldo atual esta zerado. Nao prova falha de
 processamento, pois o item pode ter sido vendido depois.
 
+### `bloqueio_sem_estoque_item`
+
+Uma linha por ocorrencia ativa do bloqueio 58 (`PRODUTOS SEM ESTOQUE`). Mantem
+a chave original do evento, inclusive quando o produto vem como zero. Considera
+somente pedidos do tipo 1 que continuam marcados como bloqueados. O canal
+`MELI COLETA EXT` e excluido, exceto quando o limite de expedicao e a data atual
+em `America/Sao_Paulo`.
+
+### `bloqueio_sem_estoque_pedido`
+
+Uma linha por nota/pedido elegivel, consolidando as ocorrencias do modelo de
+itens sem confundir quantidade de pedidos com quantidade de bloqueios. E a base
+da listagem e do resumo deterministico.
+
+## Tools de bloqueio por falta de estoque
+
+- `consultar_bloqueios_sem_estoque`: resume, lista ou detalha pedidos elegiveis.
+- `diagnosticar_bloqueio_sem_estoque`: cruza produtos identificados com o saldo
+  oficial da empresa 10, `disponivel + pulmao` no Thorpe e
+  `analisar_reposicoes`. O SKU enviado ao Thorpe e o `codigo_auxiliar` do
+  produto. `divergencia_erp_cd` ocorre quando somente um dos dois saldos cobre
+  a quantidade pedida.
+
+Quando a origem informa `id_produto=0`, os itens da nota podem ser mostrados
+como candidatos inferidos, nunca como identificacao certa. Compras previstas
+tambem nunca aumentam artificialmente o estoque do Sysemp.
+
 ## Cobertura e qualidade
 
 Cada construcao grava Parquet e `manifest.json` em:

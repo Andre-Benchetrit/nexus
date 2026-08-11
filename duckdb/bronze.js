@@ -162,7 +162,15 @@ function criarLeitorBronze(opcoes = {}) {
     const viewAtual = nomeViewAtual(entidade);
     const chavesPrimarias = normalizarChavesPrimarias(entidade.extracao?.chavePrimaria);
     const cursor = entidade.extracao?.cursor;
-    const estrategiaVisaoAtual = entidade.extracao?.estrategiaVisaoAtual || 'por_chave_cursor';
+    const modoExtracao = entidade.extracao?.modo;
+
+    const estrategiaVisaoAtual =
+      entidade.extracao?.estrategiaVisaoAtual ||
+      (
+        modoExtracao === 'snapshot'
+          ? 'ultima_execucao'
+          : 'por_chave_cursor'
+      );
 
     if (
       estrategiaVisaoAtual !== 'ultima_execucao' &&

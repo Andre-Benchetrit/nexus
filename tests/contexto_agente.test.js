@@ -8,6 +8,7 @@ test('mantem perfis comuns abaixo do orcamento fixo de contexto', () => {
   assert.ok(medirContexto('estoque').tokensEstimados <= 1100);
   assert.ok(medirContexto('estoque_reposicoes').tokensEstimados <= 1500);
   assert.ok(medirContexto('reposicoes').tokensEstimados <= 1300);
+  assert.ok(medirContexto('bloqueios_estoque').tokensEstimados <= 1400);
   assert.ok(medirContexto('desempenho').tokensEstimados <= 1050);
   assert.ok(medirContexto('frete').tokensEstimados <= 900);
   assert.ok(medirContexto('operacao').tokensEstimados <= 850);

@@ -103,7 +103,18 @@ async function construirSilver(objeto, opcoes = {}) {
     for (const nome of objeto.fontesSilver || []) {
       contextosSilver.set(nome, await leitorSilver.prepararObjeto(nome));
     }
-    const contextoPrincipal = contextos.get(objeto.fontePrincipal);
+    const contextoPrincipal =
+      contextos.get(objeto.fontePrincipal) ||
+      contextosSilver.get(objeto.fontePrincipal);
+
+    if (!contextoPrincipal) {
+      throw new Error(
+        `Fonte principal nao preparada para ${objeto.nome}: ` +
+        `${objeto.fontePrincipal}. ` +
+        `Bronze disponiveis: ${[...contextos.keys()].join(', ') || 'nenhuma'}. ` +
+        `Silver disponiveis: ${[...contextosSilver.keys()].join(', ') || 'nenhuma'}.`
+      );
+    }
     const [entrada] = await allDuckDB(
       con,
       `SELECT count(*) AS total FROM ${citar(contextoPrincipal.viewAtual)}`
@@ -128,6 +139,7 @@ async function construirSilver(objeto, opcoes = {}) {
         objeto.construirMetricasRelacionamentosSql(contextos, contextosSilver)
       );
       relacionamentos = normalizarValores(metricas);
+      objeto.validarMetricasRelacionamentos?.(relacionamentos);
     }
     fontesBronze = resumirFontes(contextos, caminhos.raizLake);
     fontesSilver = resumirFontesSilver(contextosSilver, caminhos.raizLake);

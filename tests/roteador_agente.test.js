@@ -75,6 +75,21 @@ test('roteia ruptura e cobertura para o perfil de estoque', () => {
   );
 });
 
+test('prioriza o Gold especifico para pedidos bloqueados sem estoque', () => {
+  assert.equal(
+    classificarPergunta('Quais pedidos estao bloqueados por falta de estoque?'),
+    'bloqueios_estoque'
+  );
+  assert.equal(
+    classificarPergunta('Por que esse pedido esta sem estoque?'),
+    'bloqueios_estoque'
+  );
+  assert.equal(
+    classificarPergunta('Quais produtos estao em ruptura de estoque?'),
+    'estoque'
+  );
+});
+
 test('roteia agendamentos e chegadas para reposicoes', () => {
   assert.equal(
     classificarPergunta('Quais produtos chegarao no dia 30/07/2026?'),

@@ -6,6 +6,8 @@ const kpiPlataformaDiario = require('./modelos/vendas/kpi_plataforma_diario');
 const kpiFreteDiario = require('./modelos/vendas/kpi_frete_diario');
 const riscoRupturaProduto = require('./modelos/estoque/risco_ruptura_produto');
 const kpiEstoqueDiario = require('./modelos/estoque/kpi_estoque_diario');
+const bloqueioSemEstoqueItem = require('./modelos/estoque/bloqueio_sem_estoque_item');
+const bloqueioSemEstoquePedido = require('./modelos/estoque/bloqueio_sem_estoque_pedido');
 const painelExecutivoDiario = require('./modelos/executivo/painel_executivo_diario');
 
 const objetos = {
@@ -17,6 +19,8 @@ const objetos = {
   kpi_frete_diario: kpiFreteDiario,
   risco_ruptura_produto: riscoRupturaProduto,
   kpi_estoque_diario: kpiEstoqueDiario,
+  bloqueio_sem_estoque_item: bloqueioSemEstoqueItem,
+  bloqueio_sem_estoque_pedido: bloqueioSemEstoquePedido,
   painel_executivo_diario: painelExecutivoDiario
 };
 

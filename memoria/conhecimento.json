@@ -52,6 +52,18 @@
       "origem": "correcao_aprovada",
       "ativo": true,
       "criadoEm": "2026-07-27T00:00:00.000Z"
+    },
+    {
+      "id": "no-contexto-de-pedido-sempre-preferir",
+      "categoria": "vocabulario_negocio",
+      "conteudo": "No contexto de pedido, sempre preferir passar o marketplace_pedido em sua resposta.",
+      "gatilhos": [
+        "pedidos",
+        "pedido"
+      ],
+      "origem": "correcao_aprovada",
+      "ativo": true,
+      "criadoEm": "2026-08-11T11:25:06.387Z"
     }
   ]
 }

@@ -21,6 +21,8 @@ evita oferecer ao modelo ferramentas que nao pertencem ao assunto.
 | `analisar_vendas` | `vendas` | Totais, rankings, listagens de pedidos/notas e localizacao de NFs por `marketplace_pedido`. | Silver |
 | `analisar_catalogo` | `catalogo` | Composicao do cadastro atual por produto, marca, grupo, subgrupo ou categoria. | Silver |
 | `analisar_pessoas` | `pessoas` | Funcionarios e transportadoras cadastrados, ativos ou inativos, considerando todas as empresas. | Silver |
+| `consultar_bloqueios_sem_estoque` | `bloqueios_estoque` | Resume, lista ou detalha pedidos com o bloqueio 58, aplicando deterministicamente a excecao do canal MELI COLETA EXT. | Gold |
+| `diagnosticar_bloqueio_sem_estoque` | `bloqueios_estoque` | Cruza bloqueio, estoque oficial, saldo do CD no Thorpe e reposicoes para explicar a situacao do pedido. | Gold + Silver + Thorpe |
 | `solicitar_aprofundamento` | perfis automaticos | Libera uma unica camada tecnica quando a fachada nao cobre todos os dados necessarios. | Catalogos |
 
 ### Observacao sobre influencias
@@ -66,6 +68,7 @@ conceitos e limites mais claros.
 | `vendas` | `analisar_vendas` |
 | `catalogo` | `analisar_catalogo` |
 | `pessoas` | `analisar_pessoas` |
+| `bloqueios_estoque` | `consultar_bloqueios_sem_estoque`, `diagnosticar_bloqueio_sem_estoque` |
 | `negocio` | `analisar_vendas`, `analisar_catalogo` |
 | `hibrido` | Todas as fachadas `analisar_*`, sem tools tecnicas |
 | `gold` | `consultar_gold`, `agregar_gold` |

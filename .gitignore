@@ -15,6 +15,7 @@ lake/
 .tmp/
 *.log
 npm-debug.log*
+~$*
 memoria/.runtime/
 avaliacoes/resultados/
 

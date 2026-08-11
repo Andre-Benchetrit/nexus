@@ -24,6 +24,7 @@ usar o leitor DuckDB.
 
 - `exportadores/`: ingestao fiel da origem e contratos das entidades Bronze.
 - `integracoes/microsoft/`: autenticacao corporativa e cliente Microsoft Graph.
+- `integracoes/thorpe/`: autenticacao e consulta somente leitura do estoque do CD.
 - `silver/`: dimensoes, fatos, dependencias e validacoes de qualidade.
 - `gold/`: metricas oficiais, paineis e comparacoes derivados somente do Silver.
 - `duckdb/`: repositorios de consulta somente leitura para Bronze, Silver e Gold.
@@ -87,6 +88,7 @@ recursiva; Bronze fica restrito a auditoria.
 | `reposicoes` | compras previstas e recebimentos | `analisar_reposicoes` |
 | `catalogo` | cadastro, composicao e estoque | `analisar_catalogo` |
 | `pessoas` | funcionarios e transportadoras | `analisar_pessoas` |
+| `bloqueios_estoque` | pedidos bloqueados por falta de estoque | `consultar_bloqueios_sem_estoque`, `diagnosticar_bloqueio_sem_estoque` |
 | `negocio` | perfil manual legado | vendas e catalogo |
 | `hibrido` | pergunta realmente ambigua | todas as fachadas de negocio |
 | `gold` | consulta avancada de indicadores | tools Gold genericas |
@@ -120,16 +122,17 @@ Medicao atual aproximada:
 
 - indicadores com gateway: 893 tokens;
 - estoque com gateway: 1.051;
+- bloqueios de estoque com gateway: 781;
 - desempenho com gateway: 990;
 - frete com gateway: 823;
 - operacao com gateway: 790;
 - vendas com gateway: 1.045;
 - catalogo com gateway: 753;
 - negocio com gateway: 1.270;
-- hibrido com gateway: 3.776;
-- Gold generico, carregado sob demanda: 1.523;
-- Silver generico, carregado sob demanda: 1.636;
-- Bronze generico, carregado sob demanda: 1.668.
+- hibrido com gateway: 4.037;
+- Gold generico, carregado sob demanda: 1.552;
+- Silver generico, carregado sob demanda: 1.673;
+- Bronze generico, carregado sob demanda: 1.679.
 
 ## Como adicionar uma capacidade
 

@@ -1,5 +1,6 @@
 const PERFIS = Object.freeze([
   'automatico', 'indicadores', 'influencias', 'estoque', 'estoque_reposicoes',
+  'bloqueios_estoque',
   'desempenho', 'frete', 'operacao', 'reposicoes',
   'vendas', 'catalogo', 'pessoas', 'produto',
   'negocio', 'hibrido', 'gold', 'silver', 'bronze', 'completo'
@@ -22,6 +23,12 @@ function classificarPorRegras(pergunta) {
     /vend|fatur|receita/.test(texto) &&
     /ruptur|risco.{0,20}estoque|sem estoque/.test(texto);
   if (resumoAdministrativo || resumoMultidominio) return 'indicadores';
+
+  const bloqueiosEstoque =
+    /(?:pedidos?|notas?).{0,35}(?:sem estoque|falta de estoque|bloqueio.{0,12}estoque)/.test(texto) ||
+    /(?:bloqueio.{0,12}estoque|falta de estoque).{0,35}(?:pedidos?|notas?)/.test(texto) ||
+    /por que.{0,25}(?:pedido|nota).{0,25}(?:sem estoque|falta de estoque|bloquead)/.test(texto);
+  if (bloqueiosEstoque) return 'bloqueios_estoque';
 
   const estoque = /ruptur|\bcobertura\b|risco.{0,20}estoque|sem estoque|(?:podem?|vai|irao).{0,15}(?:acabar|faltar)|estoque.{0,30}(acabar|dura|dias|critico|faltar|disponivel|atual|produto|sku)|(?:quanto|quantas?|qual).{0,25}\bestoque\b/.test(texto);
   const reposicoes = /pedidos? de compra|compras? agendadas?|\bagendament|nfs? de entrada|reposi[cç][aã]o|(?:produto|mercadoria).{0,30}(?:chegar|recebid)|(?:chegar|recebid).{0,30}(?:produto|mercadoria|fornecedor)/.test(texto);

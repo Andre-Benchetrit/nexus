@@ -32,7 +32,10 @@ async function main() {
     throw new Error('Informe o objeto ou use --todos. Exemplo: npm run silver -- dim_produto');
   }
 
-  await construirObjeto(obterObjeto(nome));
+  obterObjeto(nome);
+  for (const objeto of ordenarObjetosPorDependencias([nome])) {
+    await construirObjeto(objeto);
+  }
 }
 
 main().catch((erro) => {

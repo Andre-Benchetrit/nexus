@@ -8,6 +8,9 @@ module.exports = {
     modo: 'incremental_data',
     transporte: 'copy_stream',
     cursor: 'dthr_atualizacao',
+    cursoresIncrementais: ['dthr_atualizacao', 'dt_registro'],
+    // A origem garante unicidade por nota + numero sequencial do item.
+    // O mesmo produto pode aparecer em varios itens da mesma nota.
     chavePrimaria: ['id_nota_saida', 'item'],
     colunas: [
       'id_nota_saida',

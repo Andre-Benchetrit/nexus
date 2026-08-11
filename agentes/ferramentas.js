@@ -70,6 +70,14 @@ const {
   definicaoResolverProduto,
   executarResolverProduto
 } = require('../tools/resolver_produto');
+const {
+  definicaoConsultarBloqueiosSemEstoque,
+  executarConsultarBloqueiosSemEstoque
+} = require('../tools/consultar_bloqueios_sem_estoque');
+const {
+  definicaoDiagnosticarBloqueioSemEstoque,
+  executarDiagnosticarBloqueioSemEstoque
+} = require('../tools/diagnosticar_bloqueio_sem_estoque');
 
 const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_indicadores',
@@ -81,7 +89,9 @@ const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_operacao',
   'analisar_vendas',
   'analisar_catalogo',
-  'analisar_pessoas'
+  'analisar_pessoas',
+  'consultar_bloqueios_sem_estoque',
+  'diagnosticar_bloqueio_sem_estoque'
 ]);
 
 const PERFIL_POR_FERRAMENTA = Object.freeze({
@@ -95,6 +105,8 @@ const PERFIL_POR_FERRAMENTA = Object.freeze({
   analisar_vendas: 'vendas',
   analisar_catalogo: 'catalogo',
   analisar_pessoas: 'pessoas',
+  consultar_bloqueios_sem_estoque: 'bloqueios_estoque',
+  diagnosticar_bloqueio_sem_estoque: 'bloqueios_estoque',
   resolver_produto: 'produto',
   consultar_gold: 'gold',
   agregar_gold: 'gold',
@@ -111,6 +123,10 @@ const PERFIS_TOOLS = Object.freeze({
   estoque: ['resolver_produto', 'analisar_rupturas'],
   estoque_reposicoes: ['resolver_produto', 'analisar_rupturas', 'analisar_reposicoes'],
   reposicoes: ['resolver_produto', 'analisar_reposicoes'],
+  bloqueios_estoque: [
+    'consultar_bloqueios_sem_estoque',
+    'diagnosticar_bloqueio_sem_estoque'
+  ],
   desempenho: ['analisar_desempenho'],
   frete: ['analisar_frete'],
   operacao: ['analisar_operacao'],
@@ -145,6 +161,18 @@ function criarRegistroFerramentas(dependencias = {}) {
       definicao: definicaoResolverProduto,
       terminal: false,
       executar: dependencias.executarResolverProdutoTool || executarResolverProduto
+    }],
+    ['consultar_bloqueios_sem_estoque', {
+      definicao: definicaoConsultarBloqueiosSemEstoque,
+      terminal: true,
+      executar: dependencias.executarConsultarBloqueiosSemEstoqueTool ||
+        executarConsultarBloqueiosSemEstoque
+    }],
+    ['diagnosticar_bloqueio_sem_estoque', {
+      definicao: definicaoDiagnosticarBloqueioSemEstoque,
+      terminal: true,
+      executar: dependencias.executarDiagnosticarBloqueioSemEstoqueTool ||
+        executarDiagnosticarBloqueioSemEstoque
     }],
     ['analisar_indicadores', {
       definicao: definicaoAnalisarIndicadores,

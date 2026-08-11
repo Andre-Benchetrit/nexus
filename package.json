@@ -20,6 +20,7 @@
     "onedrive:listar": "node scripts/onedrive.js listar",
     "onedrive:buscar": "node scripts/onedrive.js buscar",
     "onedrive:sincronizar": "node scripts/exportar.js agendamento_compra",
+    "thorpe:testar": "node scripts/testar-thorpe.js",
     "consultar:gold": "node scripts/consultar-gold.js",
     "agente:nexus": "node agentes/consultor_nexus.js",
     "agente:bronze": "node agentes/consultor_nexus.js",

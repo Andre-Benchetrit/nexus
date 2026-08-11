@@ -129,7 +129,7 @@ test('lista parcelas sem soma-las', async () => {
 
   assert.equal(falso.chamadas[0][0], 'consultar');
   assert.deepEqual(falso.chamadas[0][2].filtros.data_prevista, {
-    operador: 'igual',
+    operador: 'maior_ou_igual',
     valor: '2026-07-30'
   });
   assert.equal(saida.parcelas_somadas, false);

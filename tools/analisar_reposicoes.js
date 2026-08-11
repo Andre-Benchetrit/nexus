@@ -139,7 +139,7 @@ function montarFiltros(argumentos) {
   if (dataInicial) {
     filtros.data_prevista = dataFinal
       ? { operador: 'entre', valor: dataInicial, valorFinal: dataFinal }
-      : { operador: 'igual', valor: dataInicial };
+      : { operador: 'maior_ou_igual', valor: dataInicial };
   }
   if (argumentos.status_logistico) {
     if (!STATUS_LOGISTICOS.includes(argumentos.status_logistico)) {

@@ -384,6 +384,22 @@ npm run gold -- risco_ruptura_produto
 As permissoes, variaveis e fluxo completo estao em
 [`docs/ONEDRIVE.md`](ONEDRIVE.md).
 
+## Thorpe
+
+Configure `THORPE_BASE_URL`, `THORPE_API_TOKEN`, `THORPE_USER` e
+`THORPE_PASSWORD` no `.env` da raiz. O mesmo `api-token` e usado para emitir o
+JWT e acompanha o JWT na consulta de estoque. Teste um SKU (`codigo_auxiliar`) sem
+alterar dados no Thorpe:
+
+```powershell
+npm run thorpe:testar -- CODIGO_AUXILIAR
+```
+
+O comando autentica em `/v2/token`, consulta
+`/v2/estoque/{sku}/lote` e exibe somente `disponivel`, `pulmao`, a soma
+utilizavel, quantidade de lotes e horario da consulta. Tokens e credenciais
+nao sao impressos.
+
 ## Atualizacao automatizada do lake
 
 Revise o plano sem acessar as fontes nem alterar o lake:
