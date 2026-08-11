@@ -41,6 +41,9 @@ async function main() {
   if (opcoes.dryRun) {
     console.log('Simulação concluída; nenhum dado foi extraído.');
     if (resultado.consulta) console.log(`Consulta: ${resultado.consulta}`);
+    if (resultado.consultaChavesAtuais) {
+      console.log(`Reconciliacao de exclusoes: ${resultado.consultaChavesAtuais}`);
+    }
     if (resultado.conexao) console.log(`Conexao: ${resultado.conexao}`);
     console.log(`Destino: ${resultado.caminhos.parquet}`);
   }

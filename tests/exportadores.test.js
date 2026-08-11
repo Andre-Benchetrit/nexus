@@ -5,7 +5,12 @@ const notaSaida = require('../exportadores/postgres/entidades/nota_saida');
 const notaSaidaItens = require('../exportadores/postgres/entidades/nota_saida_itens');
 const cliente = require('../exportadores/postgres/entidades/cliente');
 const { criarCaminhosExportacao } = require('../exportadores/core/caminhos');
-const { montarConsultaPostgres, validarEntidade } = require('../exportadores/core/sql');
+const {
+  montarConsultaPostgres,
+  montarConsultaChavesAtuais,
+  validarEntidade
+} = require('../exportadores/core/sql');
+const notaSaidaBloqueada = require('../exportadores/postgres/entidades/nota_saida_bloqueada');
 
 test('monta consulta para uma tabela PostgreSQL', () => {
   assert.equal(
@@ -97,6 +102,30 @@ test('aceita chave primaria composta em entidade incremental', () => {
     montarConsultaPostgres(notaSaidaItens, { inicio: '2026-07-16', fim: '2026-07-17' }),
     /"dthr_atualizacao" >= DATE '2026-07-16'/
   );
+});
+
+test('monta snapshot somente das chaves para reconciliar exclusoes', () => {
+  assert.equal(
+    montarConsultaChavesAtuais(notaSaidaBloqueada),
+    'SELECT DISTINCT "id_nota_saida", "id_bloqueio", "id_empresa", "id_sequencia" ' +
+      'FROM "pg_db"."sysemp"."nota_saida_bloqueada"'
+  );
+  assert.equal(
+    montarConsultaChavesAtuais(notaSaidaBloqueada, null),
+    'SELECT DISTINCT "id_nota_saida", "id_bloqueio", "id_empresa", "id_sequencia" ' +
+      'FROM "sysemp"."nota_saida_bloqueada"'
+  );
+});
+
+test('rejeita reconciliacao de exclusoes fora do modo incremental', () => {
+  const invalida = {
+    ...notaSaidaBloqueada,
+    extracao: {
+      ...notaSaidaBloqueada.extracao,
+      modo: 'snapshot'
+    }
+  };
+  assert.throws(() => validarEntidade(invalida), /somente pode ser usado/);
 });
 
 test('rejeita identificador invalido dentro de chave composta', () => {

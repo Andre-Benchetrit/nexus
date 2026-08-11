@@ -33,6 +33,8 @@ function criarCaminhosExportacao(entidade, data = new Date()) {
     diretorio,
     parquet: path.join(diretorio, 'dados.parquet'),
     parquetTemporario: path.join(diretorio, 'dados.parquet.tmp'),
+    parquetChavesAtuais: path.join(diretorio, 'chaves_atuais.parquet'),
+    csvChavesAtuaisTemporario: path.join(diretorio, 'chaves_atuais.csv.tmp'),
     manifesto: path.join(diretorio, 'manifest.json')
   };
 }
