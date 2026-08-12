@@ -1,12 +1,13 @@
 const DOMINIOS = Object.freeze([
   'indicadores', 'influencias', 'estoque', 'reposicoes', 'bloqueios_estoque',
   'desempenho', 'frete', 'operacao', 'vendas', 'catalogo', 'pessoas',
-  'produto', 'gold', 'silver', 'bronze', 'hibrido'
+  'produto', 'sql', 'gold', 'silver', 'bronze', 'hibrido'
 ]);
 
 const INTENCOES = Object.freeze([
   'resumir', 'listar', 'detalhar', 'comparar', 'diagnosticar', 'enriquecer',
-  'ranquear', 'localizar', 'agregar', 'auditar', 'explicar', 'descrever'
+  'ranquear', 'localizar', 'agregar', 'auditar', 'explicar', 'descrever',
+  'construir', 'validar'
 ]);
 
 function capacidade({
@@ -106,6 +107,15 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     entidades: ['produto', 'sku', 'ean'],
     campos: ['id_produto', 'sku', 'ean', 'descricao_produto'],
     operacoes: ['resolver'], mutavel: false
+  }),
+  construir_sql: capacidade({
+    dominio: 'sql', intencoes: ['construir', 'validar', 'explicar'],
+    entidades: [
+      'pedido', 'nota_saida', 'item', 'produto', 'tipo_produto', 'estoque', 'movimentacao',
+      'bloqueio', 'cliente', 'tipo_pedido', 'plataforma', 'regra_transporte'
+    ],
+    campos: ['query_spec', 'sql_parametrizado', 'sql_dbeaver', 'explain'],
+    operacoes: ['construir'], mutavel: false
   }),
   consultar_gold: capacidade({
     dominio: 'gold', camada: 'gold', intencoes: ['listar', 'descrever'],

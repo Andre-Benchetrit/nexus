@@ -8,16 +8,38 @@ const {
 
 const MODELO_PADRAO = 'llama-3.3-70b-versatile';
 
+function tolerarEntidadesParciaisDoRoteador(schema, nomeFerramenta) {
+  if (nomeFerramenta !== 'registrar_decisao_rota') return schema;
+  const copia = structuredClone(schema);
+  function visitar(atual) {
+    if (!atual || typeof atual !== 'object') return;
+    const propriedades = atual.properties || {};
+    if (propriedades.tipo && propriedades.valores && propriedades.origem) {
+      atual.required = ['tipo'];
+    }
+    Object.values(propriedades).forEach(visitar);
+    if (atual.items) visitar(atual.items);
+    for (const combinador of ['anyOf', 'oneOf', 'allOf']) {
+      (atual[combinador] || []).forEach(visitar);
+    }
+  }
+  visitar(copia);
+  return copia;
+}
+
 function converterTools(definicoes = []) {
   return definicoes.map((definicao) => ({
     type: 'function',
     function: {
       name: definicao.name,
       description: definicao.description,
-      parameters: flexibilizarTiposPrimitivos(
-        flexibilizarEnumsNulos(
-          flexibilizarCamposNulos(definicao.parameters)
-        )
+      parameters: tolerarEntidadesParciaisDoRoteador(
+        flexibilizarTiposPrimitivos(
+          flexibilizarEnumsNulos(
+            flexibilizarCamposNulos(definicao.parameters)
+          )
+        ),
+        definicao.name
       )
     }
   }));
@@ -141,5 +163,6 @@ function criarProviderGroq(opcoes = {}) {
 module.exports = {
   MODELO_PADRAO,
   converterTools,
-  criarProviderGroq
+  criarProviderGroq,
+  tolerarEntidadesParciaisDoRoteador
 };

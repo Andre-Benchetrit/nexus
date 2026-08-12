@@ -64,6 +64,21 @@
       "origem": "correcao_aprovada",
       "ativo": true,
       "criadoEm": "2026-08-11T11:25:06.387Z"
+    },
+    {
+      "id": "evoluir-futuramente-o-nexus-com-expansao",
+      "categoria": "diretriz_produto",
+      "conteudo": "Evoluir futuramente o Nexus com expansão governada de catálogo: o agente pode descobrir metadados autorizados e propor campos, joins e regras como candidatos, mas nunca publicar ou liberar capacidades automaticamente. A promoção para uso deve exigir aprovação humana, testes de granularidade/segurança, auditoria e estados descoberto, candidato, aprovado, restrito ou rejeitado.",
+      "gatilhos": [
+        "catalogo",
+        "capacidade",
+        "metadados",
+        "governanca",
+        "descoberta"
+      ],
+      "origem": "correcao_aprovada",
+      "ativo": true,
+      "criadoEm": "2026-08-11T14:41:53.063Z"
     }
   ]
 }

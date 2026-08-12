@@ -78,6 +78,10 @@ const {
   definicaoDiagnosticarBloqueioSemEstoque,
   executarDiagnosticarBloqueioSemEstoque
 } = require('../tools/diagnosticar_bloqueio_sem_estoque');
+const {
+  definicaoConstruirSql,
+  executarConstruirSql
+} = require('../tools/construir_sql');
 
 const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_indicadores',
@@ -91,7 +95,8 @@ const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_catalogo',
   'analisar_pessoas',
   'consultar_bloqueios_sem_estoque',
-  'diagnosticar_bloqueio_sem_estoque'
+  'diagnosticar_bloqueio_sem_estoque',
+  'construir_sql'
 ]);
 
 const PERFIL_POR_FERRAMENTA = Object.freeze({
@@ -108,6 +113,7 @@ const PERFIL_POR_FERRAMENTA = Object.freeze({
   consultar_bloqueios_sem_estoque: 'bloqueios_estoque',
   diagnosticar_bloqueio_sem_estoque: 'bloqueios_estoque',
   resolver_produto: 'produto',
+  construir_sql: 'sql',
   consultar_gold: 'gold',
   agregar_gold: 'gold',
   consultar_silver: 'silver',
@@ -133,6 +139,7 @@ const PERFIS_TOOLS = Object.freeze({
   vendas: ['analisar_vendas'],
   catalogo: ['analisar_catalogo'],
   pessoas: ['analisar_pessoas'],
+  sql: ['construir_sql'],
   negocio: ['analisar_vendas', 'analisar_catalogo'],
   hibrido: FERRAMENTAS_NEGOCIO,
   gold: ['consultar_gold', 'agregar_gold'],
@@ -161,6 +168,13 @@ function criarRegistroFerramentas(dependencias = {}) {
       definicao: definicaoResolverProduto,
       terminal: false,
       executar: dependencias.executarResolverProdutoTool || executarResolverProduto
+    }],
+    ['construir_sql', {
+      definicao: definicaoConstruirSql,
+      terminal: true,
+      executar: dependencias.executarConstruirSqlTool || ((argumentos) => (
+        executarConstruirSql(argumentos, dependencias.sqlDependencias || dependencias)
+      ))
     }],
     ['consultar_bloqueios_sem_estoque', {
       definicao: definicaoConsultarBloqueiosSemEstoque,

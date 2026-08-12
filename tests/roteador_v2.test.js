@@ -7,7 +7,10 @@ const path = require('node:path');
 const { executarAgente } = require('../agentes/consultor_nexus');
 const { validarPlanoSugerido } = require('../agentes/capacidades');
 const { criarMemoria } = require('../agentes/memoria');
+const { converterTools } = require('../agentes/providers/groq');
 const {
+  definicaoRegistrarDecisaoRota,
+  normalizarEntidadesRota,
   normalizarDecisao,
   resolverModoRoteador
 } = require('../agentes/roteador_semantico');
@@ -56,6 +59,75 @@ test('normaliza decisao semantica e rejeita dominio invalido', () => {
   );
 });
 
+test('normaliza formatos tolerados de entidades para o contrato canônico', () => {
+  assert.deepEqual(normalizarEntidadesRota('produto,pedido_compra').entidades, [
+    { tipo: 'produto', valores: [], origem: 'pergunta_atual' },
+    { tipo: 'pedido_compra', valores: [], origem: 'pergunta_atual' }
+  ]);
+  assert.deepEqual(normalizarEntidadesRota({
+    tipo: 'produto', valores: ['SKU-1'], origem: 'pergunta_atual'
+  }).entidades, [
+    { tipo: 'produto', valores: ['SKU-1'], origem: 'pergunta_atual' }
+  ]);
+  assert.deepEqual(normalizarEntidadesRota({
+    tipo: 'produto', valores: []
+  }).entidades, [
+    { tipo: 'produto', valores: [], origem: 'pergunta_atual' }
+  ]);
+  assert.deepEqual(normalizarEntidadesRota({ itens: ['produto'] }).entidades, [
+    { tipo: 'produto', valores: [], origem: 'pergunta_atual' }
+  ]);
+  assert.deepEqual(normalizarEntidadesRota({ produto: ['SKU-1', 'SKU-2'] }).entidades, [
+    { tipo: 'produto', valores: ['SKU-1', 'SKU-2'], origem: 'pergunta_atual' }
+  ]);
+});
+
+test('entidade ambígua reduz confiança e exige esclarecimento', () => {
+  const decisao = normalizarDecisao(decisaoBloqueios({
+    entidades: { produto: '123' }, confianca: 0.98
+  }));
+  assert.equal(decisao.confianca, 0.65);
+  assert.equal(decisao.precisaEsclarecimento, true);
+  assert.match(decisao.perguntaEsclarecimento, /SKU, EAN, ID/);
+  assert.equal(decisao.normalizacaoEntidades.formato, 'mapa');
+  assert.ok(decisao.codigosMotivo.includes('entidades_normalizadas:mapa'));
+});
+
+test('normalizador de entidades rejeita propriedades e valores estruturados desconhecidos', () => {
+  assert.throws(
+    () => normalizarEntidadesRota({
+      tipo: 'produto', valores: [], origem: 'pergunta_atual', ferramenta: 'consultar_bronze'
+    }),
+    /Propriedade de entidade nao permitida/
+  );
+  assert.throws(
+    () => normalizarEntidadesRota({ produto: [{ sql: 'DROP TABLE x' }] }),
+    /Valores de entidade devem ser escalares/
+  );
+});
+
+test('schema da Groq anuncia objeto além de array e string para entidades', () => {
+  const [tool] = converterTools([definicaoRegistrarDecisaoRota]);
+  const schema = tool.function.parameters.properties.entidades;
+  assert.ok(schema.anyOf.some((item) => item.type === 'object'));
+  assert.ok(schema.anyOf.some((item) => Array.isArray(item.type) && item.type.includes('array')));
+  const objetosEntidade = [];
+  function visitar(item) {
+    if (!item || typeof item !== 'object') return;
+    if (item.properties?.tipo && item.properties?.valores && item.properties?.origem) {
+      objetosEntidade.push(item);
+    }
+    Object.values(item.properties || {}).forEach(visitar);
+    if (item.items) visitar(item.items);
+    for (const combinador of ['anyOf', 'oneOf', 'allOf']) {
+      (item[combinador] || []).forEach(visitar);
+    }
+  }
+  visitar(schema);
+  assert.ok(objetosEntidade.length >= 2);
+  assert.ok(objetosEntidade.every((item) => JSON.stringify(item.required) === '["tipo"]'));
+});
+
 test('planejador rejeita fachada de outro dominio e preserva a especializada', () => {
   const decisao = normalizarDecisao(decisaoBloqueios({
     plano_sugerido: [{ ferramenta: 'analisar_vendas', finalidade: 'listar' }]
@@ -91,7 +163,13 @@ test('planejador bloqueia Silver complementar sem capacidade ausente', () => {
   assert.equal(plano.rejeitadas[0].motivo, 'camada_sem_capacidade_ausente');
 });
 
-test('modo padrão de produção é shadow e provider injetado preserva legado', () => {
+test('modo padrão de produção é shadow e provider injetado preserva legado', (t) => {
+  const modoAmbiente = process.env.NEXUS_ROUTER_MODE;
+  delete process.env.NEXUS_ROUTER_MODE;
+  t.after(() => {
+    if (modoAmbiente === undefined) delete process.env.NEXUS_ROUTER_MODE;
+    else process.env.NEXUS_ROUTER_MODE = modoAmbiente;
+  });
   assert.equal(resolverModoRoteador({}), 'shadow');
   assert.equal(resolverModoRoteador({ provider: {} }), 'legacy');
   assert.equal(resolverModoRoteador({ routerMode: 'v2', provider: {} }), 'v2');

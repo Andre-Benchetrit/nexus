@@ -46,6 +46,13 @@ const {
   aplicarGarantiasResposta,
   normalizarResultadoTool
 } = require('./resposta');
+const {
+  formatarPerguntas,
+  processarMensagemInterativa,
+  registrarEsclarecimentoRota,
+  resolverModoInteracao
+} = require('./interacoes');
+const { formatarRespostaSql } = require('../tools/construir_sql');
 
 const MAX_RODADAS_NEGOCIO = 10;
 const MAX_RODADAS_GENERICAS = 10;
@@ -110,18 +117,93 @@ async function executarAgente(pergunta, dependencias = {}) {
   if (!pergunta || !pergunta.trim()) throw new Error('Informe uma pergunta.');
   const texto = pergunta.trim();
   const dataReferencia = dependencias.dataReferencia || obterDataReferencia();
-  const perguntaNormalizada = completarAnoEmDatas(texto, dataReferencia);
-  const contextoTemporal = extrairContextoTemporal(perguntaNormalizada, dataReferencia);
+  let perguntaNormalizada = completarAnoEmDatas(texto, dataReferencia);
   const memoriaDesabilitada = dependencias.memoria === false
     || (dependencias.provider && dependencias.memoria == null);
   const memoria = memoriaDesabilitada
     ? null
     : dependencias.memoria || criarMemoria({ sessao: dependencias.sessaoMemoria });
+  const modoInteracao = resolverModoInteracao(dependencias);
+  const interacao = await processarMensagemInterativa(perguntaNormalizada, {
+    ...dependencias,
+    interactionMode: modoInteracao,
+    memoria,
+    dataReferencia
+  });
+  if (interacao.acao === 'responder') {
+    return {
+      texto: interacao.texto,
+      provider: 'protocolo_interacao',
+      modelo: null,
+      rodadas: 0,
+      interacao: {
+        modo: modoInteracao,
+        status: interacao.status || 'precisa_esclarecimento',
+        tarefa: interacao.tarefa || null
+      },
+      roteamento: { esclarecimento: interacao.status !== 'nao_suportado' }
+    };
+  }
+  if (interacao.acao === 'executar' && interacao.ferramenta === 'construir_sql') {
+    const ferramentaSql = obterFerramentaPorNome('construir_sql', dependencias);
+    if (!ferramentaSql) throw new Error('A ferramenta construir_sql nao esta registrada.');
+    let resultadoSql;
+    try {
+      resultadoSql = await ferramentaSql.executar(interacao.argumentos);
+    } catch (erro) {
+      if (interacao.tarefa?.id) memoria?.atualizarEstadoTarefa?.(interacao.tarefa.id, 'ativa');
+      throw erro;
+    }
+    if (interacao.tarefa?.id) memoria?.atualizarEstadoTarefa?.(interacao.tarefa.id, 'concluida');
+    const resultadoEstruturado = typeof resultadoSql === 'string'
+      ? JSON.parse(resultadoSql)
+      : resultadoSql;
+    const respostaSql = formatarRespostaSql(resultadoEstruturado);
+    dependencias.onEvento?.(`SQL: ${JSON.stringify({
+      status: resultadoEstruturado.status,
+      explain: Boolean(resultadoEstruturado.explain),
+      fontes: resultadoEstruturado.fontes
+    })}`);
+    memoria?.registrarInteracao({
+      pergunta: texto,
+      perguntaAutonoma: interacao.tarefa?.contexto?.perguntaOriginal || texto,
+      resposta: resultadoEstruturado.status === 'validado'
+        ? 'Consulta SQL gerada e validada por EXPLAIN.'
+        : 'Consulta SQL gerada como rascunho nao validado.',
+      provider: 'compilador_sql',
+      modelo: null,
+      perfil: 'sql',
+      ferramentas: [{
+        nome: 'construir_sql',
+        argumentos: { tarefa_id: interacao.tarefa?.id || null },
+        referencias: {},
+        atualizadoEm: new Date().toISOString()
+      }],
+      campos: interacao.argumentos.campos,
+      filtros: interacao.argumentos.filtros,
+      periodo: interacao.argumentos.periodo
+    });
+    return {
+      texto: respostaSql,
+      provider: 'compilador_sql',
+      modelo: null,
+      rodadas: 0,
+      interacao: { modo: modoInteracao, status: 'pronto', tarefa: interacao.tarefa },
+      roteamento: {
+        perfilInicial: 'sql', perfilEfetivo: 'sql', origem: 'protocolo_interacao',
+        ferramentasExecutadas: ['construir_sql']
+      }
+    };
+  }
+  if (interacao.acao === 'continuar' && interacao.texto) {
+    perguntaNormalizada = interacao.texto;
+  }
+  const contextoTemporal = extrairContextoTemporal(perguntaNormalizada, dataReferencia);
   const historicoCurto = memoria?.listarCurta() || [];
   const ultimaPergunta = historicoCurto.at(-1)?.pergunta;
-  const perguntaParaRoteamento = pareceContinuacao(texto) && ultimaPergunta
-    ? `${ultimaPergunta} ${texto}`
-    : texto;
+  const perguntaParaRoteamento = pareceContinuacao(perguntaNormalizada) && ultimaPergunta
+    ? `${ultimaPergunta} ${perguntaNormalizada}`
+    : perguntaNormalizada;
   const roteamentoLegado = dependencias.tools
     ? {
       perfil: 'customizado',
@@ -129,7 +211,7 @@ async function executarAgente(pergunta, dependencias = {}) {
       origem: 'tools_customizadas'
     }
     : resolverRoteamentoComContexto(
-      texto,
+      perguntaNormalizada,
       historicoCurto,
       dependencias.perfilTools || 'automatico'
     );
@@ -162,6 +244,7 @@ async function executarAgente(pergunta, dependencias = {}) {
           secundarios: decisaoSemantica.dominiosSecundarios,
           intencao: decisaoSemantica.intencao,
           confianca: decisaoSemantica.confianca,
+          normalizacaoEntidades: decisaoSemantica.normalizacaoEntidades,
           ferramentasSugeridas: decisaoSemantica.planoSugerido.map((item) => item.ferramenta),
           capacidadesAusentes: decisaoSemantica.capacidadesAusentes
         })}`
@@ -229,6 +312,12 @@ async function executarAgente(pergunta, dependencias = {}) {
   )) {
     const resposta = decisaoRota.perguntaEsclarecimento ||
       'Pode especificar qual informacao de negocio voce deseja consultar?';
+    const tarefaInteracao = modoInteracao === 'v1'
+      ? registrarEsclarecimentoRota(memoria, {
+          perguntaOriginal: perguntaNormalizada,
+          perguntaEsclarecimento: resposta
+        }, dependencias.onEvento)
+      : null;
     memoria?.registrarInteracao({
       pergunta: perguntaNormalizada,
       perguntaAutonoma: decisaoRota.perguntaAutonoma,
@@ -240,7 +329,7 @@ async function executarAgente(pergunta, dependencias = {}) {
       plano: planoValidado
     });
     return {
-      texto: resposta,
+      texto: tarefaInteracao ? formatarPerguntas(tarefaInteracao) : resposta,
       provider: decisaoRota.provider || 'roteador',
       modelo: decisaoRota.modelo || null,
       rodadas: 1,
@@ -253,7 +342,12 @@ async function executarAgente(pergunta, dependencias = {}) {
         decisao: decisaoRota,
         plano: planoValidado,
         esclarecimento: true
-      }
+      },
+      interacao: tarefaInteracao ? {
+        modo: modoInteracao,
+        status: 'precisa_esclarecimento',
+        tarefa: tarefaInteracao
+      } : null
     };
   }
 
@@ -548,6 +642,7 @@ function lerArgumentos(argumentos) {
     ['--router-mode', 'routerMode'],
     ['--router-provider', 'routerProviderNome'],
     ['--router-model', 'routerModelo'],
+    ['--interaction-mode', 'interactionMode'],
     ['--max-rodadas', 'maxRodadas']
   ]);
 
@@ -592,7 +687,28 @@ function lerArgumentos(argumentos) {
   return { pergunta: pergunta.join(' '), opcoes };
 }
 
+function configurarTerminalUtf8(dependencias = {}) {
+  const plataforma = dependencias.plataforma || process.platform;
+  const stdout = dependencias.stdout || process.stdout;
+  const stderr = dependencias.stderr || process.stderr;
+  stdout.setDefaultEncoding?.('utf8');
+  stderr.setDefaultEncoding?.('utf8');
+  if (
+    plataforma === 'win32' &&
+    (stdout.isTTY || stderr.isTTY) &&
+    process.env.NEXUS_CLI_UTF8 !== '0'
+  ) {
+    const executar = dependencias.execFileSync || require('node:child_process').execFileSync;
+    try {
+      executar('chcp.com', ['65001'], { stdio: 'ignore', windowsHide: true });
+    } catch (_) {
+      // A resposta continua em UTF-8 mesmo se o terminal não permitir trocar a code page.
+    }
+  }
+}
+
 async function main() {
+  configurarTerminalUtf8();
   const { pergunta, opcoes } = lerArgumentos(process.argv.slice(2));
   const resultado = await executarAgente(pergunta, {
     ...opcoes,
@@ -615,6 +731,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  configurarTerminalUtf8,
   executarAgente,
   lerArgumentos,
   INSTRUCOES,

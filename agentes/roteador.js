@@ -3,7 +3,7 @@ const PERFIS = Object.freeze([
   'bloqueios_estoque',
   'desempenho', 'frete', 'operacao', 'reposicoes',
   'vendas', 'catalogo', 'pessoas', 'produto',
-  'negocio', 'hibrido', 'gold', 'silver', 'bronze', 'completo'
+  'sql', 'negocio', 'hibrido', 'gold', 'silver', 'bronze', 'completo'
 ]);
 
 function normalizarTexto(texto) {
@@ -15,6 +15,7 @@ function normalizarTexto(texto) {
 
 function classificarPorRegras(pergunta) {
   const texto = normalizarTexto(pergunta);
+  if (/\b(sql|query|select)\b|(?:crie|gere|monte|construa).{0,25}(?:consulta|relatorio)/.test(texto)) return 'sql';
   const auditoria = /\bbronze\b|dado[s]? bruto[s]?|auditori|versoes do registro|alteracoes do registro/.test(texto);
   if (auditoria) return 'bronze';
 

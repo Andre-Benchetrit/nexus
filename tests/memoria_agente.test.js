@@ -38,7 +38,7 @@ test('memoria curta preserva as dez ultimas interacoes estruturadas', (t) => {
   assert.equal(historico[9].resposta, 'Resposta 11');
 });
 
-test('migra sessao v1 para v2 preservando a interacao antiga', (t) => {
+test('migra sessao v1 para v3 preservando a interacao antiga', (t) => {
   const diretorio = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-memoria-v1-'));
   t.after(() => fs.rmSync(diretorio, { recursive: true, force: true }));
   const caminhoCurta = path.join(diretorio, 'curta.json');
@@ -60,7 +60,9 @@ test('migra sessao v1 para v2 preservando a interacao antiga', (t) => {
     entidades: { ean: ['7890000000000'] }
   });
   const persistido = JSON.parse(fs.readFileSync(caminhoCurta, 'utf8'));
-  assert.equal(persistido.versao, 2);
+  assert.equal(persistido.versao, 3);
+  assert.deepEqual(persistido.tarefas, []);
+  assert.equal(persistido.tarefaAtiva, null);
   assert.equal(persistido.interacoes.length, 2);
   assert.equal(persistido.interacoes[0].perguntaAutonoma, 'Pergunta antiga');
   assert.equal(memoria.listarCurta()[0].perguntaAutonoma, 'Pergunta antiga');

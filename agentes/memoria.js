@@ -5,6 +5,8 @@ const RAIZ = path.resolve(__dirname, '..');
 const CAMINHO_CONHECIMENTO = path.join(RAIZ, 'memoria', 'conhecimento.json');
 const DIRETORIO_RUNTIME = path.join(RAIZ, 'memoria', '.runtime');
 const LIMITE_CURTA_PADRAO = 10;
+const LIMITE_TAREFAS_PENDENTES = 5;
+const TTL_TAREFA_PADRAO_MS = 24 * 60 * 60 * 1000;
 const LIMITE_RESUMO_PERGUNTA = 180;
 const LIMITE_RESUMO_RESPOSTA = 1_000;
 
@@ -133,6 +135,21 @@ function normalizarInteracao(item) {
   };
 }
 
+function normalizarTarefa(item) {
+  return {
+    id: String(item.id || ''),
+    tipo: String(item.tipo || ''),
+    estado: item.estado || 'ativa',
+    slots: sanitizarEstrutura(item.slots || {}),
+    camposPendentes: [...new Set(item.camposPendentes || [])],
+    contexto: sanitizarEstrutura(item.contexto || {}),
+    perguntas: sanitizarEstrutura(item.perguntas || []),
+    criadaEm: item.criadaEm || new Date().toISOString(),
+    atualizadaEm: item.atualizadaEm || item.criadaEm || new Date().toISOString(),
+    expiraEm: item.expiraEm || new Date(Date.now() + TTL_TAREFA_PADRAO_MS).toISOString()
+  };
+}
+
 function criarMemoria(opcoes = {}) {
   const sessao = validarSessao(opcoes.sessao || 'padrao');
   const limiteCurta = Number(
@@ -144,9 +161,129 @@ function criarMemoria(opcoes = {}) {
   const arquivoCurta = opcoes.caminhoCurta || caminhoSessao(sessao);
   const arquivoLonga = opcoes.caminhoLonga || CAMINHO_CONHECIMENTO;
 
+  function lerSessao() {
+    const dados = lerJson(arquivoCurta, {
+      versao: 3,
+      sessao,
+      interacoes: [],
+      tarefas: [],
+      tarefaAtiva: null
+    });
+    return {
+      versao: 3,
+      sessao,
+      interacoes: (dados.interacoes || []).map(normalizarInteracao),
+      tarefas: (dados.tarefas || []).map(normalizarTarefa),
+      tarefaAtiva: dados.tarefaAtiva || null
+    };
+  }
+
+  function gravarSessao(dados) {
+    gravarJson(arquivoCurta, {
+      versao: 3,
+      sessao,
+      interacoes: (dados.interacoes || []).slice(-limiteCurta),
+      tarefas: (dados.tarefas || []).map(normalizarTarefa),
+      tarefaAtiva: dados.tarefaAtiva || null
+    });
+  }
+
   function listarCurta() {
-    const dados = lerJson(arquivoCurta, { versao: 1, sessao, interacoes: [] });
+    const dados = lerSessao();
     return (dados.interacoes || []).slice(-limiteCurta).map(normalizarInteracao);
+  }
+
+  function expirarTarefas(agora = new Date()) {
+    const dados = lerSessao();
+    let alterado = false;
+    for (const tarefa of dados.tarefas) {
+      if (
+        ['ativa', 'aguardando_usuario', 'pausada'].includes(tarefa.estado) &&
+        Date.parse(tarefa.expiraEm) <= agora.getTime()
+      ) {
+        tarefa.estado = 'expirada';
+        tarefa.atualizadaEm = agora.toISOString();
+        if (dados.tarefaAtiva === tarefa.id) dados.tarefaAtiva = null;
+        alterado = true;
+      }
+    }
+    if (alterado) gravarSessao(dados);
+    return dados.tarefas.filter((item) => item.estado === 'expirada');
+  }
+
+  function listarTarefas({ incluirFinalizadas = false } = {}) {
+    expirarTarefas();
+    const tarefas = lerSessao().tarefas;
+    return tarefas.filter((item) => incluirFinalizadas ||
+      ['ativa', 'aguardando_usuario', 'pausada'].includes(item.estado));
+  }
+
+  function obterTarefaAtiva() {
+    expirarTarefas();
+    const dados = lerSessao();
+    return dados.tarefas.find((item) => item.id === dados.tarefaAtiva &&
+      ['ativa', 'aguardando_usuario'].includes(item.estado)) || null;
+  }
+
+  function salvarTarefa(tarefa, { ativar = true } = {}) {
+    const dados = lerSessao();
+    const agora = new Date().toISOString();
+    const normalizada = normalizarTarefa({
+      ...tarefa,
+      atualizadaEm: agora,
+      criadaEm: tarefa.criadaEm || agora
+    });
+    const indice = dados.tarefas.findIndex((item) => item.id === normalizada.id);
+    if (indice >= 0) dados.tarefas[indice] = normalizada;
+    else dados.tarefas.push(normalizada);
+    if (ativar) {
+      for (const item of dados.tarefas) {
+        if (
+          item.id !== normalizada.id &&
+          ['ativa', 'aguardando_usuario'].includes(item.estado)
+        ) item.estado = 'pausada';
+      }
+      dados.tarefaAtiva = normalizada.id;
+    }
+    const pendentes = dados.tarefas.filter((item) =>
+      ['ativa', 'aguardando_usuario', 'pausada'].includes(item.estado));
+    if (pendentes.length > LIMITE_TAREFAS_PENDENTES) {
+      const remover = pendentes
+        .filter((item) => item.id !== dados.tarefaAtiva)
+        .sort((a, b) => a.atualizadaEm.localeCompare(b.atualizadaEm))
+        .slice(0, pendentes.length - LIMITE_TAREFAS_PENDENTES);
+      const ids = new Set(remover.map((item) => item.id));
+      dados.tarefas = dados.tarefas.filter((item) => !ids.has(item.id));
+    }
+    gravarSessao(dados);
+    return normalizada;
+  }
+
+  function atualizarEstadoTarefa(id, estado) {
+    const dados = lerSessao();
+    const tarefa = dados.tarefas.find((item) => item.id === id);
+    if (!tarefa) return null;
+    tarefa.estado = estado;
+    tarefa.atualizadaEm = new Date().toISOString();
+    if (['concluida', 'cancelada', 'expirada', 'pausada'].includes(estado) &&
+      dados.tarefaAtiva === id) dados.tarefaAtiva = null;
+    if (['ativa', 'aguardando_usuario'].includes(estado)) dados.tarefaAtiva = id;
+    gravarSessao(dados);
+    return normalizarTarefa(tarefa);
+  }
+
+  function retomarTarefa(id) {
+    const dados = lerSessao();
+    const tarefa = dados.tarefas.find((item) => item.id === id && item.estado === 'pausada');
+    if (!tarefa) return null;
+    for (const item of dados.tarefas) {
+      if (['ativa', 'aguardando_usuario'].includes(item.estado)) item.estado = 'pausada';
+    }
+    tarefa.estado = tarefa.camposPendentes.length ? 'aguardando_usuario' : 'ativa';
+    tarefa.atualizadaEm = new Date().toISOString();
+    dados.tarefaAtiva = tarefa.id;
+    gravarSessao(dados);
+    return normalizarTarefa(tarefa);
   }
 
   function listarLonga({ somenteAtivos = false } = {}) {
@@ -236,7 +373,7 @@ function criarMemoria(opcoes = {}) {
     campos,
     referencias
   }) {
-    const dados = lerJson(arquivoCurta, { versao: 1, sessao, interacoes: [] });
+    const dados = lerSessao();
     dados.interacoes = [
       ...(dados.interacoes || []).map(normalizarInteracao),
       {
@@ -262,7 +399,7 @@ function criarMemoria(opcoes = {}) {
         criadaEm: new Date().toISOString()
       }
     ].slice(-limiteCurta);
-    gravarJson(arquivoCurta, { versao: 2, sessao, interacoes: dados.interacoes });
+    gravarSessao(dados);
   }
 
   function adicionarConhecimento({ conteudo, categoria = 'correcao', gatilhos = [] }) {
@@ -298,19 +435,25 @@ function criarMemoria(opcoes = {}) {
   }
 
   function limparCurta() {
-    gravarJson(arquivoCurta, { versao: 2, sessao, interacoes: [] });
+    gravarSessao({ versao: 3, sessao, interacoes: [], tarefas: [], tarefaAtiva: null });
   }
 
   return {
     adicionarConhecimento,
+    atualizarEstadoTarefa,
     buscarLonga,
+    expirarTarefas,
     limparCurta,
     listarCurta,
     listarLonga,
+    listarTarefas,
     montarContexto,
     montarContextoEstruturado,
+    obterTarefaAtiva,
     registrarInteracao,
     removerConhecimento,
+    retomarTarefa,
+    salvarTarefa,
     sessao
   };
 }
@@ -318,10 +461,13 @@ function criarMemoria(opcoes = {}) {
 module.exports = {
   CAMINHO_CONHECIMENTO,
   LIMITE_CURTA_PADRAO,
+  LIMITE_TAREFAS_PENDENTES,
+  TTL_TAREFA_PADRAO_MS,
   criarMemoria,
   extrairReferenciasTemporais,
   pareceContinuacao,
   pontuarConhecimento,
   resumir,
-  sanitizarEstrutura
+  sanitizarEstrutura,
+  normalizarTarefa
 };
