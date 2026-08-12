@@ -54,6 +54,33 @@
       "criterios": ["herdar o perfil de indicadores", "usar junho ate o dia 21"]
     },
     {
+      "id": "continuacao-bloqueios-com-ean",
+      "categoria": "memoria",
+      "pergunta": "Pode me passar esses pedidos novamente, mas com o codigo de barra do produto em falta na frente?",
+      "contextoAnterior": {
+        "pergunta": "Quais sao os pedidos com bloqueios de estoque hoje?",
+        "resposta": "Os pedidos PED-1 e PED-2 estao com bloqueio de estoque.",
+        "perfil": "bloqueios_estoque",
+        "rota": {
+          "dominioPrimario": "bloqueios_estoque",
+          "dominiosSecundarios": [],
+          "intencao": "listar"
+        },
+        "entidades": {
+          "marketplace_pedido": ["PED-1", "PED-2"]
+        }
+      },
+      "perfilEsperado": "bloqueios_estoque",
+      "intencaoEsperada": "enriquecer",
+      "ferramentasEsperadas": ["consultar_bloqueios_sem_estoque"],
+      "criterios": [
+        "herdar bloqueios_estoque",
+        "usar listar_itens em lote",
+        "informar marketplace_pedido e EAN",
+        "nao usar analisar_vendas nem Silver"
+      ]
+    },
+    {
       "id": "valor-pedidos",
       "categoria": "indicadores",
       "pergunta": "Qual foi o valor total dos pedidos de 01/07/2026 ate 20/07/2026?",

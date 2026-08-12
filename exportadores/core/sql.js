@@ -19,6 +19,26 @@ function normalizarChavesPrimarias(valor) {
   return valor ? [valor] : [];
 }
 
+function montarConsultaChavesAtuais(entidade, alias = 'pg_db') {
+  const extracao = entidade.extracao || {};
+  if (extracao.reconciliarExclusoes !== true) return null;
+
+  const chavesPrimarias = normalizarChavesPrimarias(extracao.chavePrimaria);
+  if (!chavesPrimarias.length) {
+    throw new Error('Reconcilia\u00e7\u00e3o de exclus\u00f5es exige chavePrimaria.');
+  }
+
+  const selecao = chavesPrimarias
+    .map((coluna) => citarIdentificador(coluna, 'chavePrimaria'))
+    .join(', ');
+  const origem = [alias, entidade.schema, entidade.tabela]
+    .filter(Boolean)
+    .map((parte, indice) => citarIdentificador(parte, alias && indice === 0 ? 'alias' : 'tabela'))
+    .join('.');
+
+  return `SELECT DISTINCT ${selecao} FROM ${origem}`;
+}
+
 function montarConsultaPostgres(entidade, opcoes = {}, alias = 'pg_db') {
   const extracao = entidade.extracao || {};
 
@@ -99,11 +119,20 @@ function validarEntidade(entidade) {
         citarIdentificador(cursor, 'cursor');
       }
     }
+    if (
+      entidade.extracao.reconciliarExclusoes !== undefined &&
+      typeof entidade.extracao.reconciliarExclusoes !== 'boolean'
+    ) {
+      throw new Error('reconciliarExclusoes deve ser booleano.');
+    }
+  } else if (entidade.extracao?.reconciliarExclusoes === true) {
+    throw new Error('reconciliarExclusoes somente pode ser usado em extra\u00e7\u00e3o incremental.');
   }
 }
 
 module.exports = {
   montarConsultaPostgres,
+  montarConsultaChavesAtuais,
   validarEntidade,
   normalizarChavesPrimarias
 };

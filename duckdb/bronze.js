@@ -92,7 +92,28 @@ async function descobrirExecucoesValidas(raizLake, entidade) {
       throw erro;
     }
 
-    execucoes.push({ manifesto, caminhoManifesto, arquivo });
+    let arquivoChavesAtuais = null;
+    const reconciliacao = manifesto.reconciliacaoExclusoes;
+    if (reconciliacao) {
+      if (reconciliacao.estrategia !== 'snapshot_chaves_atuais') {
+        throw new Error(`Estrat\u00e9gia de reconcilia\u00e7\u00e3o inv\u00e1lida em ${caminhoManifesto}`);
+      }
+      const nomeArquivoChaves = reconciliacao.arquivo;
+      if (!nomeArquivoChaves || path.basename(nomeArquivoChaves) !== nomeArquivoChaves) {
+        throw new Error(`Manifesto aponta para snapshot de chaves inv\u00e1lido: ${caminhoManifesto}`);
+      }
+      arquivoChavesAtuais = path.join(path.dirname(caminhoManifesto), nomeArquivoChaves);
+      try {
+        await fs.access(arquivoChavesAtuais);
+      } catch (erro) {
+        // O manifesto e seus dois Parquets formam um unico commit. Se o snapshot
+        // de chaves sumiu, a execucao inteira nao pode participar da leitura.
+        if (erro.code === 'ENOENT') continue;
+        throw erro;
+      }
+    }
+
+    execucoes.push({ manifesto, caminhoManifesto, arquivo, arquivoChavesAtuais });
   }
 
   return execucoes.sort((a, b) => a.arquivo.localeCompare(b.arquivo));
@@ -163,6 +184,12 @@ function criarLeitorBronze(opcoes = {}) {
     const chavesPrimarias = normalizarChavesPrimarias(entidade.extracao?.chavePrimaria);
     const cursor = entidade.extracao?.cursor;
     const modoExtracao = entidade.extracao?.modo;
+    const ultimaExecucao = execucoes.at(-1);
+    const execucaoReconciliada =
+      entidade.extracao?.reconciliarExclusoes === true &&
+      ultimaExecucao?.arquivoChavesAtuais
+        ? ultimaExecucao
+        : null;
 
     const estrategiaVisaoAtual =
       entidade.extracao?.estrategiaVisaoAtual ||
@@ -200,6 +227,31 @@ function criarLeitorBronze(opcoes = {}) {
           FROM ${citarIdentificador(viewHistorica)}
         )
       `);
+    } else if (execucaoReconciliada) {
+      const arquivoChavesSql = escaparLiteral(
+        execucaoReconciliada.arquivoChavesAtuais.replace(/\\/g, '/')
+      );
+      const condicaoChaves = chavesPrimarias
+        .map((chave) => `dados.${citarIdentificador(chave)} IS NOT DISTINCT FROM chaves.${citarIdentificador(chave)}`)
+        .join(' AND ');
+      await runDuckDB(con, `
+        CREATE OR REPLACE TEMP VIEW ${citarIdentificador(viewAtual)} AS
+        WITH dados_deduplicados AS (
+          SELECT *
+          FROM ${citarIdentificador(viewHistorica)}
+          QUALIFY row_number() OVER (
+            PARTITION BY ${chavesPrimarias.map(citarIdentificador).join(', ')}
+            ORDER BY
+              ${citarIdentificador(cursor)} DESC NULLS LAST,
+              ${citarIdentificador('execucao')} DESC NULLS LAST,
+              ${citarIdentificador('filename')} DESC
+          ) = 1
+        )
+        SELECT dados.*
+        FROM dados_deduplicados AS dados
+        INNER JOIN read_parquet(${arquivoChavesSql}) AS chaves
+          ON ${condicaoChaves}
+      `);
     } else {
       await runDuckDB(con, `
         CREATE OR REPLACE TEMP VIEW ${citarIdentificador(viewAtual)} AS
@@ -227,7 +279,14 @@ function criarLeitorBronze(opcoes = {}) {
       schema,
       colunas: new Set(schema.map((coluna) => coluna.column_name)),
       tipos: new Map(schema.map((coluna) => [coluna.column_name, coluna.column_type])),
-      chavesPrimarias
+      chavesPrimarias,
+      reconciliacaoExclusoes: execucaoReconciliada
+        ? {
+            estrategia: 'snapshot_chaves_atuais',
+            manifesto: execucaoReconciliada.caminhoManifesto,
+            arquivo: execucaoReconciliada.arquivoChavesAtuais
+          }
+        : null
     };
     entidadesPreparadas.set(nome, contexto);
     return contexto;

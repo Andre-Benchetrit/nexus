@@ -14,7 +14,12 @@ const {
 } = require('../../duckdb/connections');
 const { operacaoArquivoComRetentativas } = require('../core/arquivos');
 const { criarCaminhosExportacao, caminhoParaDuckDB } = require('../core/caminhos');
-const { montarConsultaPostgres, validarEntidade } = require('../core/sql');
+const {
+  montarConsultaPostgres,
+  montarConsultaChavesAtuais,
+  normalizarChavesPrimarias,
+  validarEntidade
+} = require('../core/sql');
 const { exportarConsultaParaCsv, converterCsvParaParquet } = require('./copy_stream');
 
 async function janelaJaExportada(raiz, inicio, fim) {
@@ -41,9 +46,11 @@ async function exportarPostgres(entidade, opcoes = {}) {
   const caminhos = criarCaminhosExportacao(entidade, inicio);
   const consulta = montarConsultaPostgres(entidade, opcoes);
   const consultaNativa = montarConsultaPostgres(entidade, opcoes, null);
+  const consultaChavesAtuais = montarConsultaChavesAtuais(entidade);
+  const consultaChavesAtuaisNativa = montarConsultaChavesAtuais(entidade, null);
 
   if (opcoes.dryRun) {
-    return { entidade: entidade.nome, consulta, caminhos };
+    return { entidade: entidade.nome, consulta, consultaChavesAtuais, caminhos };
   }
 
   if (
@@ -59,6 +66,8 @@ async function exportarPostgres(entidade, opcoes = {}) {
   let erroExportacao = null;
   let conexaoFechada = false;
   const arquivoTemporario = path.join(caminhos.diretorio, 'dados.csv.tmp');
+  const arquivoChavesTemporario = caminhos.csvChavesAtuaisTemporario;
+  let reconciliacaoExclusoes = null;
 
   try {
     console.log(`[${entidade.nome}] Preparando conexão...`);
@@ -102,6 +111,43 @@ async function exportarPostgres(entidade, opcoes = {}) {
     const totalLinhas = Number(resultado.total);
     const checksum = resultado.checksum?.toString() || null;
 
+    if (consultaChavesAtuais) {
+      console.log(`[${entidade.nome}] Reconciliando chaves removidas da origem...`);
+      if (entidade.extracao?.transporte === 'copy_stream') {
+        await exportarConsultaParaCsv(
+          consultaChavesAtuaisNativa,
+          arquivoChavesTemporario
+        );
+        await converterCsvParaParquet({
+          schema: entidade.schema,
+          tabela: entidade.tabela,
+          csv: arquivoChavesTemporario,
+          parquet: caminhos.parquetChavesAtuais,
+          colunas: normalizarChavesPrimarias(entidade.extracao.chavePrimaria)
+        });
+        await operacaoArquivoComRetentativas(() => fsp.unlink(arquivoChavesTemporario));
+      } else {
+        await runDuckDB(
+          con,
+          `COPY (${consultaChavesAtuais}) TO ` +
+          `'${caminhoParaDuckDB(caminhos.parquetChavesAtuais)}' ` +
+          `(FORMAT PARQUET, COMPRESSION ZSTD);`
+        );
+      }
+
+      const [resultadoChaves] = await allDuckDB(
+        con,
+        `SELECT count(*) AS total, bit_xor(hash(chaves)) AS checksum ` +
+        `FROM read_parquet('${caminhoParaDuckDB(caminhos.parquetChavesAtuais)}') AS chaves`
+      );
+      reconciliacaoExclusoes = {
+        estrategia: 'snapshot_chaves_atuais',
+        arquivo: 'chaves_atuais.parquet',
+        totalChaves: Number(resultadoChaves.total),
+        checksum: resultadoChaves.checksum?.toString() || null
+      };
+    }
+
     // O manifest.json é o marcador de commit. O leitor ignora qualquer Parquet
     // que tenha sido escrito sem um manifesto de sucesso.
     await fecharConexaoDuckDB(con);
@@ -121,6 +167,7 @@ async function exportarPostgres(entidade, opcoes = {}) {
         ? { inicio: opcoes.inicio, fim: opcoes.fim }
         : null,
       chavePrimaria: entidade.extracao?.chavePrimaria || null,
+      reconciliacaoExclusoes,
       arquivo: 'dados.parquet'
     };
 
@@ -149,6 +196,20 @@ async function exportarPostgres(entidade, opcoes = {}) {
         await operacaoArquivoComRetentativas(() => fsp.unlink(arquivoTemporario));
       } catch (erroLimpeza) {
         if (erroExportacao) erroExportacao.message += ` (CSV temporário não removido: ${erroLimpeza.message})`;
+      }
+    }
+    if (erroExportacao && fs.existsSync(caminhos.parquetChavesAtuais)) {
+      try {
+        await operacaoArquivoComRetentativas(() => fsp.unlink(caminhos.parquetChavesAtuais));
+      } catch (erroLimpeza) {
+        erroExportacao.message += ` (snapshot de chaves sem manifesto sera ignorado: ${erroLimpeza.message})`;
+      }
+    }
+    if (fs.existsSync(arquivoChavesTemporario)) {
+      try {
+        await operacaoArquivoComRetentativas(() => fsp.unlink(arquivoChavesTemporario));
+      } catch (erroLimpeza) {
+        if (erroExportacao) erroExportacao.message += ` (CSV temporario de chaves nao removido: ${erroLimpeza.message})`;
       }
     }
   }

@@ -90,6 +90,16 @@ test('prioriza o Gold especifico para pedidos bloqueados sem estoque', () => {
   );
 });
 
+test('continuação com esses pedidos herda bloqueios de estoque', () => {
+  assert.equal(
+    resolverPerfilComContexto(
+      'Pode me passar esses pedidos novamente, mas com o código de barra na frente?',
+      [{ pergunta: 'Quais pedidos têm bloqueio de estoque hoje?', perfil: 'bloqueios_estoque' }]
+    ),
+    'bloqueios_estoque'
+  );
+});
+
 test('roteia agendamentos e chegadas para reposicoes', () => {
   assert.equal(
     classificarPergunta('Quais produtos chegarao no dia 30/07/2026?'),

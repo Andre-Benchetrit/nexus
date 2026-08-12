@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  configurarTerminalUtf8,
   executarAgente,
   lerArgumentos
 } = require('../agentes/consultor_nexus');
@@ -13,6 +14,18 @@ const {
   FERRAMENTAS_NEGOCIO,
   obterFerramentasDoPerfil
 } = require('../agentes/ferramentas');
+
+test('configura UTF-8 para a saída e o terminal interativo do Windows', () => {
+  const codificacoes = [];
+  const comandos = [];
+  const saida = { isTTY: true, setDefaultEncoding(valor) { codificacoes.push(valor); } };
+  configurarTerminalUtf8({
+    plataforma: 'win32', stdout: saida, stderr: saida,
+    execFileSync(comando, argumentos) { comandos.push([comando, argumentos]); }
+  });
+  assert.deepEqual(codificacoes, ['utf8', 'utf8']);
+  assert.deepEqual(comandos, [['chcp.com', ['65001']]]);
+});
 
 test('apresenta datas ISO no formato brasileiro', () => {
   assert.equal(
@@ -85,7 +98,7 @@ test('delega a execução para um provider com contrato comum', async () => {
   assert.equal(typeof contexto.tools.find(
     (item) => item.definicao.name === 'analisar_vendas'
   ).executar, 'function');
-  assert.equal(contexto.maxRodadas, 6);
+  assert.equal(contexto.maxRodadas, 10);
 });
 
 test('envia somente a fachada Gold quando a pergunta e ranking de venda', async () => {
@@ -116,7 +129,7 @@ test('envia somente indicadores Gold em comparacoes executivas', async () => {
     contexto.tools.map(({ definicao }) => definicao.name),
     ['analisar_indicadores', 'solicitar_aprofundamento']
   );
-  assert.equal(contexto.maxRodadas, 6);
+  assert.equal(contexto.maxRodadas, 10);
 });
 
 test('amplia uma vez o roteamento quando o provider solicita fachada ausente', async () => {
@@ -417,6 +430,20 @@ test('lê provider e modelo pela linha de comando', () => {
       opcoes: { providerNome: 'gemini', modelo: 'modelo-x' }
     }
   );
+});
+
+test('le configuracao do roteador e ignora separador isolado', () => {
+  const resultado = lerArgumentos([
+    '--router-mode', 'v2', '--router-provider', 'openai',
+    '--router-model', 'modelo-rota', '--interaction-mode', 'v1',
+    '--max-rodadas', '12', '--', 'Qual', 'pedido?'
+  ]);
+  assert.equal(resultado.pergunta, 'Qual pedido?');
+  assert.equal(resultado.opcoes.routerMode, 'v2');
+  assert.equal(resultado.opcoes.routerProviderNome, 'openai');
+  assert.equal(resultado.opcoes.interactionMode, 'v1');
+  assert.equal(resultado.opcoes.routerModelo, 'modelo-rota');
+  assert.equal(resultado.opcoes.maxRodadas, 12);
 });
 
 test('le perfil de tools pela linha de comando', () => {

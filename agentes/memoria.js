@@ -4,9 +4,11 @@ const path = require('node:path');
 const RAIZ = path.resolve(__dirname, '..');
 const CAMINHO_CONHECIMENTO = path.join(RAIZ, 'memoria', 'conhecimento.json');
 const DIRETORIO_RUNTIME = path.join(RAIZ, 'memoria', '.runtime');
-const LIMITE_CURTA_PADRAO = 3;
+const LIMITE_CURTA_PADRAO = 10;
+const LIMITE_TAREFAS_PENDENTES = 5;
+const TTL_TAREFA_PADRAO_MS = 24 * 60 * 60 * 1000;
 const LIMITE_RESUMO_PERGUNTA = 180;
-const LIMITE_RESUMO_RESPOSTA = 320;
+const LIMITE_RESUMO_RESPOSTA = 1_000;
 
 const PALAVRAS_VAZIAS = new Set([
   'a', 'as', 'ao', 'aos', 'com', 'como', 'da', 'das', 'de', 'do', 'dos', 'e',
@@ -95,19 +97,193 @@ function extrairReferenciasTemporais(resposta) {
 function pareceContinuacao(pergunta) {
   const texto = normalizar(pergunta);
   if (!texto) return false;
-  return /^(e |agora |nesse|nessa|nesses|nessas|desses|dessas|deles|delas|tambem|compare|detalhe|separe|mostre os|mostre as)/.test(texto)
-    || /\b(anterior|acima|mesmo periodo|esses dados|esse resultado)\b/.test(texto);
+  return /^(e |agora |nesse|nessa|nesses|nessas|desses|dessas|deles|delas|tambem|compare|detalhe|separe|mostre os|mostre as|pode me passar|passe|repita|inclua|adicione|acrescente)/.test(texto)
+    || /\b(anterior|acima|mesmo periodo|esses dados|esse resultado|esses pedidos|os mesmos|novamente)\b/.test(texto);
+}
+
+const CHAVES_SENSIVEIS = /token|secret|senha|password|credential|api[_-]?key|sql|caminho|path/i;
+
+function sanitizarEstrutura(valor) {
+  if (Array.isArray(valor)) return valor.map(sanitizarEstrutura);
+  if (!valor || typeof valor !== 'object') {
+    return typeof valor === 'bigint' ? String(valor) : valor;
+  }
+  return Object.fromEntries(
+    Object.entries(valor)
+      .filter(([chave]) => !CHAVES_SENSIVEIS.test(chave))
+      .map(([chave, item]) => [chave, sanitizarEstrutura(item)])
+  );
+}
+
+function normalizarInteracao(item) {
+  return {
+    pergunta: item.pergunta || '',
+    perguntaAutonoma: item.perguntaAutonoma || item.pergunta || '',
+    resposta: item.resposta || '',
+    provider: item.provider || null,
+    modelo: item.modelo || null,
+    perfil: item.perfil || item.rota?.dominioPrimario || null,
+    rota: item.rota || null,
+    plano: item.plano || null,
+    ferramentas: item.ferramentas || [],
+    entidades: item.entidades || {},
+    periodo: item.periodo || item.rota?.periodo || null,
+    filtros: item.filtros || item.rota?.filtros || [],
+    campos: item.campos || item.rota?.camposSolicitados || [],
+    referencias: item.referencias || {},
+    criadaEm: item.criadaEm || null
+  };
+}
+
+function normalizarTarefa(item) {
+  return {
+    id: String(item.id || ''),
+    tipo: String(item.tipo || ''),
+    estado: item.estado || 'ativa',
+    slots: sanitizarEstrutura(item.slots || {}),
+    camposPendentes: [...new Set(item.camposPendentes || [])],
+    contexto: sanitizarEstrutura(item.contexto || {}),
+    perguntas: sanitizarEstrutura(item.perguntas || []),
+    criadaEm: item.criadaEm || new Date().toISOString(),
+    atualizadaEm: item.atualizadaEm || item.criadaEm || new Date().toISOString(),
+    expiraEm: item.expiraEm || new Date(Date.now() + TTL_TAREFA_PADRAO_MS).toISOString()
+  };
 }
 
 function criarMemoria(opcoes = {}) {
   const sessao = validarSessao(opcoes.sessao || 'padrao');
-  const limiteCurta = Number(opcoes.limiteCurta || LIMITE_CURTA_PADRAO);
+  const limiteCurta = Number(
+    opcoes.limiteCurta || process.env.NEXUS_SESSION_HISTORY_LIMIT || LIMITE_CURTA_PADRAO
+  );
+  if (!Number.isInteger(limiteCurta) || limiteCurta < 1 || limiteCurta > 50) {
+    throw new Error('Limite da memoria curta deve ser um inteiro entre 1 e 50.');
+  }
   const arquivoCurta = opcoes.caminhoCurta || caminhoSessao(sessao);
   const arquivoLonga = opcoes.caminhoLonga || CAMINHO_CONHECIMENTO;
 
+  function lerSessao() {
+    const dados = lerJson(arquivoCurta, {
+      versao: 3,
+      sessao,
+      interacoes: [],
+      tarefas: [],
+      tarefaAtiva: null
+    });
+    return {
+      versao: 3,
+      sessao,
+      interacoes: (dados.interacoes || []).map(normalizarInteracao),
+      tarefas: (dados.tarefas || []).map(normalizarTarefa),
+      tarefaAtiva: dados.tarefaAtiva || null
+    };
+  }
+
+  function gravarSessao(dados) {
+    gravarJson(arquivoCurta, {
+      versao: 3,
+      sessao,
+      interacoes: (dados.interacoes || []).slice(-limiteCurta),
+      tarefas: (dados.tarefas || []).map(normalizarTarefa),
+      tarefaAtiva: dados.tarefaAtiva || null
+    });
+  }
+
   function listarCurta() {
-    const dados = lerJson(arquivoCurta, { versao: 1, sessao, interacoes: [] });
-    return (dados.interacoes || []).slice(-limiteCurta);
+    const dados = lerSessao();
+    return (dados.interacoes || []).slice(-limiteCurta).map(normalizarInteracao);
+  }
+
+  function expirarTarefas(agora = new Date()) {
+    const dados = lerSessao();
+    let alterado = false;
+    for (const tarefa of dados.tarefas) {
+      if (
+        ['ativa', 'aguardando_usuario', 'pausada'].includes(tarefa.estado) &&
+        Date.parse(tarefa.expiraEm) <= agora.getTime()
+      ) {
+        tarefa.estado = 'expirada';
+        tarefa.atualizadaEm = agora.toISOString();
+        if (dados.tarefaAtiva === tarefa.id) dados.tarefaAtiva = null;
+        alterado = true;
+      }
+    }
+    if (alterado) gravarSessao(dados);
+    return dados.tarefas.filter((item) => item.estado === 'expirada');
+  }
+
+  function listarTarefas({ incluirFinalizadas = false } = {}) {
+    expirarTarefas();
+    const tarefas = lerSessao().tarefas;
+    return tarefas.filter((item) => incluirFinalizadas ||
+      ['ativa', 'aguardando_usuario', 'pausada'].includes(item.estado));
+  }
+
+  function obterTarefaAtiva() {
+    expirarTarefas();
+    const dados = lerSessao();
+    return dados.tarefas.find((item) => item.id === dados.tarefaAtiva &&
+      ['ativa', 'aguardando_usuario'].includes(item.estado)) || null;
+  }
+
+  function salvarTarefa(tarefa, { ativar = true } = {}) {
+    const dados = lerSessao();
+    const agora = new Date().toISOString();
+    const normalizada = normalizarTarefa({
+      ...tarefa,
+      atualizadaEm: agora,
+      criadaEm: tarefa.criadaEm || agora
+    });
+    const indice = dados.tarefas.findIndex((item) => item.id === normalizada.id);
+    if (indice >= 0) dados.tarefas[indice] = normalizada;
+    else dados.tarefas.push(normalizada);
+    if (ativar) {
+      for (const item of dados.tarefas) {
+        if (
+          item.id !== normalizada.id &&
+          ['ativa', 'aguardando_usuario'].includes(item.estado)
+        ) item.estado = 'pausada';
+      }
+      dados.tarefaAtiva = normalizada.id;
+    }
+    const pendentes = dados.tarefas.filter((item) =>
+      ['ativa', 'aguardando_usuario', 'pausada'].includes(item.estado));
+    if (pendentes.length > LIMITE_TAREFAS_PENDENTES) {
+      const remover = pendentes
+        .filter((item) => item.id !== dados.tarefaAtiva)
+        .sort((a, b) => a.atualizadaEm.localeCompare(b.atualizadaEm))
+        .slice(0, pendentes.length - LIMITE_TAREFAS_PENDENTES);
+      const ids = new Set(remover.map((item) => item.id));
+      dados.tarefas = dados.tarefas.filter((item) => !ids.has(item.id));
+    }
+    gravarSessao(dados);
+    return normalizada;
+  }
+
+  function atualizarEstadoTarefa(id, estado) {
+    const dados = lerSessao();
+    const tarefa = dados.tarefas.find((item) => item.id === id);
+    if (!tarefa) return null;
+    tarefa.estado = estado;
+    tarefa.atualizadaEm = new Date().toISOString();
+    if (['concluida', 'cancelada', 'expirada', 'pausada'].includes(estado) &&
+      dados.tarefaAtiva === id) dados.tarefaAtiva = null;
+    if (['ativa', 'aguardando_usuario'].includes(estado)) dados.tarefaAtiva = id;
+    gravarSessao(dados);
+    return normalizarTarefa(tarefa);
+  }
+
+  function retomarTarefa(id) {
+    const dados = lerSessao();
+    const tarefa = dados.tarefas.find((item) => item.id === id && item.estado === 'pausada');
+    if (!tarefa) return null;
+    for (const item of dados.tarefas) {
+      if (['ativa', 'aguardando_usuario'].includes(item.estado)) item.estado = 'pausada';
+    }
+    tarefa.estado = tarefa.camposPendentes.length ? 'aguardando_usuario' : 'ativa';
+    tarefa.atualizadaEm = new Date().toISOString();
+    dados.tarefaAtiva = tarefa.id;
+    gravarSessao(dados);
+    return normalizarTarefa(tarefa);
   }
 
   function listarLonga({ somenteAtivos = false } = {}) {
@@ -134,7 +310,12 @@ function criarMemoria(opcoes = {}) {
         'Memoria curta (use apenas para resolver referencias da conversa; reconfirme dados mutaveis nas tools):',
         ...curta.map((item, indice) => (
           `${indice + 1}. Pergunta: ${item.pergunta}\n` +
+          `   Pergunta autonoma: ${item.perguntaAutonoma || item.pergunta}\n` +
           `   Perfil: ${item.perfil || 'nao registrado'}\n` +
+          (item.rota ? `   Rota: ${JSON.stringify(item.rota)}\n` : '') +
+          (Object.keys(item.entidades || {}).length
+            ? `   Entidades: ${JSON.stringify(item.entidades)}\n`
+            : '') +
           `   Resposta resumida: ${item.resposta}` +
           (
             item.referencias?.ultimaDataCompleta
@@ -153,21 +334,72 @@ function criarMemoria(opcoes = {}) {
     return blocos.join('\n');
   }
 
-  function registrarInteracao({ pergunta, resposta, provider, modelo, perfil, referencias }) {
-    const dados = lerJson(arquivoCurta, { versao: 1, sessao, interacoes: [] });
+  function montarContextoEstruturado() {
+    return listarCurta().map((item) => ({
+      pergunta: item.pergunta,
+      perguntaAutonoma: item.perguntaAutonoma,
+      dominio: item.rota?.dominioPrimario || item.perfil,
+      dominiosSecundarios: item.rota?.dominiosSecundarios || [],
+      intencao: item.rota?.intencao || null,
+      entidades: item.entidades,
+      periodo: item.periodo,
+      filtros: item.filtros,
+      campos: item.campos,
+      ferramentas: item.ferramentas.map((ferramenta) => ({
+        nome: ferramenta.nome,
+        argumentos: ferramenta.argumentos,
+        referencias: ferramenta.referencias,
+        atualizadoEm: ferramenta.atualizadoEm || null
+      })),
+      referencias: item.referencias,
+      resposta: item.resposta,
+      criadaEm: item.criadaEm
+    }));
+  }
+
+  function registrarInteracao({
+    pergunta,
+    perguntaAutonoma,
+    resposta,
+    provider,
+    modelo,
+    perfil,
+    rota,
+    plano,
+    ferramentas = [],
+    entidades = {},
+    periodo,
+    filtros,
+    campos,
+    referencias
+  }) {
+    const dados = lerSessao();
     dados.interacoes = [
-      ...(dados.interacoes || []),
+      ...(dados.interacoes || []).map(normalizarInteracao),
       {
         pergunta: resumir(pergunta, LIMITE_RESUMO_PERGUNTA),
+        perguntaAutonoma: resumir(
+          perguntaAutonoma || rota?.perguntaAutonoma || pergunta,
+          LIMITE_RESUMO_PERGUNTA * 2
+        ),
         resposta: resumir(resposta, LIMITE_RESUMO_RESPOSTA),
         provider: provider || null,
         modelo: modelo || null,
         perfil: perfil || null,
-        referencias: referencias || extrairReferenciasTemporais(resposta),
+        rota: rota ? sanitizarEstrutura(rota) : null,
+        plano: plano ? sanitizarEstrutura(plano) : null,
+        ferramentas: sanitizarEstrutura(ferramentas),
+        entidades: sanitizarEstrutura(entidades),
+        periodo: sanitizarEstrutura(periodo || rota?.periodo || null),
+        filtros: sanitizarEstrutura(filtros || rota?.filtros || []),
+        campos: sanitizarEstrutura(campos || rota?.camposSolicitados || []),
+        referencias: sanitizarEstrutura(
+          referencias || extrairReferenciasTemporais(resposta)
+        ),
         criadaEm: new Date().toISOString()
       }
     ].slice(-limiteCurta);
-    gravarJson(arquivoCurta, dados);
+    gravarSessao(dados);
   }
 
   function adicionarConhecimento({ conteudo, categoria = 'correcao', gatilhos = [] }) {
@@ -203,18 +435,25 @@ function criarMemoria(opcoes = {}) {
   }
 
   function limparCurta() {
-    gravarJson(arquivoCurta, { versao: 1, sessao, interacoes: [] });
+    gravarSessao({ versao: 3, sessao, interacoes: [], tarefas: [], tarefaAtiva: null });
   }
 
   return {
     adicionarConhecimento,
+    atualizarEstadoTarefa,
     buscarLonga,
+    expirarTarefas,
     limparCurta,
     listarCurta,
     listarLonga,
+    listarTarefas,
     montarContexto,
+    montarContextoEstruturado,
+    obterTarefaAtiva,
     registrarInteracao,
     removerConhecimento,
+    retomarTarefa,
+    salvarTarefa,
     sessao
   };
 }
@@ -222,9 +461,13 @@ function criarMemoria(opcoes = {}) {
 module.exports = {
   CAMINHO_CONHECIMENTO,
   LIMITE_CURTA_PADRAO,
+  LIMITE_TAREFAS_PENDENTES,
+  TTL_TAREFA_PADRAO_MS,
   criarMemoria,
   extrairReferenciasTemporais,
   pareceContinuacao,
   pontuarConhecimento,
-  resumir
+  resumir,
+  sanitizarEstrutura,
+  normalizarTarefa
 };

@@ -17,6 +17,9 @@ function lerOpcoes(argumentos) {
     else if (atual === '--debug') opcoes.debug = true;
     else if (atual === '--provider') opcoes.providerNome = argumentos[++i];
     else if (atual === '--model') opcoes.modelo = argumentos[++i];
+    else if (atual === '--router-mode') opcoes.routerMode = argumentos[++i];
+    else if (atual === '--router-provider') opcoes.routerProviderNome = argumentos[++i];
+    else if (atual === '--router-model') opcoes.routerModelo = argumentos[++i];
     else if (atual === '--categoria') opcoes.categoria = argumentos[++i];
     else if (atual === '--caso') opcoes.caso = argumentos[++i];
     else if (atual === '--limite') opcoes.limite = Number(argumentos[++i]);
@@ -81,6 +84,9 @@ async function executarCaso(caso, opcoes) {
     const resposta = await executarAgente(caso.pergunta, {
       providerNome: opcoes.providerNome,
       modelo: opcoes.modelo,
+      routerMode: opcoes.routerMode,
+      routerProviderNome: opcoes.routerProviderNome,
+      routerModelo: opcoes.routerModelo,
       semFallback: true,
       memoria,
       onEvento: opcoes.debug
@@ -91,8 +97,18 @@ async function executarCaso(caso, opcoes) {
     resultado.provider = resposta.provider;
     resultado.modelo = resposta.modelo;
     resultado.rodadas = resposta.rodadas;
+    resultado.roteamento = resposta.roteamento;
+    resultado.intencaoObtida = resposta.roteamento?.decisao?.intencao || null;
+    resultado.ferramentasExecutadas = resposta.roteamento?.ferramentasExecutadas || [];
+    resultado.intencaoOk = !caso.intencaoEsperada ||
+      resultado.intencaoObtida === caso.intencaoEsperada;
+    resultado.planoOk = !(caso.ferramentasEsperadas || []).length ||
+      caso.ferramentasEsperadas.every((nome) => (
+        resposta.roteamento?.plano?.ferramentas?.includes(nome)
+      ));
     resultado.problemasAutomaticos = validarResposta(resposta.texto);
-    resultado.execucaoOk = resultado.problemasAutomaticos.length === 0;
+    resultado.execucaoOk = resultado.problemasAutomaticos.length === 0 &&
+      resultado.intencaoOk && resultado.planoOk;
   } catch (erro) {
     resultado.erro = erro.message;
     resultado.execucaoOk = false;
@@ -110,6 +126,11 @@ function salvarRelatorio(resultados, opcoes) {
   const relatorio = {
     criadoEm: new Date().toISOString(),
     providerSolicitado: opcoes.providerNome || process.env.LLM_PROVIDER || 'padrao',
+    roteadorSolicitado: {
+      modo: opcoes.routerMode || process.env.NEXUS_ROUTER_MODE || 'shadow',
+      provider: opcoes.routerProviderNome || process.env.NEXUS_ROUTER_PROVIDER || null,
+      modelo: opcoes.routerModelo || process.env.NEXUS_ROUTER_MODEL || null
+    },
     total: resultados.length,
     contratosOk: resultados.filter((item) => item.contratoOk).length,
     execucoesOk: resultados.filter((item) => item.execucaoOk).length,

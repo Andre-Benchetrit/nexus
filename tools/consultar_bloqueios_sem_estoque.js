@@ -17,13 +17,28 @@ const definicaoConsultarBloqueiosSemEstoque = {
     properties: {
       operacao: {
         type: 'string',
-        enum: ['resumir', 'listar', 'detalhar_pedido']
+        enum: ['resumir', 'listar', 'listar_itens', 'detalhar_pedido']
       },
       marketplace_pedido: { type: ['string', 'null'] },
+      marketplace_pedidos: {
+        anyOf: [
+          { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 50 },
+          { type: 'null' }
+        ]
+      },
       id_nota_saida: { type: ['integer', 'null'] },
-      limite: { type: 'integer', minimum: 1, maximum: 50 }
+      ids_notas_saida: {
+        anyOf: [
+          { type: 'array', items: { type: 'integer' }, minItems: 1, maxItems: 50 },
+          { type: 'null' }
+        ]
+      },
+      limite: { type: 'integer', minimum: 1, maximum: 500 }
     },
-    required: ['operacao', 'marketplace_pedido', 'id_nota_saida', 'limite'],
+    required: [
+      'operacao', 'marketplace_pedido', 'marketplace_pedidos',
+      'id_nota_saida', 'ids_notas_saida', 'limite'
+    ],
     additionalProperties: false
   }
 };
@@ -37,23 +52,44 @@ function textoOpcional(valor) {
 function montarFiltros(argumentos) {
   const filtros = {};
   const pedido = textoOpcional(argumentos.marketplace_pedido);
-  if (pedido) filtros.marketplace_pedido = { operador: 'igual', valor: pedido };
-  if (argumentos.id_nota_saida != null) {
-    const id = Number(argumentos.id_nota_saida);
-    if (!Number.isInteger(id) || id <= 0) {
-      throw new Error('id_nota_saida deve ser um inteiro positivo.');
-    }
-    filtros.id_nota_saida = { operador: 'igual', valor: id };
+  const pedidos = [...new Set([
+    ...(pedido ? [pedido] : []),
+    ...(argumentos.marketplace_pedidos || []).map(textoOpcional).filter(Boolean)
+  ])];
+  if (pedidos.length === 1) {
+    filtros.marketplace_pedido = { operador: 'igual', valor: pedidos[0] };
+  } else if (pedidos.length > 1) {
+    filtros.marketplace_pedido = { operador: 'em', valores: pedidos };
+  }
+  const idNota = argumentos.id_nota_saida == null ? null : Number(argumentos.id_nota_saida);
+  if (idNota != null && (!Number.isInteger(idNota) || idNota <= 0)) {
+    throw new Error('id_nota_saida deve ser um inteiro positivo.');
+  }
+  const idsNotas = [...new Set([
+    ...(idNota == null ? [] : [idNota]),
+    ...(argumentos.ids_notas_saida || []).map(Number)
+  ])];
+  if (idsNotas.some((id) => !Number.isInteger(id) || id <= 0)) {
+    throw new Error('ids_notas_saida deve conter apenas inteiros positivos.');
+  }
+  if (idsNotas.length === 1) {
+    filtros.id_nota_saida = { operador: 'igual', valor: idsNotas[0] };
+  } else if (idsNotas.length > 1) {
+    filtros.id_nota_saida = { operador: 'em', valores: idsNotas };
   }
   return filtros;
 }
 
 async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
   validarObjeto(argumentos);
-  if (!['resumir', 'listar', 'detalhar_pedido'].includes(argumentos.operacao)) {
+  if (!['resumir', 'listar', 'listar_itens', 'detalhar_pedido'].includes(argumentos.operacao)) {
     throw new Error(`Operacao de bloqueios invalida: ${argumentos.operacao}.`);
   }
-  const limite = validarLimite(argumentos.limite, 10, 50);
+  const limite = validarLimite(
+    argumentos.limite,
+    argumentos.operacao === 'listar_itens' ? 100 : 10,
+    argumentos.operacao === 'listar_itens' ? 500 : 50
+  );
   const filtros = montarFiltros(argumentos);
   const leitorGold = (dependencias.criarLeitorGold || criarLeitorGold)();
 
@@ -106,6 +142,65 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
         id_bloqueio: 58,
         quantidade_retornada: resultado.dados.length,
         dados: resultado.dados,
+        atualizado_em: resultado.ultimaConstrucao
+      };
+    }
+
+    if (argumentos.operacao === 'listar_itens') {
+      const resultado = await leitorGold.consultar('bloqueio_sem_estoque_item', {
+        filtros,
+        colunas: [
+          'id_nota_saida', 'marketplace_pedido', 'id_produto',
+          'produto_identificado', 'sku', 'ean', 'descricao_produto',
+          'quantidade_pedida', 'canal_venda', 'dt_limite_expedicao',
+          'dthr_bloqueio', 'descricao_bloqueio', 'bloqueio_ativo',
+          'meli_incluido_por_limite_hoje'
+        ],
+        ordenacao: { campo: 'dthr_bloqueio', direcao: 'desc' },
+        limite
+      });
+      const dados = resultado.dados.map((linha) => ({
+        ...linha,
+        produto_inferido: false
+      }));
+      const semProduto = dados.filter((linha) => Number(linha.id_produto || 0) === 0);
+      const candidatosProdutoInferidos = [];
+      if (semProduto.length) {
+        const leitorSilver = (dependencias.criarLeitorSilver || criarLeitorSilver)();
+        try {
+          for (const linhaBloqueio of semProduto) {
+            const itens = await leitorSilver.consultar('fato_venda_item', {
+              filtros: {
+                id_nota_saida: { operador: 'igual', valor: linhaBloqueio.id_nota_saida }
+              },
+              colunas: [
+                'id_nota_saida', 'item', 'id_produto', 'sku', 'ean',
+                'descricao_produto', 'quantidade'
+              ],
+              ordenacao: { campo: 'item', direcao: 'asc' },
+              limite: 500
+            });
+            candidatosProdutoInferidos.push(...itens.dados.map((item) => ({
+              ...item,
+              marketplace_pedido: linhaBloqueio.marketplace_pedido,
+              quantidade_pedida: item.quantidade,
+              canal_venda: linhaBloqueio.canal_venda,
+              produto_inferido: true,
+              origem_inferencia: 'itens_da_nota',
+              aviso: 'Candidato inferido; o bloqueio nao informou diretamente o produto.'
+            })));
+          }
+        } finally {
+          await leitorSilver.fechar();
+        }
+      }
+      return {
+        operacao: 'listar_itens',
+        id_bloqueio: 58,
+        quantidade_retornada: dados.length,
+        dados,
+        candidatos_produto_inferidos: candidatosProdutoInferidos,
+        possui_inferencia: candidatosProdutoInferidos.length > 0,
         atualizado_em: resultado.ultimaConstrucao
       };
     }
