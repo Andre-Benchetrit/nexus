@@ -338,21 +338,21 @@ function criarResultadoPergunta(tarefa) {
 async function processarMensagemInterativa(texto, opcoes = {}) {
   const { memoria, onEvento, dataReferencia } = opcoes;
   if (!memoria || resolverModoInteracao(opcoes) === 'legacy') return { acao: 'continuar', texto };
-  const expiradas = memoria.expirarTarefas?.() || [];
+  const expiradas = await memoria.expirarTarefas?.() || [];
   expiradas.forEach((tarefa) => emitirEvento(onEvento, 'tarefa_expirada', tarefa));
-  let ativa = memoria.obterTarefaAtiva?.();
+  let ativa = await memoria.obterTarefaAtiva?.();
   const normalizado = normalizarTexto(texto);
 
   if (ativa && /^(?:por favor )?(?:cancele|cancelar|desisto|desistir|esqueca)(?: esta| essa| a)?(?: tarefa| sql| consulta)?[.! ]*$/.test(normalizado)) {
-    ativa = memoria.atualizarEstadoTarefa(ativa.id, 'cancelada');
+    ativa = await memoria.atualizarEstadoTarefa(ativa.id, 'cancelada');
     emitirEvento(onEvento, 'tarefa_cancelada', ativa);
     return { acao: 'responder', status: 'cancelado', tarefa: ativa, texto: 'Tarefa cancelada.' };
   }
 
   if (ativa?.tipo === 'esclarecimento_rota') {
     ativa.slots.resposta = texto;
-    memoria.salvarTarefa({ ...ativa, estado: 'concluida', camposPendentes: [], perguntas: [] }, { ativar: false });
-    memoria.atualizarEstadoTarefa(ativa.id, 'concluida');
+    await memoria.salvarTarefa({ ...ativa, estado: 'concluida', camposPendentes: [], perguntas: [] }, { ativar: false });
+    await memoria.atualizarEstadoTarefa(ativa.id, 'concluida');
     emitirEvento(onEvento, 'tarefa_concluida', ativa);
     return { acao: 'continuar', texto: `${ativa.contexto.perguntaOriginal} ${texto}`, tarefa: ativa };
   }
@@ -361,8 +361,8 @@ async function processarMensagemInterativa(texto, opcoes = {}) {
     const numero = Number(String(texto).match(/\b(\d+)\b/)?.[1]);
     const candidato = ativa.contexto.candidatos?.[numero - 1];
     if (!candidato) return criarResultadoPergunta(ativa);
-    memoria.atualizarEstadoTarefa(ativa.id, 'concluida');
-    const retomada = memoria.retomarTarefa(candidato.id);
+    await memoria.atualizarEstadoTarefa(ativa.id, 'concluida');
+    const retomada = await memoria.retomarTarefa(candidato.id);
     emitirEvento(onEvento, 'tarefa_retomada', retomada);
     if (retomada.camposPendentes.length) return criarResultadoPergunta(retomada);
     return { acao: 'executar', status: 'pronto', tarefa: retomada, ferramenta: 'construir_sql', argumentos: montarQuerySpec(retomada.slots) };
@@ -370,11 +370,11 @@ async function processarMensagemInterativa(texto, opcoes = {}) {
 
   if (ativa?.tipo === 'construir_sql') {
     if (detectarPedidoSql(texto) && !pareceRespostaSql(texto, ativa, dataReferencia)) {
-      memoria.atualizarEstadoTarefa(ativa.id, 'pausada');
+      await memoria.atualizarEstadoTarefa(ativa.id, 'pausada');
       emitirEvento(onEvento, 'tarefa_pausada', ativa);
       ativa = null;
     } else if (pareceNovoAssunto(texto) && !pareceRespostaSql(texto, ativa, dataReferencia)) {
-      memoria.atualizarEstadoTarefa(ativa.id, 'pausada');
+      await memoria.atualizarEstadoTarefa(ativa.id, 'pausada');
       emitirEvento(onEvento, 'tarefa_pausada', ativa);
       return { acao: 'continuar', texto };
     } else {
@@ -382,7 +382,7 @@ async function processarMensagemInterativa(texto, opcoes = {}) {
       ativa.camposPendentes = camposPendentesSql(ativa.slots);
       ativa.perguntas = perguntasSql(ativa.camposPendentes);
       ativa.estado = ativa.camposPendentes.length ? 'aguardando_usuario' : 'ativa';
-      memoria.salvarTarefa(ativa);
+      await memoria.salvarTarefa(ativa);
       if (ativa.camposPendentes.length) {
         emitirEvento(onEvento, 'esclarecimento_solicitado', ativa, { perguntas: ativa.perguntas.length });
         return criarResultadoPergunta(ativa);
@@ -393,7 +393,7 @@ async function processarMensagemInterativa(texto, opcoes = {}) {
   }
 
   if (/\b(retom|continu).{0,20}(sql|consulta|tarefa)\b/.test(normalizado)) {
-    const pausadas = (memoria.listarTarefas?.() || [])
+    const pausadas = (await memoria.listarTarefas?.() || [])
       .filter((item) => item.estado === 'pausada' && item.tipo === 'construir_sql')
       .sort((a, b) => b.atualizadaEm.localeCompare(a.atualizadaEm));
     if (!pausadas.length) return { acao: 'responder', texto: 'Não há uma tarefa de SQL pausada nesta sessão.' };
@@ -414,30 +414,30 @@ async function processarMensagemInterativa(texto, opcoes = {}) {
         criadaEm: agora.toISOString(), atualizadaEm: agora.toISOString(),
         expiraEm: new Date(agora.getTime() + 24 * 60 * 60 * 1000).toISOString()
       };
-      memoria.salvarTarefa(selecao);
+      await memoria.salvarTarefa(selecao);
       emitirEvento(onEvento, 'esclarecimento_solicitado', selecao, { perguntas: 1 });
       return criarResultadoPergunta(selecao);
     }
-    const retomada = memoria.retomarTarefa(pausadas[0].id);
+    const retomada = await memoria.retomarTarefa(pausadas[0].id);
     emitirEvento(onEvento, 'tarefa_retomada', retomada);
     if (retomada.camposPendentes.length) return criarResultadoPergunta(retomada);
     return { acao: 'executar', status: 'pronto', tarefa: retomada, ferramenta: 'construir_sql', argumentos: montarQuerySpec(retomada.slots) };
   }
 
   if (/\b(revalid|validar novamente|tente validar)\b/.test(normalizado)) {
-    const concluida = (memoria.listarTarefas?.({ incluirFinalizadas: true }) || [])
+    const concluida = (await memoria.listarTarefas?.({ incluirFinalizadas: true }) || [])
       .filter((item) => item.tipo === 'construir_sql' && item.estado === 'concluida')
       .sort((a, b) => b.atualizadaEm.localeCompare(a.atualizadaEm))[0];
     if (concluida) return { acao: 'executar', status: 'pronto', tarefa: concluida, ferramenta: 'construir_sql', argumentos: montarQuerySpec(concluida.slots) };
   }
 
   if (pareceAlteracaoSqlAnterior(texto)) {
-    const anterior = (memoria.listarTarefas?.({ incluirFinalizadas: true }) || [])
+    const anterior = (await memoria.listarTarefas?.({ incluirFinalizadas: true }) || [])
       .filter((item) => item.tipo === 'construir_sql' && item.estado === 'concluida')
       .sort((a, b) => b.atualizadaEm.localeCompare(a.atualizadaEm))[0];
     if (anterior) {
       const tarefa = criarTarefaSqlDerivada(anterior, texto, dataReferencia);
-      memoria.salvarTarefa(tarefa);
+      await memoria.salvarTarefa(tarefa);
       emitirEvento(onEvento, 'tarefa_criada', tarefa, { tarefaOrigem: anterior.id });
       if (tarefa.camposPendentes.length) {
         emitirEvento(onEvento, 'esclarecimento_solicitado', tarefa, { perguntas: tarefa.perguntas.length });
@@ -453,7 +453,7 @@ async function processarMensagemInterativa(texto, opcoes = {}) {
       return { acao: 'responder', status: 'nao_suportado', texto: 'Essa consulta depende de uma fonte externa ao PostgreSQL sysemp e ainda não possui receita SQL aprovada.' };
     }
     const tarefa = criarTarefaSql(texto, dataReferencia);
-    memoria.salvarTarefa(tarefa);
+    await memoria.salvarTarefa(tarefa);
     emitirEvento(onEvento, 'tarefa_criada', tarefa);
     if (tarefa.camposPendentes.length) {
       emitirEvento(onEvento, 'esclarecimento_solicitado', tarefa, { perguntas: tarefa.perguntas.length });
@@ -476,7 +476,13 @@ function registrarEsclarecimentoRota(memoria, { perguntaOriginal, perguntaEsclar
     criadaEm: agora.toISOString(), atualizadaEm: agora.toISOString(),
     expiraEm: new Date(agora.getTime() + 24 * 60 * 60 * 1000).toISOString()
   };
-  memoria.salvarTarefa(tarefa);
+  const persistencia = memoria.salvarTarefa(tarefa);
+  if (persistencia && typeof persistencia.then === 'function') {
+    return persistencia.then(() => {
+      emitirEvento(onEvento, 'tarefa_criada', tarefa);
+      return tarefa;
+    });
+  }
   emitirEvento(onEvento, 'tarefa_criada', tarefa);
   return tarefa;
 }

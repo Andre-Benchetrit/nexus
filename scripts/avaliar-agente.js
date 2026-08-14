@@ -71,7 +71,7 @@ async function executarCaso(caso, opcoes) {
 
   let memoria = false;
   if (caso.contextoAnterior) {
-    memoria = criarMemoria({ sessao: `avaliacao-${process.pid}-${caso.id}` });
+    memoria = criarMemoria({ sessao: `avaliacao-${process.pid}-${caso.id}`, backend: 'file' });
     memoria.limparCurta();
     memoria.registrarInteracao({
       ...caso.contextoAnterior,

@@ -2,7 +2,10 @@
 
 ## Memoria curta
 
-O Nexus guarda localmente as dez ultimas interacoes estruturadas de cada sessao.
+O Nexus guarda todo o historico factual estruturado no PostgreSQL operacional e
+usa as dez ultimas interacoes de cada sessao como contexto padrao. O backend de
+arquivo permanece disponivel com `NEXUS_MEMORY_BACKEND=file` para testes e
+desenvolvimento.
 Cada item contem pergunta original e autonoma, rota, plano, tools executadas,
 argumentos seguros, entidades, identificadores, periodo, filtros, campos,
 cobertura e resumo factual. Sessoes v1 sao lidas normalmente e migradas de forma
@@ -13,7 +16,9 @@ permite resolver continuacoes como `esses pedidos novamente com EAN` sem perder
 a lista original.
 
 Numeros anteriores nunca substituem uma nova consulta: dados mutaveis devem ser
-confirmados pelas tools. Os arquivos ficam em `memoria/.runtime/`, fora do Git.
+confirmados pelas tools. Os arquivos legados ficam em `memoria/.runtime/`, fora
+do Git, e podem ser importados de forma idempotente com
+`npm run nexus:memory:import`.
 Em comparacoes, `mesma cobertura` reaproveita o dia da ultima data completa, mas
 faz uma nova consulta para o periodo solicitado.
 

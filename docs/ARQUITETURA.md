@@ -16,6 +16,13 @@ PostgreSQL + Microsoft 365
   -> provider LLM
 ```
 
+## Banco operacional
+
+Governança, conversas, memória estruturada, tarefas interativas e auditoria usam
+um PostgreSQL próprio no schema `nexus`. Esse banco não substitui o lake nem o
+`sysemp`: ele mantém o estado transacional da aplicação. A configuração e os
+comandos estão em [GOVERNANCA.md](GOVERNANCA.md).
+
 O modelo de linguagem nunca recebe SQL livre nem acesso direto aos arquivos. Ele
 escolhe uma tool por um contrato JSON; a tool valida campos e filtros antes de
 usar o leitor DuckDB.

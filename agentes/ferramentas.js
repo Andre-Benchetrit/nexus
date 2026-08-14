@@ -307,20 +307,30 @@ function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
     async executar(argumentos) {
       const inicio = Date.now();
       let sucesso = false;
+      let contextoExecucao = null;
       const argumentosEfetivos = opcoes.normalizarArgumentos
         ? opcoes.normalizarArgumentos(ferramenta.definicao.name, argumentos)
         : argumentos;
-      opcoes.antesDeExecutar?.(ferramenta.definicao.name, argumentosEfetivos);
-      onEvento?.(`Executando tool ${ferramenta.definicao.name}...`);
-      if (opcoes.mostrarArgumentos) {
-        onEvento?.(`Argumentos: ${JSON.stringify(argumentosEfetivos).slice(0, 1200)}`);
-      }
       try {
+        contextoExecucao = await opcoes.antesDeExecutar?.(
+          ferramenta.definicao.name, argumentosEfetivos
+        );
+        onEvento?.(`Executando tool ${ferramenta.definicao.name}...`);
+        if (opcoes.mostrarArgumentos) {
+          onEvento?.(`Argumentos: ${JSON.stringify(argumentosEfetivos).slice(0, 1200)}`);
+        }
         const resultado = await ferramenta.executar(argumentosEfetivos);
-        opcoes.onResultado?.(ferramenta.definicao.name, resultado, argumentosEfetivos);
+        await opcoes.onResultado?.(
+          ferramenta.definicao.name, resultado, argumentosEfetivos,
+          { contextoExecucao, duracaoMs: Date.now() - inicio }
+        );
         sucesso = true;
         return resultado;
       } catch (erro) {
+        await opcoes.onErro?.(
+          ferramenta.definicao.name, erro, argumentosEfetivos,
+          { contextoExecucao, duracaoMs: Date.now() - inicio }
+        );
         const resumo = JSON.stringify(argumentosEfetivos).slice(0, 700);
         onEvento?.(`Tool ${ferramenta.definicao.name} rejeitada: ${erro.message} Argumentos: ${resumo}`);
         throw erro;

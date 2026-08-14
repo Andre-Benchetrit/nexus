@@ -150,7 +150,7 @@ function normalizarTarefa(item) {
   };
 }
 
-function criarMemoria(opcoes = {}) {
+function criarFileMemoryStore(opcoes = {}) {
   const sessao = validarSessao(opcoes.sessao || 'padrao');
   const limiteCurta = Number(
     opcoes.limiteCurta || process.env.NEXUS_SESSION_HISTORY_LIMIT || LIMITE_CURTA_PADRAO
@@ -454,8 +454,28 @@ function criarMemoria(opcoes = {}) {
     removerConhecimento,
     retomarTarefa,
     salvarTarefa,
-    sessao
+    sessao,
+    backend: 'file'
   };
+}
+
+function resolverBackendMemoria(opcoes = {}) {
+  if (opcoes.caminhoCurta || opcoes.caminhoLonga) return 'file';
+  const backend = String(
+    opcoes.backend || process.env.NEXUS_MEMORY_BACKEND ||
+    (process.env.NEXUS_DATABASE_URL ? 'postgres' : 'file')
+  ).toLowerCase();
+  if (!['file', 'postgres'].includes(backend)) {
+    throw new Error(`Backend de memoria invalido: ${backend}.`);
+  }
+  return backend;
+}
+
+function criarMemoria(opcoes = {}) {
+  const backend = resolverBackendMemoria(opcoes);
+  if (backend === 'file') return criarFileMemoryStore(opcoes);
+  const { criarPostgresMemoryStore } = require('../nexus/memoria_postgres');
+  return criarPostgresMemoryStore(opcoes);
 }
 
 module.exports = {
@@ -463,11 +483,15 @@ module.exports = {
   LIMITE_CURTA_PADRAO,
   LIMITE_TAREFAS_PENDENTES,
   TTL_TAREFA_PADRAO_MS,
+  criarFileMemoryStore,
   criarMemoria,
   extrairReferenciasTemporais,
   pareceContinuacao,
   pontuarConhecimento,
   resumir,
   sanitizarEstrutura,
-  normalizarTarefa
+  normalizarInteracao,
+  normalizarTarefa,
+  resolverBackendMemoria,
+  validarSessao
 };

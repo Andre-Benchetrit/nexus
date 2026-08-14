@@ -53,6 +53,7 @@ const {
   resolverModoInteracao
 } = require('./interacoes');
 const { formatarRespostaSql } = require('../tools/construir_sql');
+const { criarServicoGovernanca } = require('../nexus/governanca');
 
 const MAX_RODADAS_NEGOCIO = 10;
 const MAX_RODADAS_GENERICAS = 10;
@@ -122,7 +123,20 @@ async function executarAgente(pergunta, dependencias = {}) {
     || (dependencias.provider && dependencias.memoria == null);
   const memoria = memoriaDesabilitada
     ? null
-    : dependencias.memoria || criarMemoria({ sessao: dependencias.sessaoMemoria });
+    : dependencias.memoria || criarMemoria({
+      sessao: dependencias.sessaoMemoria,
+      backend: dependencias.memoryBackend,
+      pool: dependencias.poolNexus,
+      principalSlug: dependencias.principalSlug
+    });
+  const governanca = dependencias.governanca || (memoria?.pool
+    ? criarServicoGovernanca({
+      pool: memoria.pool,
+      principalSlug: dependencias.principalSlug || memoria.principalSlug,
+      sessao: memoria.sessao,
+      modo: dependencias.authzMode
+    })
+    : null);
   const modoInteracao = resolverModoInteracao(dependencias);
   const interacao = await processarMensagemInterativa(perguntaNormalizada, {
     ...dependencias,
@@ -149,12 +163,27 @@ async function executarAgente(pergunta, dependencias = {}) {
     if (!ferramentaSql) throw new Error('A ferramenta construir_sql nao esta registrada.');
     let resultadoSql;
     try {
-      resultadoSql = await ferramentaSql.executar(interacao.argumentos);
+      const contextoGovernanca = await governanca?.iniciarTool(
+        'construir_sql', interacao.argumentos,
+        { provider: 'compilador_sql', modelo: null }
+      );
+      const inicioSql = Date.now();
+      try {
+        resultadoSql = await ferramentaSql.executar(interacao.argumentos);
+        await governanca?.concluirTool(contextoGovernanca, {
+          sucesso: true, duracaoMs: Date.now() - inicioSql
+        });
+      } catch (erro) {
+        await governanca?.concluirTool(contextoGovernanca, {
+          sucesso: false, duracaoMs: Date.now() - inicioSql, erro
+        });
+        throw erro;
+      }
     } catch (erro) {
-      if (interacao.tarefa?.id) memoria?.atualizarEstadoTarefa?.(interacao.tarefa.id, 'ativa');
+      if (interacao.tarefa?.id) await memoria?.atualizarEstadoTarefa?.(interacao.tarefa.id, 'ativa');
       throw erro;
     }
-    if (interacao.tarefa?.id) memoria?.atualizarEstadoTarefa?.(interacao.tarefa.id, 'concluida');
+    if (interacao.tarefa?.id) await memoria?.atualizarEstadoTarefa?.(interacao.tarefa.id, 'concluida');
     const resultadoEstruturado = typeof resultadoSql === 'string'
       ? JSON.parse(resultadoSql)
       : resultadoSql;
@@ -164,7 +193,7 @@ async function executarAgente(pergunta, dependencias = {}) {
       explain: Boolean(resultadoEstruturado.explain),
       fontes: resultadoEstruturado.fontes
     })}`);
-    memoria?.registrarInteracao({
+    await memoria?.registrarInteracao({
       pergunta: texto,
       perguntaAutonoma: interacao.tarefa?.contexto?.perguntaOriginal || texto,
       resposta: resultadoEstruturado.status === 'validado'
@@ -199,7 +228,7 @@ async function executarAgente(pergunta, dependencias = {}) {
     perguntaNormalizada = interacao.texto;
   }
   const contextoTemporal = extrairContextoTemporal(perguntaNormalizada, dataReferencia);
-  const historicoCurto = memoria?.listarCurta() || [];
+  const historicoCurto = await memoria?.listarCurta() || [];
   const ultimaPergunta = historicoCurto.at(-1)?.pergunta;
   const perguntaParaRoteamento = pareceContinuacao(perguntaNormalizada) && ultimaPergunta
     ? `${ultimaPergunta} ${perguntaNormalizada}`
@@ -229,7 +258,7 @@ async function executarAgente(pergunta, dependencias = {}) {
     try {
       decisaoSemantica = await interpretarRotaSemantica(
         perguntaNormalizada,
-        memoria?.montarContextoEstruturado?.() || [],
+        await memoria?.montarContextoEstruturado?.() || [],
         dependencias
       );
       decisaoSemantica = estabilizarDecisaoComHistorico(
@@ -299,6 +328,7 @@ async function executarAgente(pergunta, dependencias = {}) {
   } else {
     ferramentas = obterFerramentasDoPerfil(perfilInicial, dependencias);
   }
+  const provider = criarProviderConfigurado(dependencias);
   const resultadosTools = [];
   const assinaturasExecutadas = new Set();
   const usosTecnicos = { descoberta: 0, final: 0 };
@@ -313,12 +343,12 @@ async function executarAgente(pergunta, dependencias = {}) {
     const resposta = decisaoRota.perguntaEsclarecimento ||
       'Pode especificar qual informacao de negocio voce deseja consultar?';
     const tarefaInteracao = modoInteracao === 'v1'
-      ? registrarEsclarecimentoRota(memoria, {
+      ? await registrarEsclarecimentoRota(memoria, {
           perguntaOriginal: perguntaNormalizada,
           perguntaEsclarecimento: resposta
         }, dependencias.onEvento)
       : null;
-    memoria?.registrarInteracao({
+    await memoria?.registrarInteracao({
       pergunta: perguntaNormalizada,
       perguntaAutonoma: decisaoRota.perguntaAutonoma,
       resposta,
@@ -419,21 +449,27 @@ async function executarAgente(pergunta, dependencias = {}) {
         argumentos,
         { temporal: contextoTemporal }
       ),
-      antesDeExecutar(nome, argumentos) {
+      async antesDeExecutar(nome, argumentos) {
         const assinatura = `${nome}:${JSON.stringify(assinaturaEstavel(argumentos))}`;
         if (assinaturasExecutadas.has(assinatura)) {
           throw new Error(`Chamada repetida bloqueada para ${nome}.`);
         }
         assinaturasExecutadas.add(assinatura);
-        if (!ferramentaTecnica(nome)) return;
+        if (ferramentaTecnica(nome)) {
         const descoberta = nome.startsWith('consultar_') &&
           /^(listar_|descrever_)/.test(argumentos.operacao || '');
         const tipo = descoberta ? 'descoberta' : 'final';
         if (usosTecnicos[tipo] >= 1) {
           throw new Error(`Limite de uma chamada tecnica de ${tipo} por pergunta excedido.`);
         }
+        }
+        return governanca?.iniciarTool(nome, argumentos, {
+          provider: provider.nome || dependencias.providerNome || process.env.LLM_PROVIDER || null,
+          modelo: provider.modelo || dependencias.modelo || null,
+          departamentoSlug: dependencias.departamentoSlug || null
+        });
       },
-      onResultado(nome, resultado, argumentos) {
+      async onResultado(nome, resultado, argumentos, execucao) {
         const normalizado = normalizarResultadoTool(resultado);
         resultadosTools.push({
           nome,
@@ -446,6 +482,14 @@ async function executarAgente(pergunta, dependencias = {}) {
             /^(listar_|descrever_)/.test(argumentos.operacao || '');
           usosTecnicos[descoberta ? 'descoberta' : 'final'] += 1;
         }
+        await governanca?.concluirTool(execucao?.contextoExecucao, {
+          sucesso: true, duracaoMs: execucao?.duracaoMs
+        });
+      },
+      async onErro(_nome, erro, _argumentos, execucao) {
+        await governanca?.concluirTool(execucao?.contextoExecucao, {
+          sucesso: false, duracaoMs: execucao?.duracaoMs, erro
+        });
       }
     }
   );
@@ -489,7 +533,7 @@ async function executarAgente(pergunta, dependencias = {}) {
   const instrucoesDominiosSecundarios = (decisaoRota?.dominiosSecundarios || [])
     .map(obterInstrucaoPerfil)
     .filter(Boolean);
-  const contextoMemoria = memoria?.montarContexto(perguntaParaRoteamento);
+  const contextoMemoria = await memoria?.montarContexto(perguntaParaRoteamento);
   const ultimaDataCompleta = [...historicoCurto]
     .reverse()
     .find((item) => item.referencias?.ultimaDataCompleta)
@@ -522,7 +566,6 @@ async function executarAgente(pergunta, dependencias = {}) {
     contextoCobertura
   ]
     .filter(Boolean);
-  const provider = criarProviderConfigurado(dependencias);
   const executarProvider = (itens, instrucoesExtras = []) => provider.executar({
     pergunta: usarDecisaoSemantica
       ? decisaoRota.perguntaAutonoma || perguntaNormalizada
@@ -601,7 +644,7 @@ async function executarAgente(pergunta, dependencias = {}) {
   for (const [chave, valores] of Object.entries(entidadesMemoria)) {
     entidadesMemoria[chave] = [...new Set(valores)];
   }
-  memoria?.registrarInteracao({
+  await memoria?.registrarInteracao({
     pergunta: perguntaNormalizada,
     perguntaAutonoma: decisaoRota?.perguntaAutonoma || perguntaNormalizada,
     resposta: resultadoFormatado.texto,
@@ -643,6 +686,10 @@ function lerArgumentos(argumentos) {
     ['--router-provider', 'routerProviderNome'],
     ['--router-model', 'routerModelo'],
     ['--interaction-mode', 'interactionMode'],
+    ['--memory-backend', 'memoryBackend'],
+    ['--authz-mode', 'authzMode'],
+    ['--principal', 'principalSlug'],
+    ['--setor', 'departamentoSlug'],
     ['--max-rodadas', 'maxRodadas']
   ]);
 

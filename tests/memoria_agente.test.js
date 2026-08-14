@@ -6,10 +6,16 @@ const path = require('node:path');
 
 const { executarAgente } = require('../agentes/consultor_nexus');
 const {
+  criarFileMemoryStore,
   criarMemoria,
   extrairReferenciasTemporais,
   pareceContinuacao
 } = require('../agentes/memoria');
+
+test('caminhos explicitos preservam o backend de arquivo', () => {
+  const memoria = criarFileMemoryStore({ sessao: 'teste-backend' });
+  assert.equal(memoria.backend, 'file');
+});
 
 function criarMemoriaTemporaria(t) {
   const diretorio = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-memoria-'));

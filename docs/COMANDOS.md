@@ -1,5 +1,20 @@
 # Comandos do Nexus
 
+## Banco operacional do Nexus
+
+```powershell
+npm run nexus:db:health
+npm run nexus:db:migrate
+npm run nexus:db:status
+npm run nexus:audit:status
+npm run nexus:memory:import
+npm run nexus:memory:verify
+npm run nexus:memory:export-knowledge
+```
+
+Consulte [GOVERNANCA.md](GOVERNANCA.md) para configuração, autorização e
+política de auditoria.
+
 Esta e a referencia central dos comandos disponiveis no projeto. Execute-os na
 raiz do repositorio `nexus`.
 
