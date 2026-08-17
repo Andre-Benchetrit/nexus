@@ -250,24 +250,24 @@ async function criarFatoEstoqueAtualSilver() {
   try {
     await runDuckDB(con, `COPY (
       SELECT * FROM (VALUES
-        (1, 1, 'Produto em ruptura', 'SKU-1', 'EAN-1', 10, 'Grupo', 20, 'Subgrupo',
+        (1, 1, 'Produto em ruptura', 'SKU-1', 'EAN-1', 0, 10, 'Grupo', 20, 'Subgrupo',
          30, 'Marca', 40, 'Categoria', 100::DECIMAL(18,4), 0::DECIMAL(18,2),
          0::DECIMAL(18,4), 0::DECIMAL(18,4), true, true, true,
          TIMESTAMP '2026-07-19 10:00:00'),
-        (2, 2, 'Produto alto', 'SKU-2', 'EAN-2', 10, 'Grupo', 20, 'Subgrupo',
+        (2, 2, 'Produto alto', 'SKU-2', 'EAN-2', 6, 10, 'Grupo', 20, 'Subgrupo',
          30, 'Marca', 40, 'Categoria', 100::DECIMAL(18,4), 1000::DECIMAL(18,2),
          10::DECIMAL(18,4), 0::DECIMAL(18,4), true, true, true,
          TIMESTAMP '2026-07-19 10:00:00'),
-        (3, 3, 'Produto saudável', 'SKU-3', 'EAN-3', 10, 'Grupo', 20, 'Subgrupo',
+        (3, 3, 'Produto saudável', 'SKU-3', 'EAN-3', 0, 10, 'Grupo', 20, 'Subgrupo',
          30, 'Marca', 40, 'Categoria', 100::DECIMAL(18,4), 10000::DECIMAL(18,2),
          100::DECIMAL(18,4), 0::DECIMAL(18,4), true, true, true,
          TIMESTAMP '2026-07-19 10:00:00'),
-        (4, 4, 'Produto sem giro', 'SKU-4', 'EAN-4', 10, 'Grupo', 20, 'Subgrupo',
+        (4, 4, 'Produto sem giro', 'SKU-4', 'EAN-4', 10, 10, 'Grupo', 20, 'Subgrupo',
          30, 'Marca', 40, 'Categoria', 100::DECIMAL(18,4), 0::DECIMAL(18,2),
          0::DECIMAL(18,4), 0::DECIMAL(18,4), true, true, true,
          TIMESTAMP '2026-07-19 10:00:00')
       ) AS dados(
-        id_sequencia, id_produto, descricao_produto, sku, ean,
+        id_sequencia, id_produto, descricao_produto, sku, ean, composicao_estoque,
         id_grupo, grupo, id_subgrupo, subgrupo, id_marca, marca,
         id_categoria, categoria, custo_produto_atual, valor_estoque_custo,
         estoque_disponivel, quantidade_reservada,

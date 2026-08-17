@@ -29,6 +29,10 @@ async function main() {
           (SELECT count(*)::int FROM nexus.authorization_decisions) AS decisoes,
           (SELECT count(*)::int FROM nexus.tool_executions) AS execucoes,
           (SELECT count(*)::int FROM nexus.tool_executions WHERE status='iniciada') AS pendentes,
+          (SELECT count(*)::int FROM nexus.ai_turns) AS turnos_ia,
+          (SELECT count(*)::int FROM nexus.llm_calls) AS chamadas_llm,
+          (SELECT count(*)::int FROM nexus.llm_calls WHERE status='iniciada') AS chamadas_llm_pendentes,
+          (SELECT count(*)::int FROM nexus.usage_line_items) AS itens_consumo,
           (SELECT count(*)::int FROM nexus.audit_events) AS eventos
       `);
       const decisoes = (await pool.query(`
@@ -40,10 +44,15 @@ async function main() {
           (SELECT count(*)::int FROM nexus.tool_executions
            WHERE argument_keys::text ~* '(password|senha|secret|token|api.?key|sql)') AS chaves_sensiveis,
           (SELECT count(*)::int FROM nexus.audit_events
-           WHERE metadados::text ~* 'postgres(ql)?://') AS conexoes_expostas
+           WHERE metadados::text ~* 'postgres(ql)?://') AS conexoes_expostas,
+          (SELECT count(*)::int FROM nexus.llm_calls
+           WHERE usage_provider::text ~* '(password|senha|secret|api.?key|postgres(ql)?://)') AS usage_sensivel,
+          (SELECT count(*)::int FROM nexus.llm_calls
+           WHERE composicao_input_estimada::text ~* '(prompt|mensagem|conteudo|documento|sql)') AS composicao_sensivel
       `)).rows[0];
       console.log(JSON.stringify({
         status: exposicoes.chaves_sensiveis === 0 && exposicoes.conexoes_expostas === 0
+          && exposicoes.usage_sensivel === 0 && exposicoes.composicao_sensivel === 0
           ? 'ok' : 'revisar',
         ...resultado.rows[0], decisoes, exposicoes
       }));

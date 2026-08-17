@@ -77,14 +77,15 @@ test.before(async () => {
   raizLake = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-silver-'));
   await criarBronze('produto', `
     SELECT * FROM (VALUES
-      (1, ' Geladeira A ', 'SKU-1', '7891', 'FAB-1', 10, 20, 30, 40,
+      (1, ' Geladeira A ', 'SKU-1', '7891', 'FAB-1', 0, 10, 20, 30, 40,
        4::DECIMAL(15,4), 100, 200, 2,
        5.5::DECIMAL(15,4), 'F', 'T', 'T', DATE '2026-01-01', DATE '2026-07-16'),
-      (2, 'Produto inativo', 'SKU-2', NULL, NULL, 10, 20, 31, 40,
+      (2, 'Produto inativo', 'SKU-2', NULL, NULL, 10, 10, 20, 31, 40,
        3::DECIMAL(15,4), 101, 201, 3,
        0::DECIMAL(15,4), 'T', 'T', 'T', DATE '2026-01-02', DATE '2026-07-16')
     ) AS dados(
       id_produto, descricao, codigo_auxiliar, cod_barra, cod_fabrica,
+      composicao_estoque,
       id_grupo, id_subgrupo, id_marca, id_categoria,
       custo, id_fornecedor, id_comprador, prazo_separacao, estoque,
       inativo, disponivel, envia_site, dt_cadastro, dt_alteracao
@@ -167,6 +168,7 @@ test('limpa textos e converte flags T/F em regras de negocio', async () => {
       'id_produto',
       'descricao_produto',
       'grupo',
+      'composicao_estoque',
       'produto_ativo',
       'catalogo_site_ativo'
     ],
@@ -177,6 +179,7 @@ test('limpa textos e converte flags T/F em regras de negocio', async () => {
       id_produto: 1,
       descricao_produto: 'Geladeira A',
       grupo: 'ELETRODOMESTICO',
+      composicao_estoque: 0,
       produto_ativo: true,
       catalogo_site_ativo: true
     },
@@ -184,6 +187,7 @@ test('limpa textos e converte flags T/F em regras de negocio', async () => {
       id_produto: 2,
       descricao_produto: 'Produto inativo',
       grupo: 'ELETRODOMESTICO',
+      composicao_estoque: 10,
       produto_ativo: false,
       catalogo_site_ativo: false
     }
@@ -193,7 +197,7 @@ test('limpa textos e converte flags T/F em regras de negocio', async () => {
 test('publica manifesto somente depois das validacoes', async () => {
   const manifesto = JSON.parse(await fs.readFile(resultadoConstrucao.caminhos.manifesto, 'utf8'));
   assert.equal(manifesto.status, 'sucesso');
-  assert.equal(manifesto.versaoContrato, 1);
+  assert.equal(manifesto.versaoContrato, 2);
   assert.equal(manifesto.totalLinhas, 2);
   assert.equal(manifesto.fontesBronze.length, 1);
   assert.equal(manifesto.fontesSilver.length, 4);

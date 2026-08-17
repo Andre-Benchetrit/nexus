@@ -51,6 +51,10 @@ const {
   executarAnalisarRupturas
 } = require('../tools/analisar_rupturas');
 const {
+  definicaoAnalisarGiroEstoque,
+  executarAnalisarGiroEstoque
+} = require('../tools/analisar_giro_estoque');
+const {
   definicaoAnalisarReposicoes,
   executarAnalisarReposicoes
 } = require('../tools/analisar_reposicoes');
@@ -87,6 +91,7 @@ const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_indicadores',
   'analisar_influencias',
   'analisar_rupturas',
+  'analisar_giro_estoque',
   'analisar_reposicoes',
   'analisar_desempenho',
   'analisar_frete',
@@ -103,6 +108,7 @@ const PERFIL_POR_FERRAMENTA = Object.freeze({
   analisar_indicadores: 'indicadores',
   analisar_influencias: 'influencias',
   analisar_rupturas: 'estoque',
+  analisar_giro_estoque: 'estoque',
   analisar_reposicoes: 'reposicoes',
   analisar_desempenho: 'desempenho',
   analisar_frete: 'frete',
@@ -126,7 +132,7 @@ const PERFIS_TOOLS = Object.freeze({
   produto: ['resolver_produto'],
   indicadores: ['analisar_indicadores'],
   influencias: ['analisar_influencias'],
-  estoque: ['resolver_produto', 'analisar_rupturas'],
+  estoque: ['resolver_produto', 'analisar_rupturas', 'analisar_giro_estoque'],
   estoque_reposicoes: ['resolver_produto', 'analisar_rupturas', 'analisar_reposicoes'],
   reposicoes: ['resolver_produto', 'analisar_reposicoes'],
   bloqueios_estoque: [
@@ -202,6 +208,11 @@ function criarRegistroFerramentas(dependencias = {}) {
       definicao: definicaoAnalisarRupturas,
       terminal: true,
       executar: dependencias.executarAnalisarRupturasTool || executarAnalisarRupturas
+    }],
+    ['analisar_giro_estoque', {
+      definicao: definicaoAnalisarGiroEstoque,
+      terminal: true,
+      executar: dependencias.executarAnalisarGiroEstoqueTool || executarAnalisarGiroEstoque
     }],
     ['analisar_reposicoes', {
       definicao: definicaoAnalisarReposicoes,

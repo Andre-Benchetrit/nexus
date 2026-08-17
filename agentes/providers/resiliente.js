@@ -85,7 +85,14 @@ function criarProviderResiliente(primario, fallback, opcoes = {}) {
         contexto.onEvento?.(
           `${primario.nome}: indisponível; acionando fallback ${fallback.nome}.`
         );
-        const resultado = await fallback.executar(contexto);
+        const contextoPreparado = contexto.prepararFallback
+          ? await contexto.prepararFallback()
+          : contexto;
+        const contextoFallback = {
+          ...contextoPreparado,
+          fallbackFromCallId: contexto.telemetria?.ultimoCallId || null
+        };
+        const resultado = await fallback.executar(contextoFallback);
         return {
           ...resultado,
           fallbackDe: primario.nome,

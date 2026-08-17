@@ -201,8 +201,8 @@ const METRICAS_SQL = Object.freeze({
 const REGRAS_SQL = Object.freeze({
   produto_ativo_vendavel: {
     entidadesNecessarias: ['produto'],
-    expressao: `(p."composicao_estoque" IN (0, 6) AND p."inativo" = 'F')`,
-    descricao: 'Somente produtos ativos com composição de estoque 0 ou 6.'
+    expressao: `(p."composicao_estoque" IN (0, 6, 50) AND p."inativo" = 'F')`,
+    descricao: 'Somente produtos ativos com composição de estoque 0, 6 ou 50, incluindo kits.'
   },
   sku_sem_sufixo_variacao: {
     entidadesNecessarias: ['produto'],

@@ -34,6 +34,11 @@
     "nexus:memory:import": "node scripts/nexus-memory.js import",
     "nexus:memory:verify": "node scripts/nexus-memory.js verify",
     "nexus:memory:export-knowledge": "node scripts/nexus-memory.js export-knowledge",
+    "nexus:pricing:import": "node scripts/nexus-pricing.js import",
+    "nexus:pricing:status": "node scripts/nexus-pricing.js status",
+    "nexus:usage:report": "node scripts/nexus-usage.js report",
+    "nexus:usage:trace": "node scripts/nexus-usage.js trace",
+    "nexus:ai:smoke": "node scripts/nexus-ai-smoke.js",
     "avaliar:agente": "node scripts/avaliar-agente.js",
     "test": "node --test"
   },
@@ -41,6 +46,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
     "@google/genai": "^2.11.0",
     "dotenv": "^17.4.2",
     "duckdb": "^1.4.4",

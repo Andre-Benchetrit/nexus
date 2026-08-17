@@ -31,6 +31,10 @@ function classificarPorRegras(pergunta) {
     /por que.{0,25}(?:pedido|nota).{0,25}(?:sem estoque|falta de estoque|bloquead)/.test(texto);
   if (bloqueiosEstoque) return 'bloqueios_estoque';
 
+  const giroEstoque = /(?:menor|baixo|pouco|sem).{0,15}giro|encalhad/.test(texto) &&
+    /produto|sku|estoque|venda/.test(texto);
+  if (giroEstoque) return 'estoque';
+
   const estoque = /ruptur|\bcobertura\b|risco.{0,20}estoque|sem estoque|(?:podem?|vai|irao).{0,15}(?:acabar|faltar)|estoque.{0,30}(acabar|dura|dias|critico|faltar|disponivel|atual|produto|sku)|(?:quanto|quantas?|qual).{0,25}\bestoque\b/.test(texto);
   const reposicoes = /pedidos? de compra|compras? agendadas?|\bagendament|nfs? de entrada|reposi[cç][aã]o|(?:produto|mercadoria).{0,30}(?:chegar|recebid)|(?:chegar|recebid).{0,30}(?:produto|mercadoria|fornecedor)/.test(texto);
   if (estoque && reposicoes) return 'estoque_reposicoes';

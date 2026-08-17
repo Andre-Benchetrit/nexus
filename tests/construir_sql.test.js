@@ -98,12 +98,12 @@ test('compila listagem de produtos ativos com projeção e regras de SKU aprovad
   }));
   assert.match(resultado.sql, /'''' \|\| p\."cod_barra" AS "codigo_barra"/);
   assert.match(resultado.sql, /JOIN "sysemp"\."tipo_produto" tprod/);
-  assert.match(resultado.sql, /p\."composicao_estoque" IN \(0, 6\)/);
+  assert.match(resultado.sql, /p\."composicao_estoque" IN \(0, 6, 50\)/);
   assert.match(resultado.sql, /p\."inativo" = 'F'/);
   assert.match(resultado.sql, /p\."codigo_auxiliar" !~ '\(_\[0-9\]\+\|_OUT\)\$'/);
   assert.match(resultado.sql, /round\(p\."volumes"\) AS "volume"/);
   assert.deepEqual(resultado.regras_aplicadas, [
-    'Somente produtos ativos com composição de estoque 0 ou 6.',
+    'Somente produtos ativos com composição de estoque 0, 6 ou 50, incluindo kits.',
     'Exclui SKUs terminados em _<número> ou _OUT.'
   ]);
 });

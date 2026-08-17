@@ -16,6 +16,11 @@ PostgreSQL + Microsoft 365
   -> provider LLM
 ```
 
+Quando `NEXUS_ASSISTANT_MODE=generalist`, existe uma camada adicional acima do
+consultor: ela responde conversas gerais ou chama `consultar_nexus`. O consultor,
+o roteador e as tools abaixo dessa capability nao mudam de responsabilidade.
+Consulte [IA_GENERALISTA.md](IA_GENERALISTA.md).
+
 ## Banco operacional
 
 Governança, conversas, memória estruturada, tarefas interativas e auditoria usam
@@ -41,7 +46,9 @@ usar o leitor DuckDB.
 - `agentes/ferramentas.js`: registro central e injecao dos executores.
 - `agentes/recuperacao_tools.js`: amplia uma vez uma rota automatica incompleta.
 - `agentes/resposta.js`: normaliza a apresentacao sem misturar regras ao fluxo.
-- `agentes/providers/`: adapters para Gemini, Groq e OpenAI.
+- `agentes/providers/`: adapters para Anthropic, Gemini, Groq e OpenAI.
+- `agentes/assistente_nexus.js`: conversa generalista e delegacao corporativa.
+- `nexus/auditoria_ia.js`: traces, usage real, custos e mensagens visiveis.
 - `agentes/consultor_nexus.js`: facade de orquestracao e entrada de linha de comando.
 
 ## Padroes utilizados
@@ -64,7 +71,7 @@ perguntas comuns. Regras oficiais permanecem nos modelos Gold, e nao no prompt.
 
 ### Strategy e Adapter
 
-O consultor usa um contrato unico de provider. Gemini, Groq e OpenAI adaptam
+O consultor usa um contrato unico de provider. Anthropic, Gemini, Groq e OpenAI adaptam
 esse contrato aos seus formatos sem alterar tools ou regras de negocio.
 
 ### Registry
@@ -96,7 +103,7 @@ Bronze continua restrito a auditoria.
 | `desempenho` | faturamento, custo e margem | `analisar_desempenho` |
 | `operacao` | funil de pedidos e plataformas | `analisar_operacao` |
 | `frete` | frete cobrado, custo e cobertura | `analisar_frete` |
-| `estoque` | ruptura e cobertura | `analisar_rupturas` |
+| `estoque` | ruptura, cobertura e menor giro | `analisar_rupturas`, `analisar_giro_estoque` |
 | `reposicoes` | compras previstas e recebimentos | `analisar_reposicoes` |
 | `catalogo` | cadastro, composicao e estoque | `analisar_catalogo` |
 | `pessoas` | funcionarios e transportadoras | `analisar_pessoas` |

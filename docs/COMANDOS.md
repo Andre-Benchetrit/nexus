@@ -7,6 +7,10 @@ npm run nexus:db:health
 npm run nexus:db:migrate
 npm run nexus:db:status
 npm run nexus:audit:status
+npm run nexus:pricing:import
+npm run nexus:pricing:status
+npm run nexus:usage:report
+npm run nexus:usage:trace -- <trace_id>
 npm run nexus:memory:import
 npm run nexus:memory:verify
 npm run nexus:memory:export-knowledge

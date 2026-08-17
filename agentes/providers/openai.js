@@ -1,5 +1,10 @@
 const OpenAI = require('openai');
 const { normalizarArgumentosPeloSchema } = require('./schema');
+const {
+  estimarComposicaoInput,
+  executarChamadaAuditada,
+  normalizarUsageOpenAI
+} = require('./telemetria');
 
 const MODELO_PADRAO_OPENAI = 'gpt-5.6-luna';
 
@@ -28,28 +33,57 @@ function criarProviderOpenAI(opcoes = {}) {
     definicaoTool,
     executarTool,
     maxRodadas,
-    onEvento
+    onEvento,
+    mensagens,
+    telemetria,
+    stage = 'business_reasoning',
+    stageFinal,
+    purpose = 'corporate_query',
+    parentCallId = null,
+    fallbackFromCallId = null
   }) {
     const client = obterCliente();
-    const input = [{ role: 'user', content: pergunta }];
-    const ferramentas = tools?.length
+    const input = mensagens?.length
+      ? mensagens.map((item) => ({ role: item.role, content: item.content }))
+      : [{ role: 'user', content: pergunta }];
+    const ferramentas = Array.isArray(tools)
       ? tools
       : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
     let deveFinalizar = false;
+    let houveTool = false;
+    const resultadosParaAuditoria = [];
     for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
       const ferramentasPorNome = new Map(
         ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
       );
       onEvento?.(`OpenAI: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
-      const resposta = await client.responses.create({
-        model: modelo,
-        reasoning: { effort: 'low' },
-        instructions: instrucoes,
-        tools: ferramentas.map((ferramenta) => ferramenta.definicao),
-        tool_choice: deveFinalizar ? 'none' : 'auto',
-        input,
-        store: false
+      const auditada = await executarChamadaAuditada({
+        telemetria, provider: 'openai', modelo,
+        stage: houveTool && stageFinal ? stageFinal : stage,
+        purpose, parentCallId: telemetria?.ultimoCallId || parentCallId,
+        fallbackFromCallId,
+        composicao: estimarComposicaoInput({
+          instrucoes, pergunta, mensagens, tools: ferramentas,
+          resultadosTools: resultadosParaAuditoria
+        }),
+        executar: () => client.responses.create({
+          model: modelo,
+          reasoning: { effort: 'low' },
+          instructions: instrucoes,
+          ...(ferramentas.length ? {
+            tools: ferramentas.map((ferramenta) => ferramenta.definicao),
+            tool_choice: deveFinalizar ? 'none' : 'auto'
+          } : {}),
+          input,
+          store: false
+        }),
+        normalizarResposta: (resposta) => ({
+          usage: normalizarUsageOpenAI(resposta.usage),
+          responseId: resposta.id || null,
+          stopReason: resposta.status || null
+        })
       });
+      const resposta = auditada.resposta;
 
       input.push(...resposta.output);
       onEvento?.(`OpenAI: rodada ${rodada + 1} recebida.`);
@@ -63,8 +97,12 @@ function criarProviderOpenAI(opcoes = {}) {
           responseId: resposta.id
         };
       }
+      if (stage === 'generalist_response') {
+        await telemetria?.atualizarEstagio?.(auditada.callId, 'generalist_decision');
+      }
 
       for (const chamada of chamadas) {
+        houveTool = true;
         let output;
         try {
           const ferramenta = ferramentasPorNome.get(chamada.name);
@@ -85,6 +123,7 @@ function criarProviderOpenAI(opcoes = {}) {
           call_id: chamada.call_id,
           output
         });
+        resultadosParaAuditoria.push(output);
       }
     }
 

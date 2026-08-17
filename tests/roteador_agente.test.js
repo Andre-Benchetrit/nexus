@@ -63,6 +63,10 @@ test('roteia rankings dimensionais faturados para o Gold de desempenho', () => {
 
 test('roteia ruptura e cobertura para o perfil de estoque', () => {
   assert.equal(classificarPergunta('Quais produtos estão em ruptura?'), 'estoque');
+  assert.equal(
+    classificarPergunta('Quais sao os 10 produtos com menor giro no periodo?'),
+    'estoque'
+  );
   assert.equal(classificarPergunta('Qual estoque deve acabar nos próximos 15 dias?'), 'estoque');
   assert.equal(classificarPergunta('Quais produtos têm cobertura crítica?'), 'estoque');
   assert.equal(

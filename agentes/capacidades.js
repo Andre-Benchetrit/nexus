@@ -10,6 +10,10 @@ const INTENCOES = Object.freeze([
   'construir', 'validar'
 ]);
 
+const FERRAMENTAS_AUXILIARES = Object.freeze(new Set([
+  'resolver_produto'
+]));
+
 function capacidade({
   dominio,
   camada = 'negocio',
@@ -41,6 +45,15 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     campos: ['estoque', 'cobertura', 'risco', 'sku', 'ean', 'descricao_produto'],
     operacoes: ['resumir', 'listar', 'ranquear_marcas']
   }),
+  analisar_giro_estoque: capacidade({
+    dominio: 'estoque', intencoes: ['ranquear', 'listar', 'comparar'],
+    entidades: ['produto', 'marca', 'sku', 'ean'],
+    campos: [
+      'estoque_total', 'quantidade_reservada', 'quantidade_vendida_periodo',
+      'faturamento_periodo', 'indice_baixo_giro', 'sku', 'ean', 'descricao_produto'
+    ],
+    operacoes: ['ranquear_menor_giro']
+  }),
   analisar_reposicoes: capacidade({
     dominio: 'reposicoes', intencoes: ['resumir', 'listar', 'detalhar', 'agregar'],
     entidades: ['produto', 'sku', 'ean', 'pedido_compra', 'nota_entrada'],
@@ -49,13 +62,13 @@ const REGISTRO_CAPACIDADES = Object.freeze({
   }),
   consultar_bloqueios_sem_estoque: capacidade({
     dominio: 'bloqueios_estoque',
-    intencoes: ['resumir', 'listar', 'detalhar', 'enriquecer'],
+    intencoes: ['resumir', 'listar', 'detalhar', 'enriquecer', 'agregar'],
     entidades: ['pedido', 'produto', 'sku', 'ean'],
     campos: [
       'marketplace_pedido', 'id_nota_saida', 'canal_venda', 'sku', 'ean',
       'descricao_produto', 'quantidade_pedida', 'bloqueio'
     ],
-    operacoes: ['resumir', 'listar', 'listar_itens', 'detalhar_pedido']
+    operacoes: ['resumir', 'listar', 'listar_itens', 'detalhar_pedido', 'agrupar_na_resposta']
   }),
   diagnosticar_bloqueio_sem_estoque: capacidade({
     dominio: 'bloqueios_estoque', intencoes: ['diagnosticar', 'explicar', 'detalhar'],
@@ -215,22 +228,27 @@ function validarPlanoSugerido(decisao) {
   for (const sugestao of decisao.planoSugerido || []) {
     const nome = sugestao.ferramenta;
     const item = obterCapacidade(nome);
+
     if (!item) {
       rejeitadas.push({ ...sugestao, motivo: 'ferramenta_desconhecida' });
       continue;
     }
+
     if (item.camada === 'bronze' && decisao.intencao !== 'auditar') {
       rejeitadas.push({ ...sugestao, motivo: 'bronze_exige_auditoria' });
       continue;
     }
+
     if (item.camada === 'negocio' && !dominios.has(item.dominio) && item.dominio !== 'produto') {
       rejeitadas.push({ ...sugestao, motivo: 'dominio_incompativel' });
       continue;
     }
+
     if (item.camada !== 'negocio' && !dominios.has(item.dominio)) {
       rejeitadas.push({ ...sugestao, motivo: 'camada_nao_autorizada' });
       continue;
     }
+
     if (
       ['gold', 'silver'].includes(item.camada) &&
       item.dominio !== decisao.dominioPrimario &&
@@ -239,14 +257,19 @@ function validarPlanoSugerido(decisao) {
       rejeitadas.push({ ...sugestao, motivo: 'camada_sem_capacidade_ausente' });
       continue;
     }
-    if (!item.intencoes.includes(decisao.intencao)) {
+
+    const ehFerramentaAuxiliar = FERRAMENTAS_AUXILIARES.has(nome);
+
+    if (!ehFerramentaAuxiliar && !item.intencoes.includes(decisao.intencao)) {
       rejeitadas.push({ ...sugestao, motivo: 'intencao_incompativel' });
       continue;
     }
+
     aceitas.push(nome);
   }
 
   for (const dominio of dominios) {
+    if (dominio !== decisao.dominioPrimario) continue;
     if (dominio === 'hibrido') continue;
     if (dominio === 'bronze' && decisao.intencao !== 'auditar') continue;
     if (!aceitas.some((nome) => REGISTRO_CAPACIDADES[nome]?.dominio === dominio)) {
@@ -278,7 +301,12 @@ function validarPlanoSugerido(decisao) {
   ));
   const camposAusentes = (decisao.camposSolicitados || [])
     .filter((campo) => !camposDisponiveis.has(campo));
-  const dominiosSemFerramenta = [...dominios].filter((dominio) => (
+  const dominiosExigidos = new Set([decisao.dominioPrimario]);
+  for (const sugestao of decisao.planoSugerido || []) {
+    const dominio = REGISTRO_CAPACIDADES[sugestao.ferramenta]?.dominio;
+    if (dominio && dominios.has(dominio)) dominiosExigidos.add(dominio);
+  }
+  const dominiosSemFerramenta = [...dominiosExigidos].filter((dominio) => (
     dominio !== 'hibrido' &&
     !ferramentas.some((nome) => REGISTRO_CAPACIDADES[nome]?.dominio === dominio)
   ));

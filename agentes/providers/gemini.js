@@ -1,5 +1,10 @@
 const MODELO_PADRAO_GEMINI = 'gemini-3.1-flash-lite';
 const { aceitaNulo, normalizarArgumentosPeloSchema } = require('./schema');
+const {
+  estimarComposicaoInput,
+  executarChamadaAuditada,
+  normalizarUsageGemini
+} = require('./telemetria');
 
 function converterSchemaGemini(schema) {
   if (!schema || typeof schema !== 'object') return schema;
@@ -83,36 +88,63 @@ function criarProviderGemini(opcoes = {}) {
     definicaoTool,
     executarTool,
     maxRodadas,
-    onEvento
+    onEvento,
+    mensagens,
+    telemetria,
+    stage = 'business_reasoning',
+    stageFinal,
+    purpose = 'corporate_query',
+    parentCallId = null,
+    fallbackFromCallId = null
   }) {
     const client = await obterCliente();
-    const ferramentas = tools?.length
+    const ferramentas = Array.isArray(tools)
       ? tools
       : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
-    const contents = [{ role: 'user', parts: [{ text: pergunta }] }];
-    const config = {
-      systemInstruction: instrucoes,
-      tools: [{ functionDeclarations: [] }],
-      toolConfig: {
-        functionCallingConfig: { mode: 'VALIDATED' }
-      }
-    };
+    const contents = mensagens?.length
+      ? mensagens.map((item) => ({
+          role: item.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: String(item.content) }]
+        }))
+      : [{ role: 'user', parts: [{ text: pergunta }] }];
+    const config = { systemInstruction: instrucoes };
     let deveFinalizar = false;
+    let houveTool = false;
+    const resultadosParaAuditoria = [];
 
     for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
       const ferramentasPorNome = new Map(
         ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
       );
-      config.tools[0].functionDeclarations = ferramentas.map((ferramenta) => (
-        converterToolParaGemini(ferramenta.definicao)
-      ));
-      config.toolConfig.functionCallingConfig.mode = deveFinalizar ? 'NONE' : 'VALIDATED';
+      if (ferramentas.length) {
+        config.tools = [{ functionDeclarations: ferramentas.map((ferramenta) => (
+          converterToolParaGemini(ferramenta.definicao)
+        )) }];
+        config.toolConfig = {
+          functionCallingConfig: { mode: deveFinalizar ? 'NONE' : 'VALIDATED' }
+        };
+      } else {
+        delete config.tools;
+        delete config.toolConfig;
+      }
       onEvento?.(`Gemini: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
-      const resposta = await client.models.generateContent({
-        model: modelo,
-        contents,
-        config
+      const auditada = await executarChamadaAuditada({
+        telemetria, provider: 'gemini', modelo,
+        stage: houveTool && stageFinal ? stageFinal : stage,
+        purpose, parentCallId: telemetria?.ultimoCallId || parentCallId,
+        fallbackFromCallId,
+        composicao: estimarComposicaoInput({
+          instrucoes, pergunta, mensagens, tools: ferramentas,
+          resultadosTools: resultadosParaAuditoria
+        }),
+        executar: () => client.models.generateContent({ model: modelo, contents, config }),
+        normalizarResposta: (resposta) => ({
+          usage: normalizarUsageGemini(resposta.usageMetadata),
+          responseId: resposta.responseId || null,
+          stopReason: resposta.candidates?.[0]?.finishReason || null
+        })
       });
+      const resposta = auditada.resposta;
       const conteudoModelo = resposta.candidates?.[0]?.content;
       onEvento?.(`Gemini: rodada ${rodada + 1} recebida.`);
       if (conteudoModelo) contents.push(conteudoModelo);
@@ -127,8 +159,12 @@ function criarProviderGemini(opcoes = {}) {
           responseId: resposta.responseId || null
         };
       }
+      if (stage === 'generalist_response') {
+        await telemetria?.atualizarEstagio?.(auditada.callId, 'generalist_decision');
+      }
 
       const respostasDeFuncao = [];
+      houveTool = true;
       for (const chamada of chamadas) {
         let output;
         try {
@@ -152,6 +188,7 @@ function criarProviderGemini(opcoes = {}) {
             response: { result: interpretarResultadoTool(output) }
           }
         });
+        resultadosParaAuditoria.push(output);
       }
       contents.push({ role: 'user', parts: respostasDeFuncao });
     }

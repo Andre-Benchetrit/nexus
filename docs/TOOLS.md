@@ -14,6 +14,7 @@ evita oferecer ao modelo ferramentas que nao pertencem ao assunto.
 | `analisar_indicadores` | `indicadores` | Painel executivo, totais, comparacao de periodos e tendencia diaria. | Gold |
 | `analisar_influencias` | `influencias` | Compara dois faturamentos e mostra marcas, produtos e plataformas que mais contribuíram para altas e quedas. | Silver fiscal |
 | `analisar_rupturas` | `estoque` | Ruptura atual, risco futuro, cobertura e ranking de marcas ou classificacoes. | Gold de estoque |
+| `analisar_giro_estoque` | `estoque` | Ranqueia produtos vendaveis de menor giro comparando estoque atual com unidades faturadas em um periodo; inclui kits (composicao 50) e exclui embalagens, materiais externos e consumos. | Gold de estoque + desempenho |
 | `analisar_reposicoes` | `reposicoes` | Parcelas previstas, atrasadas ou recebidas; consolida o ultimo recebimento do produto por dia. | Silver de compras |
 | `analisar_desempenho` | `desempenho` | Rankings faturados por produto, marca, classificacao ou plataforma, incluindo custo e margem bruta. | Gold |
 | `analisar_frete` | `frete` | Frete cobrado, custo, resultado e cobertura por plataforma ou regra de transporte. | Gold |
@@ -59,7 +60,7 @@ conceitos e limites mais claros.
 | `indicadores` | `analisar_indicadores` |
 | `influencias` | `analisar_influencias` |
 | `produto` | `resolver_produto` |
-| `estoque` | `resolver_produto`, `analisar_rupturas` |
+| `estoque` | `resolver_produto`, `analisar_rupturas`, `analisar_giro_estoque` |
 | `estoque_reposicoes` | `resolver_produto`, `analisar_rupturas`, `analisar_reposicoes` |
 | `reposicoes` | `resolver_produto`, `analisar_reposicoes` |
 | `desempenho` | `analisar_desempenho` |

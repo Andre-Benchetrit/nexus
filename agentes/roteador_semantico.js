@@ -378,8 +378,12 @@ async function interpretarRotaSemantica(pergunta, contextoSessao, dependencias =
     pergunta,
     instrucoes,
     tools: [ferramenta],
-    maxRodadas: 2,
-    onEvento: dependencias.onEvento
+    maxRodadas: 3,
+    onEvento: dependencias.onEvento,
+    telemetria: dependencias.telemetria,
+    stage: 'semantic_router',
+    purpose: dependencias.purpose || 'corporate_query',
+    parentCallId: dependencias.telemetria?.ultimoCallId || null
   });
   if (!decisaoRecebida) throw new Error('O roteador semantico nao registrou uma decisao.');
   return { ...decisaoRecebida, provider: provider.nome, modelo: provider.modelo };

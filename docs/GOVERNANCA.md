@@ -48,6 +48,14 @@ O PostgreSQL conserva todo o histórico factual. O contexto enviado ao modelo
 continua limitado às interações recentes configuradas em
 `NEXUS_SESSION_HISTORY_LIMIT`.
 
+## Auditoria de IA
+
+A auditoria de IA usa tabelas dedicadas para turnos, chamadas de modelo e itens
+de custo. Mensagens visiveis ficam em `conversation_messages`, separadas da
+telemetria operacional. `NEXUS_USAGE_POLICY_MODE=observe` e independente de
+`NEXUS_AUTHZ_MODE`: o primeiro prepara governanca de consumo; o segundo autoriza
+capabilities e tools.
+
 ## Modelo de acesso
 
 Uma pessoa pode pertencer a mais de um setor e receber papéis globais ou por

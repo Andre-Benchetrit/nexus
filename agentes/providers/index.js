@@ -1,12 +1,14 @@
 const { criarProviderGemini } = require('./gemini');
 const { criarProviderGroq } = require('./groq');
 const { criarProviderOpenAI } = require('./openai');
+const { criarProviderAnthropic } = require('./anthropic');
 const { criarProviderResiliente } = require('./resiliente');
 
 const PROVIDER_PADRAO = 'gemini';
-const PROVIDERS_DISPONIVEIS = ['gemini', 'groq', 'openai'];
+const PROVIDERS_DISPONIVEIS = ['gemini', 'groq', 'openai', 'anthropic'];
 
 function criarProviderBase(nome, opcoes = {}) {
+  if (nome === 'anthropic') return criarProviderAnthropic(opcoes);
   if (nome === 'gemini') return criarProviderGemini(opcoes);
   if (nome === 'groq') return criarProviderGroq(opcoes);
   return criarProviderOpenAI(opcoes);

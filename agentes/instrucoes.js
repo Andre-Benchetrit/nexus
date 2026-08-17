@@ -39,7 +39,10 @@ Avise quando a cobertura indicar ultima data parcial.
 Ao comparar, informe atual, anterior, diferenca e variacao percentual.
 `,
   estoque: `
-Use analisar_rupturas. Cobertura e quantos dias o estoque disponivel sustenta a demanda media.
+Use analisar_giro_estoque quando a pergunta comparar estoque atual com vendas de
+um periodo para encontrar produtos com menor giro. Use analisar_rupturas para risco de ruptura.
+No menor giro, informe periodo, estoque, quantidade vendida e o indice usado pela tool.
+Cobertura e quantos dias o estoque disponivel sustenta a demanda media.
 Ruptura atual exige estoque sem disponibilidade e demanda recente.
 Perguntas "quantos por classificacao" usam resumir; listar e somente para nomes de produtos.
 Para comparar marcas por quantidade de produtos em alerta, use ranquear_marcas.

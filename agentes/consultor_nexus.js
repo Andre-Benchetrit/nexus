@@ -54,6 +54,8 @@ const {
 } = require('./interacoes');
 const { formatarRespostaSql } = require('../tools/construir_sql');
 const { criarServicoGovernanca } = require('../nexus/governanca');
+const { criarServicoAuditoriaIA } = require('../nexus/auditoria_ia');
+const { criarPoolNexus } = require('../nexus/db');
 
 const MAX_RODADAS_NEGOCIO = 10;
 const MAX_RODADAS_GENERICAS = 10;
@@ -114,7 +116,7 @@ function estabilizarDecisaoComHistorico(decisao, pergunta, historico = []) {
   };
 }
 
-async function executarAgente(pergunta, dependencias = {}) {
+async function executarAgenteInterno(pergunta, dependencias = {}) {
   if (!pergunta || !pergunta.trim()) throw new Error('Informe uma pergunta.');
   const texto = pergunta.trim();
   const dataReferencia = dependencias.dataReferencia || obterDataReferencia();
@@ -165,7 +167,13 @@ async function executarAgente(pergunta, dependencias = {}) {
     try {
       const contextoGovernanca = await governanca?.iniciarTool(
         'construir_sql', interacao.argumentos,
-        { provider: 'compilador_sql', modelo: null }
+        {
+          provider: 'compilador_sql', modelo: null,
+          traceId: dependencias.turnoIA?.traceId || null,
+          turnId: dependencias.turnoIA?.id || null,
+          parentCallId: dependencias.telemetria?.ultimoCallId || null,
+          stage: 'business_reasoning', purpose: dependencias.purpose || 'corporate_query'
+        }
       );
       const inicioSql = Date.now();
       try {
@@ -466,7 +474,12 @@ async function executarAgente(pergunta, dependencias = {}) {
         return governanca?.iniciarTool(nome, argumentos, {
           provider: provider.nome || dependencias.providerNome || process.env.LLM_PROVIDER || null,
           modelo: provider.modelo || dependencias.modelo || null,
-          departamentoSlug: dependencias.departamentoSlug || null
+          departamentoSlug: dependencias.departamentoSlug || null,
+          traceId: dependencias.turnoIA?.traceId || null,
+          turnId: dependencias.turnoIA?.id || null,
+          parentCallId: dependencias.telemetria?.ultimoCallId || null,
+          stage: 'business_reasoning',
+          purpose: dependencias.purpose || 'corporate_query'
         });
       },
       async onResultado(nome, resultado, argumentos, execucao) {
@@ -575,7 +588,11 @@ async function executarAgente(pergunta, dependencias = {}) {
       .join('\n\n'),
     tools: itens,
     maxRodadas,
-    onEvento: dependencias.onEvento
+    onEvento: dependencias.onEvento,
+    telemetria: dependencias.telemetria,
+    stage: 'business_reasoning',
+    purpose: dependencias.purpose || 'corporate_query',
+    parentCallId: dependencias.telemetria?.ultimoCallId || null
   });
   let resultado;
   let recuperacao = null;
@@ -671,6 +688,52 @@ async function executarAgente(pergunta, dependencias = {}) {
   return resultadoFormatado;
 }
 
+async function executarAgente(pergunta, dependencias = {}) {
+  if (dependencias.turnoIA || dependencias.telemetria || dependencias.auditoriaIA === false) {
+    return executarAgenteInterno(pergunta, dependencias);
+  }
+  const memoriaDesabilitada = dependencias.memoria === false
+    || (dependencias.provider && dependencias.memoria == null);
+  const memoria = memoriaDesabilitada ? null : dependencias.memoria || criarMemoria({
+    sessao: dependencias.sessaoMemoria,
+    backend: dependencias.memoryBackend,
+    pool: dependencias.poolNexus,
+    principalSlug: dependencias.principalSlug
+  });
+  if (!memoria?.pool && dependencias.provider) {
+    return executarAgenteInterno(pergunta, { ...dependencias, memoria });
+  }
+  const poolAuditoria = memoria?.pool || dependencias.poolNexus || criarPoolNexus();
+  const poolCriado = !memoria?.pool && !dependencias.poolNexus;
+  const auditoria = criarServicoAuditoriaIA({
+    pool: poolAuditoria,
+    principalSlug: dependencias.principalSlug || memoria?.principalSlug,
+    sessao: memoria?.sessao || dependencias.sessaoMemoria || 'padrao',
+    departamentoSlug: dependencias.departamentoSlug,
+    modo: dependencias.usagePolicyMode
+  });
+  const turno = await auditoria.iniciarTurno({ finalidade: 'corporate_query' });
+  const telemetria = auditoria.paraTelemetria(turno, {
+    stage: 'business_reasoning', purpose: 'corporate_query'
+  });
+  try {
+    const resultado = await executarAgenteInterno(pergunta, {
+      ...dependencias, memoria, auditoriaIA: auditoria, turnoIA: turno,
+      telemetria, purpose: 'corporate_query'
+    });
+    const resumo = await auditoria.concluirTurno(turno, {
+      sucesso: true,
+      proveniencia: 'dados_nexus'
+    });
+    return { ...resultado, traceId: turno.traceId, turnId: turno.id, usageSummary: resumo };
+  } catch (erro) {
+    try { await auditoria.concluirTurno(turno, { sucesso: false, erro }); } catch (_) { /* preserva erro */ }
+    throw erro;
+  } finally {
+    if (poolCriado) await poolAuditoria.end();
+  }
+}
+
 function lerArgumentos(argumentos) {
   const opcoes = {};
   const pergunta = [];
@@ -688,9 +751,15 @@ function lerArgumentos(argumentos) {
     ['--interaction-mode', 'interactionMode'],
     ['--memory-backend', 'memoryBackend'],
     ['--authz-mode', 'authzMode'],
+    ['--usage-policy-mode', 'usagePolicyMode'],
     ['--principal', 'principalSlug'],
     ['--setor', 'departamentoSlug'],
-    ['--max-rodadas', 'maxRodadas']
+    ['--max-rodadas', 'maxRodadas'],
+    ['--assistant-mode', 'assistantMode'],
+    ['--generalist-provider', 'generalistProviderNome'],
+    ['--generalist-model', 'generalistModelo'],
+    ['--generalist-fallback-provider', 'generalistFallbackNome'],
+    ['--generalist-fallback-model', 'generalistFallbackModelo']
   ]);
 
   for (let indice = 0; indice < argumentos.length; indice += 1) {
@@ -757,11 +826,21 @@ function configurarTerminalUtf8(dependencias = {}) {
 async function main() {
   configurarTerminalUtf8();
   const { pergunta, opcoes } = lerArgumentos(process.argv.slice(2));
-  const resultado = await executarAgente(pergunta, {
+  const { executarAssistente, resolverModoAssistente } = require('./assistente_nexus');
+  const modoAssistente = resolverModoAssistente(opcoes.assistantMode);
+  const executor = modoAssistente === 'generalist' ? executarAssistente : executarAgente;
+  const resultado = await executor(pergunta, {
     ...opcoes,
     onEvento: (mensagem) => console.error(`[agente] ${mensagem}`)
   });
   console.log(resultado.texto);
+  if (resultado.proveniencia) {
+    const rotulo = resultado.proveniencia === 'dados_nexus'
+      ? `dados internos do Nexus${resultado.evidencia?.updatedAt ? ` - atualizacao ${resultado.evidencia.updatedAt}` : ''}`
+      : 'conhecimento geral do modelo';
+    console.error(`[fonte] ${rotulo}`);
+  }
+  if (resultado.traceId) console.error(`[trace] ${resultado.traceId}`);
   if (resultado.fallbackDe) {
     console.error(
       `[fallback] ${resultado.fallbackDe} indisponível; resposta gerada por ` +

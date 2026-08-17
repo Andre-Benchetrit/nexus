@@ -5,6 +5,11 @@ const {
   flexibilizarTiposPrimitivos,
   normalizarArgumentosPeloSchema
 } = require('./schema');
+const {
+  estimarComposicaoInput,
+  executarChamadaAuditada,
+  normalizarUsageOpenAI
+} = require('./telemetria');
 
 const MODELO_PADRAO = 'llama-3.3-70b-versatile';
 
@@ -75,17 +80,28 @@ function criarProviderGroq(opcoes = {}) {
       definicaoTool,
       executarTool,
       maxRodadas = 8,
-      onEvento
+      onEvento,
+      mensagens,
+      telemetria,
+      stage = 'business_reasoning',
+      stageFinal,
+      purpose = 'corporate_query',
+      parentCallId = null,
+      fallbackFromCallId = null
     }) {
       const client = obterCliente();
-      const ferramentas = tools?.length
+      const ferramentas = Array.isArray(tools)
         ? tools
         : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
       const messages = [
         { role: 'system', content: instrucoes },
-        { role: 'user', content: pergunta }
+        ...(mensagens?.length ? mensagens.map((item) => ({ role: item.role, content: item.content })) : [
+          { role: 'user', content: pergunta }
+        ])
       ];
       let deveFinalizar = false;
+      let houveTool = false;
+      const resultadosParaAuditoria = [];
 
       for (let rodada = 0; rodada < maxRodadas; rodada += 1) {
         const definicoes = ferramentas.map((tool) => tool.definicao);
@@ -96,14 +112,32 @@ function criarProviderGroq(opcoes = {}) {
           ferramentas.map((tool) => [tool.definicao.name, tool.definicao])
         );
         onEvento?.(`Groq: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
-        const resposta = await client.chat.completions.create({
-          model: modelo,
-          messages,
-          tools: converterTools(definicoes),
-          parallel_tool_calls: false,
-          tool_choice: deveFinalizar ? 'none' : 'auto',
-          temperature: 0.1
+        const auditada = await executarChamadaAuditada({
+          telemetria, provider: 'groq', modelo,
+          stage: houveTool && stageFinal ? stageFinal : stage,
+          purpose, parentCallId: telemetria?.ultimoCallId || parentCallId,
+          fallbackFromCallId,
+          composicao: estimarComposicaoInput({
+            instrucoes, pergunta, mensagens, tools: ferramentas,
+            resultadosTools: resultadosParaAuditoria
+          }),
+          executar: () => client.chat.completions.create({
+            model: modelo,
+            messages,
+            ...(definicoes.length ? {
+              tools: converterTools(definicoes),
+              parallel_tool_calls: false,
+              tool_choice: deveFinalizar ? 'none' : 'auto'
+            } : {}),
+            temperature: 0.1
+          }),
+          normalizarResposta: (resposta) => ({
+            usage: normalizarUsageOpenAI(resposta.usage),
+            responseId: resposta.id || null,
+            stopReason: resposta.choices?.[0]?.finish_reason || null
+          })
         });
+        const resposta = auditada.resposta;
         const mensagem = resposta.choices?.[0]?.message;
         onEvento?.(`Groq: rodada ${rodada + 1} recebida.`);
 
@@ -119,12 +153,16 @@ function criarProviderGroq(opcoes = {}) {
             responseId: resposta.id || null
           };
         }
+        if (stage === 'generalist_response') {
+          await telemetria?.atualizarEstagio?.(auditada.callId, 'generalist_decision');
+        }
 
         messages.push({
           role: 'assistant',
           content: mensagem.content || null,
           tool_calls: chamadas
         });
+        houveTool = true;
 
         for (const chamada of chamadas) {
           const nome = chamada.function?.name;
@@ -146,6 +184,7 @@ function criarProviderGroq(opcoes = {}) {
           } catch (erro) {
             resultado = JSON.stringify({ erro: erro.message });
           }
+          resultadosParaAuditoria.push(resultado);
 
           messages.push({
             role: 'tool',

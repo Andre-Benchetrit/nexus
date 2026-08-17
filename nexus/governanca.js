@@ -2,6 +2,8 @@ const { obterCapacidade } = require('../agentes/capacidades');
 
 const MODOS_AUTORIZACAO = Object.freeze(['off', 'audit', 'enforce']);
 const PERMISSOES_ESPECIAIS = Object.freeze({
+  ia_conversar: 'ia.conversar',
+  consultar_nexus: 'ia.nexus.consultar',
   construir_sql: 'sql.gerar',
   consultar_gold: 'gold.consultar',
   agregar_gold: 'gold.consultar',
@@ -118,7 +120,8 @@ function criarServicoGovernanca(opcoes) {
     const { permitida, motivo } = resolucao;
     const decisao = modo === 'off' ? 'off' : permitida ? 'allow' :
       modo === 'audit' ? 'would_deny' : 'deny';
-    const camada = obterCapacidade(nome)?.camada || 'negocio';
+    const camada = nome === 'ia_conversar' || nome === 'consultar_nexus'
+      ? 'generalista' : obterCapacidade(nome)?.camada || 'negocio';
     const registro = (await pool.query(`
       INSERT INTO nexus.authorization_decisions
         (principal_id, conversation_id, permission_code, tool_name, camada, modo, decisao, motivo_codigo)
@@ -135,25 +138,31 @@ function criarServicoGovernanca(opcoes) {
     const decisao = await avaliar(nome, metadados.departamentoSlug);
     if (!decisao.permitida) {
       await pool.query(`
-        INSERT INTO nexus.tool_executions
+      INSERT INTO nexus.tool_executions
           (authorization_decision_id, principal_id, conversation_id, tool_name,
-           permission_code, camada, provider, modelo, status, argument_keys, concluida_em)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'bloqueada',$9::jsonb,now())
+           permission_code, camada, provider, modelo, status, argument_keys, concluida_em,
+           trace_id, turn_id, call_id, parent_call_id, stage, purpose)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'bloqueada',$9::jsonb,now(),$10,$11,$12,$13,$14,$15)
       `, [decisao.id, decisao.principalId, decisao.conversationId, nome,
         decisao.permissao, decisao.camada, metadados.provider || null, metadados.modelo || null,
-        JSON.stringify(chavesArgumentosSeguras(argumentos))]);
+        JSON.stringify(chavesArgumentosSeguras(argumentos)), metadados.traceId || null,
+        metadados.turnId || null, metadados.callId || null, metadados.parentCallId || null,
+        metadados.stage || null, metadados.purpose || null]);
       throw new ErroAutorizacao(decisao.permissao);
     }
     const execucao = (await pool.query(`
       INSERT INTO nexus.tool_executions
         (authorization_decision_id, principal_id, conversation_id, tool_name,
-         permission_code, camada, provider, modelo, status, argument_keys)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'iniciada',$9::jsonb)
+         permission_code, camada, provider, modelo, status, argument_keys,
+         trace_id, turn_id, call_id, parent_call_id, stage, purpose)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'iniciada',$9::jsonb,$10,$11,$12,$13,$14,$15)
       RETURNING id
     `, [decisao.id, decisao.principalId, decisao.conversationId, nome,
       decisao.permissao, decisao.camada, metadados.provider || null, metadados.modelo || null,
-      JSON.stringify(chavesArgumentosSeguras(argumentos))])).rows[0];
-    return { decisao, execucaoId: execucao.id };
+      JSON.stringify(chavesArgumentosSeguras(argumentos)), metadados.traceId || null,
+      metadados.turnId || null, metadados.callId || null, metadados.parentCallId || null,
+      metadados.stage || null, metadados.purpose || null])).rows[0];
+    return { decisao, execucaoId: execucao.id, callId: metadados.callId || execucao.id };
   }
 
   async function concluirTool(contextoExecucao, { sucesso, duracaoMs, erro } = {}) {

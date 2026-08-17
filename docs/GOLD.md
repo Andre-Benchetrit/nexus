@@ -265,6 +265,14 @@ Resume as classificacoes, lista os produtos mais urgentes ou ranqueia as marcas
 pela quantidade de produtos em alerta, incluindo as saidas dos ultimos 30 dias.
 Todas as consultas usam a empresa 10.
 
+## Tool `analisar_giro_estoque`
+
+Compara o estoque atual da empresa 10 com a quantidade faturada em um intervalo.
+O ranking usa `estoque_total / max(quantidade_vendida_periodo, 1)`, exclui produtos
+sem estoque e informa separadamente produtos sem venda no periodo. Somente as
+composicoes de estoque vendaveis 0, 6 e 50 participam, incluindo kits; embalagens,
+materiais externos e consumos ficam fora do ranking.
+
 ## Outras tools Gold
 
 - `analisar_desempenho`: resume ou ranqueia produto, marca, grupo, subgrupo,

@@ -2,7 +2,7 @@ module.exports = {
   nome: 'risco_ruptura_produto',
   tipo: 'indicador',
   descricao: 'Risco atual e projetado de ruptura por produto da empresa 10.',
-  versaoContrato: 2,
+  versaoContrato: 3,
   chavePrimaria: 'id_produto',
   fontesSilver: [
     'fato_estoque_atual',
@@ -15,6 +15,7 @@ module.exports = {
     'descricao_produto',
     'sku',
     'ean',
+    'composicao_estoque',
     'id_grupo',
     'grupo',
     'id_subgrupo',
@@ -69,6 +70,7 @@ module.exports = {
     ],
     colunasAgente: [
       'id_produto', 'descricao_produto', 'sku', 'ean',
+      'composicao_estoque',
       'id_grupo', 'grupo', 'id_subgrupo', 'subgrupo',
       'id_marca', 'marca', 'id_categoria', 'categoria',
       'data_referencia', 'estoque_disponivel', 'quantidade_reservada',
@@ -199,6 +201,7 @@ module.exports = {
         descricao_produto,
         sku,
         ean,
+        composicao_estoque,
         id_grupo,
         grupo,
         id_subgrupo,

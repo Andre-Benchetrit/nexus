@@ -1,0 +1,272 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { criarProviderAnthropic } = require('../agentes/providers/anthropic');
+const { criarProvider } = require('../agentes/providers');
+const { criarProviderResiliente } = require('../agentes/providers/resiliente');
+const {
+  normalizarUsageAnthropic,
+  normalizarUsageGemini,
+  normalizarUsageOpenAI,
+  executarChamadaAuditada
+} = require('../agentes/providers/telemetria');
+const { exigeFonteCorporativa } = require('../agentes/politica_fonte');
+const {
+  capacidadesGeneralistasHabilitadas,
+  obterCapacidadeGeneralista
+} = require('../agentes/capacidades_generalistas');
+const {
+  executarAssistente,
+  normalizarHistoricoVisivel,
+  resolverModoAssistente
+} = require('../agentes/assistente_nexus');
+const { sanitizarMetadados } = require('../nexus/auditoria_ia');
+const { lerArgumentos } = require('../agentes/consultor_nexus');
+
+function memoriaFalsa(tarefaAtiva = null) {
+  return { obterTarefaAtiva: async () => tarefaAtiva, sessao: 'teste' };
+}
+
+test('registro generalista habilita apenas conversa e consulta corporativa', () => {
+  assert.deepEqual(
+    capacidadesGeneralistasHabilitadas().map((item) => item.id),
+    ['ia.conversar', 'ia.nexus.consultar']
+  );
+  assert.equal(obterCapacidadeGeneralista('ia.imagem.analisar').habilitada, false);
+  assert.equal(obterCapacidadeGeneralista('ia.planilha.criar').executor, 'nexus_local');
+});
+
+test('guarda de fonte exige Nexus para identificador, fato mutavel e tarefa ativa', () => {
+  assert.equal(exigeFonteCorporativa('Explique EBITDA').obrigatoria, false);
+  assert.equal(exigeFonteCorporativa('Como esta meu faturamento hoje?').obrigatoria, true);
+  assert.equal(exigeFonteCorporativa('Veja o produto 7899552110892').obrigatoria, true);
+  assert.equal(exigeFonteCorporativa('Crie uma query SQL de produtos').obrigatoria, true);
+  assert.equal(exigeFonteCorporativa('sim', { tarefaAtiva: { id: '1' } }).obrigatoria, true);
+});
+
+test('normaliza usage sem inventar campos ausentes ou contar cache duas vezes', () => {
+  assert.deepEqual(normalizarUsageAnthropic({
+    input_tokens: 100, output_tokens: 20,
+    cache_read_input_tokens: 50, cache_creation_input_tokens: 10
+  }), {
+    inputTokens: 100, uncachedInputTokens: 100, outputTokens: 20,
+    cacheReadTokens: 50, cacheWriteTokens: 10, serviceUsage: {},
+    raw: {
+      input_tokens: 100, output_tokens: 20,
+      cache_read_input_tokens: 50, cache_creation_input_tokens: 10
+    }
+  });
+  const openai = normalizarUsageOpenAI({
+    input_tokens: 120, output_tokens: 30,
+    input_tokens_details: { cached_tokens: 40 }
+  });
+  assert.equal(openai.uncachedInputTokens, 80);
+  assert.equal(openai.cacheReadTokens, 40);
+  assert.equal(normalizarUsageGemini({ promptTokenCount: 70 }).outputTokens, null);
+});
+
+test('auditoria falha fechada antes de executar a chamada paga', async () => {
+  let executou = false;
+  await assert.rejects(executarChamadaAuditada({
+    telemetria: { async iniciarChamada() { throw new Error('db offline'); } },
+    provider: 'teste', modelo: 'm', stage: 'generalist_response', purpose: 'general_chat',
+    executar: async () => { executou = true; }, normalizarResposta: () => ({})
+  }), /db offline/);
+  assert.equal(executou, false);
+});
+
+test('falha ao concluir auditoria nao reclassifica a resposta paga e deixa a chamada pendente', async () => {
+  let executou = 0;
+  let conclusoes = 0;
+  await assert.rejects(executarChamadaAuditada({
+    telemetria: {
+      async iniciarChamada() { return { id: 'call-1' }; },
+      async concluirChamada() { conclusoes += 1; throw new Error('db offline'); }
+    },
+    provider: 'teste', modelo: 'm', stage: 'generalist_response', purpose: 'general_chat',
+    executar: async () => { executou += 1; return { id: 'resposta' }; },
+    normalizarResposta: () => ({ usage: {} })
+  }), (erro) => erro.codigo === 'AUDITORIA_LLM_INCOMPLETA');
+  assert.equal(executou, 1);
+  assert.equal(conclusoes, 3);
+});
+
+test('telemetria sanitiza metadados sem remover indicadores operacionais', () => {
+  assert.deepEqual(sanitizarMetadados({
+    duracao_ms: 10, provider: 'anthropic', prompt: 'segredo',
+    nested: { password: 'x', status: 'ok' }
+  }), { duracao_ms: 10, provider: 'anthropic', nested: { status: 'ok' } });
+});
+
+test('provider Anthropic executa tool_use e devolve tool_result na rodada seguinte', async () => {
+  const requisicoes = [];
+  const respostas = [{
+    id: 'msg_1', stop_reason: 'tool_use', usage: { input_tokens: 10, output_tokens: 4 },
+    content: [{ type: 'tool_use', id: 'tool_1', name: 'consultar_nexus', input: { objetivo: 'pedidos' } }]
+  }, {
+    id: 'msg_2', stop_reason: 'end_turn', usage: { input_tokens: 20, output_tokens: 8 },
+    content: [{ type: 'text', text: 'Resposta final.' }]
+  }];
+  const cliente = { messages: { async create(req) { requisicoes.push(req); return respostas.shift(); } } };
+  const chamadas = [];
+  const provider = criarProviderAnthropic({ cliente, modelo: 'claude-teste' });
+  const resultado = await provider.executar({
+    pergunta: 'Quais pedidos?', instrucoes: 'Use a capability.', maxRodadas: 3,
+    tools: [{
+      definicao: {
+        name: 'consultar_nexus', description: 'consulta',
+        parameters: { type: 'object', properties: { objetivo: { type: 'string' } }, required: ['objetivo'] }
+      },
+      executar: async (args) => { chamadas.push(args); return '{"ok":true}'; }, terminal: false
+    }]
+  });
+  assert.equal(resultado.texto, 'Resposta final.');
+  assert.deepEqual(chamadas, [{ objetivo: 'pedidos' }]);
+  const retorno = requisicoes[1].messages.at(-1).content[0];
+  assert.equal(retorno.type, 'tool_result');
+  assert.equal(retorno.tool_use_id, 'tool_1');
+});
+
+test('provider Anthropic e selecionavel e exige modelo', async (t) => {
+  assert.equal(criarProvider({ nome: 'anthropic', modelo: 'claude-teste', cliente: {}, semFallback: true }).nome, 'anthropic');
+  const modeloAmbiente = process.env.ANTHROPIC_MODEL;
+  delete process.env.ANTHROPIC_MODEL;
+  t.after(() => {
+    if (modeloAmbiente === undefined) delete process.env.ANTHROPIC_MODEL;
+    else process.env.ANTHROPIC_MODEL = modeloAmbiente;
+  });
+  const provider = criarProviderAnthropic({ cliente: {} });
+  await assert.rejects(provider.executar({ pergunta: 'x', instrucoes: 'x', tools: [], maxRodadas: 1 }), /exige um modelo/);
+});
+
+test('assistente responde conversa geral sem executar agente corporativo', async () => {
+  let corporativo = false;
+  const resultado = await executarAssistente('Explique EBITDA', {
+    memoria: memoriaFalsa(), auditoriaIA: false,
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar({ tools }) {
+        assert.equal(tools.length, 1);
+        return { texto: 'EBITDA e um indicador.', provider: 'mock', modelo: 'mock' };
+      }
+    },
+    executarAgenteCorporativo: async () => { corporativo = true; }
+  });
+  assert.equal(resultado.proveniencia, 'conhecimento_geral');
+  assert.equal(corporativo, false);
+});
+
+test('guarda corporativa consulta o agente existente antes da resposta final', async () => {
+  let perguntaCorporativa;
+  const resultado = await executarAssistente('Veja o produto 7899552110892', {
+    memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: {
+      async avaliar() { return { permitida: true }; },
+      async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
+      async concluirTool() {}
+    },
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar({ tools, mensagens }) {
+        assert.equal(tools.length, 0);
+        assert.match(mensagens.at(-1).content, /Evidencia corporativa/);
+        return { texto: 'O produto foi localizado.', provider: 'mock', modelo: 'mock' };
+      }
+    },
+    executarAgenteCorporativo: async (pergunta) => {
+      perguntaCorporativa = pergunta;
+      return {
+        texto: 'Produto localizado.',
+        roteamento: { perfilInicial: 'produto', ferramentasExecutadas: ['resolver_produto'] }
+      };
+    }
+  });
+  assert.equal(perguntaCorporativa, 'Veja o produto 7899552110892');
+  assert.equal(resultado.proveniencia, 'dados_nexus');
+  assert.deepEqual(resultado.evidencia.toolsUsed, ['resolver_produto']);
+});
+
+test('SQL corporativo e entregue diretamente sem passar por outra LLM', async () => {
+  let chamouGeneralista = false;
+  const resultado = await executarAssistente('Crie um SQL para meus produtos', {
+    memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: {
+      async avaliar() { return { permitida: true }; },
+      async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
+      async concluirTool() {}
+    },
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar() { chamouGeneralista = true; return { texto: 'nao deveria ocorrer' }; }
+    },
+    executarAgenteCorporativo: async () => ({
+      texto: 'SELECT sku FROM produto',
+      roteamento: { perfilInicial: 'sql', ferramentasExecutadas: ['construir_sql'] }
+    })
+  });
+  assert.equal(chamouGeneralista, false);
+  assert.equal(resultado.texto, 'SELECT sku FROM produto');
+  assert.equal(resultado.provider, 'nexus');
+});
+
+test('fallback generalista reutiliza a consulta Nexus feita no turno', async () => {
+  let consultasCorporativas = 0;
+  const primario = {
+    nome: 'primario', modelo: 'p',
+    async executar(contexto) {
+      await contexto.tools[0].executar({ objetivo: 'consultar pedidos internos' });
+      const erro = new Error('rate limit');
+      erro.status = 429;
+      throw erro;
+    }
+  };
+  const fallback = {
+    nome: 'fallback', modelo: 'f',
+    async executar(contexto) {
+      assert.equal(contexto.tools.length, 0);
+      assert.match(contexto.mensagens.at(-1).content, /ja consultada/);
+      return { texto: 'Resposta preservada.', provider: 'fallback', modelo: 'f' };
+    }
+  };
+  const resultado = await executarAssistente('Pode me ajudar com uma analise?', {
+    memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: {
+      async avaliar() { return { permitida: true }; },
+      async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
+      async concluirTool() {}
+    },
+    generalistProvider: criarProviderResiliente(primario, fallback, { tentativasExtras: 0 }),
+    executarAgenteCorporativo: async () => {
+      consultasCorporativas += 1;
+      return { texto: 'Dados localizados.', roteamento: { perfilInicial: 'vendas' } };
+    }
+  });
+  assert.equal(consultasCorporativas, 1);
+  assert.equal(resultado.fallbackDe, 'primario');
+  assert.equal(resultado.proveniencia, 'dados_nexus');
+});
+
+test('historico visivel remove inicio invalido e combina papeis consecutivos', () => {
+  assert.deepEqual(normalizarHistoricoVisivel([
+    { role: 'assistant', content: 'orfao' },
+    { role: 'user', content: 'parte 1' },
+    { role: 'user', content: 'parte 2' },
+    { role: 'tool', content: 'interno' },
+    { role: 'assistant', content: 'resposta' }
+  ]), [
+    { role: 'user', content: 'parte 1\n\nparte 2' },
+    { role: 'assistant', content: 'resposta' }
+  ]);
+});
+
+test('CLI le configuracoes independentes da IA generalista', () => {
+  const recebido = lerArgumentos([
+    '--assistant-mode', 'generalist', '--generalist-provider', 'anthropic',
+    '--generalist-model', 'claude-x', '--provider', 'groq', 'Ola'
+  ]);
+  assert.equal(recebido.opcoes.assistantMode, 'generalist');
+  assert.equal(recebido.opcoes.generalistProviderNome, 'anthropic');
+  assert.equal(recebido.opcoes.generalistModelo, 'claude-x');
+  assert.equal(recebido.opcoes.providerNome, 'groq');
+  assert.equal(resolverModoAssistente('corporate'), 'corporate');
+});

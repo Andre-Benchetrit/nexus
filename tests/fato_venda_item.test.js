@@ -97,7 +97,8 @@ test.before(async () => {
   `);
   await criarBronze('produto', `
     SELECT 1 AS id_produto, 'Produto A' AS descricao, 'SKU-1' AS codigo_auxiliar,
-      '789' AS cod_barra, 'FAB' AS cod_fabrica, 10 AS id_grupo,
+      '789' AS cod_barra, 'FAB' AS cod_fabrica, 0 AS composicao_estoque,
+      10 AS id_grupo,
       20 AS id_subgrupo, 30 AS id_marca, 40 AS id_categoria,
       6::DECIMAL(15,4) AS custo, 100 AS id_fornecedor,
       200 AS id_comprador, 2 AS prazo_separacao,

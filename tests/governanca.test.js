@@ -17,6 +17,7 @@ test('auditoria conserva somente nomes de argumentos nao sensiveis', () => {
 
 test('mapeia fachadas para permissoes explicitas', () => {
   assert.equal(permissaoDaFerramenta('analisar_vendas'), 'vendas.consultar');
+  assert.equal(permissaoDaFerramenta('analisar_giro_estoque'), 'estoque.consultar');
   assert.equal(permissaoDaFerramenta('construir_sql'), 'sql.gerar');
   assert.equal(permissaoDaFerramenta('consultar_bronze'), 'bronze.auditar');
 });

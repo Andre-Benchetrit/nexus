@@ -19,6 +19,8 @@ const OPERADORES_FILTRO_VENDAS = Object.freeze([
 ]);
 const DIMENSOES = Object.freeze({
   produto: { campo: 'descricao_produto', nivel: 'item' },
+  id_produto: { campo: 'id_produto', nivel: 'item' },
+  cod_barras: { campo: 'ean', nivel: 'item' },
   marca: { campo: 'marca', nivel: 'item' },
   grupo: { campo: 'grupo', nivel: 'item' },
   subgrupo: { campo: 'subgrupo', nivel: 'item' },
@@ -32,6 +34,8 @@ const DIMENSOES = Object.freeze({
 });
 const CAMPOS_FILTRO = Object.freeze({
   produto: { campo: 'descricao_produto', nivel: 'item' },
+  id_produto: { campo: 'id_produto', nivel: 'item' },
+  cod_barras: { campo: 'ean', nivel: 'item' },
   marca: { campo: 'marca', nivel: 'item' },
   grupo: { campo: 'grupo', nivel: 'item' },
   subgrupo: { campo: 'subgrupo', nivel: 'item' },

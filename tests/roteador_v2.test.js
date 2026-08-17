@@ -137,6 +137,27 @@ test('planejador rejeita fachada de outro dominio e preserva a especializada', (
   assert.equal(plano.rejeitadas[0].motivo, 'dominio_incompativel');
 });
 
+test('agregacao visual de bloqueios preserva a fachada especializada sem inventar vendas', () => {
+  const decisao = normalizarDecisao(decisaoBloqueios({
+    pergunta_autonoma: 'Liste os pedidos bloqueados hoje agrupados por produto.',
+    dominios_secundarios: ['estoque', 'vendas'],
+    intencao: 'agregar',
+    campos_solicitados: [
+      'marketplace_pedido', 'sku', 'ean', 'descricao_produto', 'quantidade_pedida', 'bloqueio'
+    ],
+    plano_sugerido: [
+      { ferramenta: 'consultar_bloqueios_sem_estoque', finalidade: 'listar e agrupar na resposta' },
+      { ferramenta: 'diagnosticar_bloqueio_sem_estoque', finalidade: 'enriquecer' }
+    ]
+  }));
+  const plano = validarPlanoSugerido(decisao);
+  assert.deepEqual(plano.ferramentas, ['consultar_bloqueios_sem_estoque']);
+  assert.equal(plano.rejeitadas[0].ferramenta, 'diagnosticar_bloqueio_sem_estoque');
+  assert.equal(plano.rejeitadas[0].motivo, 'intencao_incompativel');
+  assert.equal(plano.capacidadesAusentes.includes('intencao:agregar@vendas'), false);
+  assert.equal(plano.capacidadesAusentes.includes('intencao:agregar@estoque'), false);
+});
+
 test('planejador não autoriza Bronze sem intenção de auditoria', () => {
   const decisao = normalizarDecisao(decisaoBloqueios({
     dominio_primario: 'bronze',
