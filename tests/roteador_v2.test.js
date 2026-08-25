@@ -106,26 +106,21 @@ test('normalizador de entidades rejeita propriedades e valores estruturados desc
   );
 });
 
-test('schema da Groq anuncia objeto além de array e string para entidades', () => {
+test('schema da Groq anuncia forma canonica simples e normalizador local preserva tolerancia', () => {
   const [tool] = converterTools([definicaoRegistrarDecisaoRota]);
   const schema = tool.function.parameters.properties.entidades;
-  assert.ok(schema.anyOf.some((item) => item.type === 'object'));
-  assert.ok(schema.anyOf.some((item) => Array.isArray(item.type) && item.type.includes('array')));
-  const objetosEntidade = [];
-  function visitar(item) {
-    if (!item || typeof item !== 'object') return;
-    if (item.properties?.tipo && item.properties?.valores && item.properties?.origem) {
-      objetosEntidade.push(item);
-    }
-    Object.values(item.properties || {}).forEach(visitar);
-    if (item.items) visitar(item.items);
-    for (const combinador of ['anyOf', 'oneOf', 'allOf']) {
-      (item[combinador] || []).forEach(visitar);
-    }
-  }
-  visitar(schema);
-  assert.ok(objetosEntidade.length >= 2);
-  assert.ok(objetosEntidade.every((item) => JSON.stringify(item.required) === '["tipo"]'));
+  assert.equal(schema.type, 'array');
+  assert.deepEqual(schema.items.required, ['tipo']);
+  assert.equal(schema.items.properties.valores.required, undefined);
+});
+
+test('normaliza nomes de campos e lacunas sem diferenciar maiusculas', () => {
+  const decisao = normalizarDecisao(decisaoBloqueios({
+    campos_solicitados: ['EAN', 'Marketplace Pedido'],
+    capacidades_ausentes: ['campo:SKU', 'outra_regra']
+  }));
+  assert.deepEqual(decisao.camposSolicitados, ['ean', 'marketplace_pedido']);
+  assert.deepEqual(decisao.capacidadesAusentes, ['campo:sku', 'outra_regra']);
 });
 
 test('planejador rejeita fachada de outro dominio e preserva a especializada', () => {

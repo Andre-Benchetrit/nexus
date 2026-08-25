@@ -312,6 +312,26 @@ function ferramentaTecnica(nome) {
   return /^(consultar|agregar)_(gold|silver|bronze)$/.test(nome);
 }
 
+const CONTROLES_VOLUME_NORMALIZAVEIS = new Set(['limite', 'limite_por_dimensao']);
+
+function normalizarControlesVolume(argumentos, schema = {}) {
+  const normalizados = { ...(argumentos || {}) };
+  const ajustes = [];
+  for (const campo of CONTROLES_VOLUME_NORMALIZAVEIS) {
+    const definicao = schema.properties?.[campo];
+    const recebido = normalizados[campo];
+    if (!definicao || !Number.isInteger(recebido)) continue;
+    let valor = recebido;
+    if (Number.isFinite(definicao.minimum)) valor = Math.max(valor, definicao.minimum);
+    if (Number.isFinite(definicao.maximum)) valor = Math.min(valor, definicao.maximum);
+    if (valor !== recebido) {
+      normalizados[campo] = valor;
+      ajustes.push({ campo, recebido, aplicado: valor });
+    }
+  }
+  return { argumentos: normalizados, ajustes };
+}
+
 function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
   return ferramentas.map((ferramenta) => ({
     ...ferramenta,
@@ -319,10 +339,43 @@ function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
       const inicio = Date.now();
       let sucesso = false;
       let contextoExecucao = null;
-      const argumentosEfetivos = opcoes.normalizarArgumentos
+      let preparacaoEstado = null;
+      const argumentosPolitica = opcoes.normalizarArgumentos
         ? opcoes.normalizarArgumentos(ferramenta.definicao.name, argumentos)
         : argumentos;
+      const normalizacaoVolume = normalizarControlesVolume(
+        argumentosPolitica,
+        ferramenta.definicao.parameters || {}
+      );
+      const argumentosEfetivos = normalizacaoVolume.argumentos;
       try {
+        if (normalizacaoVolume.ajustes.length) {
+          onEvento?.(`Argumentos de volume normalizados para ${ferramenta.definicao.name}: ${JSON.stringify(normalizacaoVolume.ajustes)}.`);
+          opcoes.estadoExecucao?.checkpoint('tool_arguments_normalized', {
+            dados: { nome: ferramenta.definicao.name, ajustes: normalizacaoVolume.ajustes }
+          });
+          await opcoes.onArgumentosNormalizados?.(
+            ferramenta.definicao.name,
+            normalizacaoVolume.ajustes
+          );
+        }
+        const politica = {
+          ...(opcoes.obterPolitica?.(ferramenta.definicao.name) || {}),
+          argumentosHandoff: Object.keys(ferramenta.definicao.parameters?.properties || {})
+        };
+        preparacaoEstado = opcoes.estadoExecucao?.prepararTool(
+          ferramenta.definicao.name, argumentosEfetivos, politica
+        ) || null;
+        if (preparacaoEstado?.reutilizar) {
+          await opcoes.onResultado?.(
+            ferramenta.definicao.name,
+            preparacaoEstado.resultado,
+            argumentosEfetivos,
+            { contextoExecucao: null, duracaoMs: 0, reutilizado: true }
+          );
+          sucesso = true;
+          return preparacaoEstado.resultado;
+        }
         contextoExecucao = await opcoes.antesDeExecutar?.(
           ferramenta.definicao.name, argumentosEfetivos
         );
@@ -331,6 +384,16 @@ function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
           onEvento?.(`Argumentos: ${JSON.stringify(argumentosEfetivos).slice(0, 1200)}`);
         }
         const resultado = await ferramenta.executar(argumentosEfetivos);
+        opcoes.estadoExecucao?.concluirTool(
+          ferramenta.definicao.name,
+          argumentosEfetivos,
+          opcoes.extrairResultadoHandoff?.(ferramenta.definicao.name, resultado) ?? resultado,
+          {
+            politica,
+            execucaoId: contextoExecucao?.execucaoId || null,
+            referencias: opcoes.extrairReferencias?.(resultado) || {}
+          }
+        );
         await opcoes.onResultado?.(
           ferramenta.definicao.name, resultado, argumentosEfetivos,
           { contextoExecucao, duracaoMs: Date.now() - inicio }
@@ -338,6 +401,15 @@ function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
         sucesso = true;
         return resultado;
       } catch (erro) {
+        opcoes.estadoExecucao?.falharTool(
+          ferramenta.definicao.name,
+          argumentosEfetivos,
+          erro,
+          {
+            validacao: /argument|schema|inval|invál|deve |limite|desconhecid|rejeitad/i
+              .test(String(erro.message || ''))
+          }
+        );
         await opcoes.onErro?.(
           ferramenta.definicao.name, erro, argumentosEfetivos,
           { contextoExecucao, duracaoMs: Date.now() - inicio }
@@ -359,6 +431,7 @@ module.exports = {
   FERRAMENTAS_NEGOCIO,
   ferramentaDeNegocio,
   ferramentaTecnica,
+  normalizarControlesVolume,
   obterFerramentaPorNome,
   obterPerfilDaFerramenta,
   PERFIS_TOOLS,

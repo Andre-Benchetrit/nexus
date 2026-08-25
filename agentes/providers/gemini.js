@@ -1,10 +1,11 @@
-const MODELO_PADRAO_GEMINI = 'gemini-3.1-flash-lite';
+const MODELO_PADRAO_GEMINI = 'gemini-3.5-flash-lite';
 const { aceitaNulo, normalizarArgumentosPeloSchema } = require('./schema');
 const {
   estimarComposicaoInput,
   executarChamadaAuditada,
   normalizarUsageGemini
 } = require('./telemetria');
+const { emitirCheckpoint } = require('./checkpoints');
 
 function converterSchemaGemini(schema) {
   if (!schema || typeof schema !== 'object') return schema;
@@ -89,13 +90,15 @@ function criarProviderGemini(opcoes = {}) {
     executarTool,
     maxRodadas,
     onEvento,
+    onCheckpoint,
     mensagens,
     telemetria,
     stage = 'business_reasoning',
     stageFinal,
     purpose = 'corporate_query',
     parentCallId = null,
-    fallbackFromCallId = null
+    fallbackFromCallId = null,
+    returnAfterTerminalTool = false
   }) {
     const client = await obterCliente();
     const ferramentas = Array.isArray(tools)
@@ -128,6 +131,10 @@ function criarProviderGemini(opcoes = {}) {
         delete config.toolConfig;
       }
       onEvento?.(`Gemini: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
+      emitirCheckpoint(onCheckpoint, 'modelo_solicitado', {
+        etapa: houveTool && stageFinal ? stageFinal : stage,
+        provider: 'gemini', rodada: rodada + 1
+      });
       const auditada = await executarChamadaAuditada({
         telemetria, provider: 'gemini', modelo,
         stage: houveTool && stageFinal ? stageFinal : stage,
@@ -146,11 +153,20 @@ function criarProviderGemini(opcoes = {}) {
       });
       const resposta = auditada.resposta;
       const conteudoModelo = resposta.candidates?.[0]?.content;
+      emitirCheckpoint(onCheckpoint, 'modelo_respondeu', {
+        etapa: houveTool && stageFinal ? stageFinal : stage,
+        provider: 'gemini', rodada: rodada + 1, callId: auditada.callId,
+        stopReason: resposta.candidates?.[0]?.finishReason || null
+      });
       onEvento?.(`Gemini: rodada ${rodada + 1} recebida.`);
       if (conteudoModelo) contents.push(conteudoModelo);
 
       const chamadas = resposta.functionCalls || [];
       if (!chamadas.length) {
+        emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
+          etapa: houveTool && stageFinal ? stageFinal : stage,
+          provider: 'gemini', rodada: rodada + 1, callId: auditada.callId
+        });
         return {
           texto: resposta.text || '',
           provider: 'gemini',
@@ -167,6 +183,9 @@ function criarProviderGemini(opcoes = {}) {
       houveTool = true;
       for (const chamada of chamadas) {
         let output;
+        emitirCheckpoint(onCheckpoint, 'tool_sugerida', {
+          etapa: stage, provider: 'gemini', nome: chamada.name, callId: auditada.callId
+        });
         try {
           const ferramenta = ferramentasPorNome.get(chamada.name);
           if (!ferramenta) throw new Error(`Tool desconhecida: ${chamada.name}`);
@@ -174,12 +193,19 @@ function criarProviderGemini(opcoes = {}) {
             chamada.args || {}, ferramenta.definicao.parameters
           );
           output = await ferramenta.executar(argumentos);
+          emitirCheckpoint(onCheckpoint, 'tool_aceita', {
+            etapa: stage, provider: 'gemini', nome: chamada.name
+          });
           const terminal = typeof ferramenta.terminal === 'function'
             ? ferramenta.terminal(argumentos, output)
             : ferramenta.terminal;
           if (terminal === true) deveFinalizar = true;
         } catch (erro) {
           output = JSON.stringify({ erro: erro.message });
+          emitirCheckpoint(onCheckpoint, 'tool_rejeitada', {
+            etapa: stage, provider: 'gemini', nome: chamada.name,
+            codigo: erro.codigo || erro.code || erro.name || 'ERRO_TOOL'
+          });
         }
         respostasDeFuncao.push({
           functionResponse: {
@@ -191,9 +217,24 @@ function criarProviderGemini(opcoes = {}) {
         resultadosParaAuditoria.push(output);
       }
       contents.push({ role: 'user', parts: respostasDeFuncao });
+      if (returnAfterTerminalTool && deveFinalizar) {
+        emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
+          etapa: stage, provider: 'gemini', rodada: rodada + 1,
+          callId: auditada.callId, motivo: 'tool_terminal'
+        });
+        return {
+          texto: resposta.text || '', provider: 'gemini', modelo,
+          rodadas: rodada + 1, responseId: resposta.responseId || null
+        };
+      }
     }
 
-    throw new Error(`O provider gemini excedeu ${maxRodadas} rodadas de tools.`);
+    emitirCheckpoint(onCheckpoint, 'provider_esgotou_rodadas', {
+      etapa: stage, provider: 'gemini', maxRodadas
+    });
+    const erro = new Error(`O provider gemini excedeu ${maxRodadas} rodadas de tools.`);
+    erro.codigo = 'MAX_RODADAS';
+    throw erro;
   }
 
   return { nome: 'gemini', modelo, executar };

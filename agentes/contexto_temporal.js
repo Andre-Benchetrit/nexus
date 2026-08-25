@@ -36,6 +36,26 @@ function dataBrasileiraParaIso(valor) {
 
 function extrairContextoTemporal(pergunta, dataReferencia) {
   const texto = String(pergunta || '');
+  const normalizado = texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (
+    /\b(?:este|deste|nesse|no) mes\b|\bmes atual\b/.test(normalizado) &&
+    /\bmes anterior\b|\b(?:com|versus|vs\.?) o anterior\b/.test(normalizado)
+  ) {
+    const atual = new Date(`${dataReferencia}T00:00:00.000Z`);
+    const inicioAtual = `${atual.getUTCFullYear()}-${String(atual.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const anterior = new Date(Date.UTC(atual.getUTCFullYear(), atual.getUTCMonth() - 1, 1));
+    const ultimoDiaAnterior = new Date(Date.UTC(
+      anterior.getUTCFullYear(), anterior.getUTCMonth() + 1, 0
+    )).getUTCDate();
+    const diaComparavel = Math.min(atual.getUTCDate(), ultimoDiaAnterior);
+    const inicioAnterior = `${anterior.getUTCFullYear()}-${String(anterior.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const fimAnterior = `${anterior.getUTCFullYear()}-${String(anterior.getUTCMonth() + 1).padStart(2, '0')}-${String(diaComparavel).padStart(2, '0')}`;
+    return {
+      tipo: 'comparacao_periodos', origem: 'mes_atual_vs_anterior_mesma_cobertura',
+      inicio: inicioAtual, fim: dataReferencia,
+      periodoAnterior: { inicio: inicioAnterior, fim: fimAnterior }
+    };
+  }
   const relativos = [
     /\banteontem\b/i.test(texto),
     /\bontem\b/i.test(texto),

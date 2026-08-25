@@ -4,10 +4,22 @@ const assert = require('node:assert/strict');
 const { lerManifesto } = require('../nexus/pricing');
 const { construirFiltros } = require('../nexus/relatorios_uso');
 
-test('manifesto versionado inicial e valido e nao inventa precos', () => {
+test('manifesto versionado cobre composicao oficial sem inventar cambio corporativo', () => {
   const manifesto = lerManifesto();
-  assert.equal(manifesto.version, '2026-08-inicial');
-  assert.deepEqual(manifesto.pricingRates, []);
+  assert.equal(manifesto.version, '2026-08-17-oficial');
+  assert.equal(manifesto.pricingRates.length, 18);
+  assert.ok(manifesto.pricingRates.some((item) => (
+    item.provider === 'groq' && item.model === 'openai/gpt-oss-120b' &&
+    item.metric === 'output_tokens' && item.priceUsd === 0.6
+  )));
+  assert.ok(manifesto.pricingRates.some((item) => (
+    item.provider === 'anthropic' && item.model === 'claude-sonnet-5' &&
+    item.metric === 'input_tokens' && item.effectiveFrom === '2026-09-01' &&
+    item.priceUsd === 3
+  )));
+  assert.ok(manifesto.pricingRates.some((item) => (
+    item.provider === 'gemini' && item.model === 'gemini-3.5-flash-lite'
+  )));
   assert.deepEqual(manifesto.exchangeRates, []);
 });
 

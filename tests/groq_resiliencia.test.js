@@ -76,6 +76,32 @@ test('provider Groq executa uma tool pelo Chat Completions', async () => {
   assert.equal(requisicoes[1].messages.at(-1).tool_call_id, 'call_groq_1');
 });
 
+test('provider Groq encerra contrato estruturado na propria tool terminal', async () => {
+  let requisicoes = 0;
+  const cliente = { chat: { completions: { async create() {
+    requisicoes += 1;
+    return {
+      id: 'groq_terminal',
+      choices: [{ message: { role: 'assistant', content: null, tool_calls: [{
+        id: 'call_terminal', type: 'function',
+        function: { name: 'registrar', arguments: '{}' }
+      }] } }]
+    };
+  } } } };
+  let executada = 0;
+  const resultado = await criarProviderGroq({ cliente }).executar({
+    pergunta: 'x', instrucoes: 'registre', maxRodadas: 3,
+    returnAfterTerminalTool: true,
+    tools: [{
+      definicao: definicaoMinima('registrar'), terminal: true,
+      executar: async () => { executada += 1; return '{"ok":true}'; }
+    }]
+  });
+  assert.equal(requisicoes, 1);
+  assert.equal(executada, 1);
+  assert.equal(resultado.rodadas, 1);
+});
+
 test('Groq reconhece tools adicionadas durante o loop', async () => {
   const requisicoes = [];
   const chamada = (id, name) => ({

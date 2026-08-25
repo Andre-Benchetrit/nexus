@@ -21,9 +21,23 @@ function capacidade({
   entidades,
   campos,
   operacoes,
-  mutavel = true
+  mutavel = true,
+  efeito = 'leitura',
+  idempotencia = true,
+  politicaReutilizacao = 'mesmo_turno',
+  extratorEvidenciaHandoff = (resultado) => resultado,
+  transformacoesPermitidas = ['resumir', 'formatar_tabela'],
+  derivacoesPermitidas = [],
+  granularidades = [],
+  volumeMaximoSintese = 100,
+  perfilResposta = 'flexivel_com_evidencia'
 }) {
-  return Object.freeze({ dominio, camada, intencoes, entidades, campos, operacoes, mutavel });
+  return Object.freeze({
+    dominio, camada, intencoes, entidades, campos, operacoes, mutavel,
+    efeito, idempotencia, politicaReutilizacao, extratorEvidenciaHandoff,
+    transformacoesPermitidas, derivacoesPermitidas, granularidades,
+    volumeMaximoSintese, perfilResposta
+  });
 }
 
 const REGISTRO_CAPACIDADES = Object.freeze({
@@ -31,19 +45,31 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     dominio: 'indicadores', intencoes: ['resumir', 'comparar', 'listar'],
     entidades: ['indicador', 'pedido', 'faturamento', 'estoque'],
     campos: ['pedidos_pagos', 'valor_pedidos_pagos', 'faturamento', 'rupturas', 'data'],
-    operacoes: ['resumir', 'painel', 'comparar', 'tendencia']
+    operacoes: ['resumir', 'painel', 'comparar', 'tendencia'],
+    transformacoesPermitidas: ['resumir', 'ordenar', 'destacar', 'comparar_periodos', 'formatar_tabela'],
+    derivacoesPermitidas: ['variacao_absoluta', 'variacao_percentual'],
+    granularidades: ['dia', 'periodo', 'indicador']
   }),
   analisar_influencias: capacidade({
     dominio: 'influencias', intencoes: ['comparar', 'explicar', 'ranquear'],
     entidades: ['marca', 'produto', 'plataforma'],
-    campos: ['faturamento', 'diferenca', 'variacao_percentual'],
-    operacoes: ['comparar']
+    campos: [
+      'faturamento', 'diferenca', 'variacao_percentual',
+      'plataforma', 'marketplace', 'marca', 'produto'
+    ],
+    operacoes: ['comparar'],
+    transformacoesPermitidas: ['resumir', 'ordenar', 'destacar', 'comparar_periodos', 'formatar_tabela'],
+    derivacoesPermitidas: ['variacao_absoluta', 'variacao_percentual', 'participacao_variacao'],
+    granularidades: ['marca', 'produto', 'plataforma']
   }),
   analisar_rupturas: capacidade({
     dominio: 'estoque', intencoes: ['resumir', 'listar', 'ranquear', 'diagnosticar'],
     entidades: ['produto', 'marca', 'sku', 'ean'],
     campos: ['estoque', 'cobertura', 'risco', 'sku', 'ean', 'descricao_produto'],
-    operacoes: ['resumir', 'listar', 'ranquear_marcas']
+    operacoes: ['resumir', 'listar', 'ranquear_marcas'],
+    transformacoesPermitidas: ['resumir', 'agrupar', 'ordenar', 'destacar', 'formatar_tabela'],
+    derivacoesPermitidas: ['contagem_por_classificacao'],
+    granularidades: ['produto', 'marca']
   }),
   analisar_giro_estoque: capacidade({
     dominio: 'estoque', intencoes: ['ranquear', 'listar', 'comparar'],
@@ -52,13 +78,27 @@ const REGISTRO_CAPACIDADES = Object.freeze({
       'estoque_total', 'quantidade_reservada', 'quantidade_vendida_periodo',
       'faturamento_periodo', 'indice_baixo_giro', 'sku', 'ean', 'descricao_produto'
     ],
-    operacoes: ['ranquear_menor_giro']
+    operacoes: ['ranquear_menor_giro'],
+    transformacoesPermitidas: ['resumir', 'agrupar', 'ordenar', 'destacar', 'formatar_tabela'],
+    derivacoesPermitidas: ['participacao_estoque', 'participacao_vendas'],
+    granularidades: ['produto', 'marca']
   }),
   analisar_reposicoes: capacidade({
     dominio: 'reposicoes', intencoes: ['resumir', 'listar', 'detalhar', 'agregar'],
-    entidades: ['produto', 'sku', 'ean', 'pedido_compra', 'nota_entrada'],
-    campos: ['quantidade', 'data_entrada', 'sku', 'ean', 'notas_fiscais_entrada'],
-    operacoes: ['listar', 'somar_quantidade', 'ultimo_recebimento']
+    entidades: [
+      'produto', 'sku', 'pedido_compra', 'nota_entrada', 'fornecedor', 'marca',
+      'data_prevista', 'status_logistico'
+    ],
+    campos: [
+      'produto', 'descricao_produto', 'sku', 'fornecedor', 'marca',
+      'numero_pedido_compra', 'data_prevista', 'data_entrada',
+      'quantidade', 'quantidade_pedida', 'quantidade_recebida', 'quantidade_pendente',
+      'status_logistico', 'notas_fiscais_entrada'
+    ],
+    operacoes: ['listar', 'somar_quantidade', 'resumir_status', 'ultimo_recebimento'],
+    transformacoesPermitidas: ['resumir', 'agrupar', 'ordenar', 'destacar', 'formatar_tabela'],
+    derivacoesPermitidas: ['saldo_pendente_comprovado'],
+    granularidades: ['produto', 'pedido_compra', 'nota_entrada', 'data_entrada']
   }),
   consultar_bloqueios_sem_estoque: capacidade({
     dominio: 'bloqueios_estoque',
@@ -68,40 +108,65 @@ const REGISTRO_CAPACIDADES = Object.freeze({
       'marketplace_pedido', 'id_nota_saida', 'canal_venda', 'sku', 'ean',
       'descricao_produto', 'quantidade_pedida', 'bloqueio'
     ],
-    operacoes: ['resumir', 'listar', 'listar_itens', 'detalhar_pedido', 'agrupar_na_resposta']
+    operacoes: ['resumir', 'listar', 'listar_itens', 'detalhar_pedido', 'agrupar_na_resposta'],
+    transformacoesPermitidas: [
+      'resumir', 'agrupar', 'ordenar', 'destacar', 'remover_repeticoes', 'formatar_tabela'
+    ],
+    derivacoesPermitidas: ['contagem_por_produto', 'contagem_prazos_vencidos'],
+    granularidades: ['pedido', 'produto', 'sku', 'ean']
   }),
   diagnosticar_bloqueio_sem_estoque: capacidade({
     dominio: 'bloqueios_estoque', intencoes: ['diagnosticar', 'explicar', 'detalhar'],
     entidades: ['pedido', 'produto', 'sku'],
     campos: ['marketplace_pedido', 'estoque', 'saldo_cd', 'reposicao', 'classificacao'],
-    operacoes: ['diagnosticar']
+    operacoes: ['diagnosticar'],
+    transformacoesPermitidas: ['resumir', 'ordenar', 'destacar', 'formatar_tabela'],
+    derivacoesPermitidas: [],
+    granularidades: ['pedido', 'produto']
   }),
   analisar_desempenho: capacidade({
     dominio: 'desempenho', intencoes: ['ranquear', 'listar', 'comparar'],
     entidades: ['produto', 'marca', 'grupo', 'categoria', 'plataforma'],
     campos: ['faturamento', 'quantidade', 'margem', 'custo'],
-    operacoes: ['ranquear']
+    operacoes: ['ranquear'],
+    transformacoesPermitidas: ['resumir', 'agrupar', 'ordenar', 'destacar', 'formatar_tabela'],
+    derivacoesPermitidas: ['participacao_percentual'],
+    granularidades: ['produto', 'marca', 'grupo', 'categoria', 'plataforma']
   }),
   analisar_frete: capacidade({
     dominio: 'frete', intencoes: ['resumir', 'listar', 'ranquear', 'comparar'],
     entidades: ['pedido', 'plataforma', 'transportadora', 'regra_transporte'],
     campos: ['frete_cobrado', 'custo_frete', 'resultado_frete'],
-    operacoes: ['resumir', 'ranquear']
+    operacoes: ['resumir', 'ranquear'],
+    transformacoesPermitidas: ['resumir', 'agrupar', 'ordenar', 'destacar', 'formatar_tabela'],
+    derivacoesPermitidas: ['participacao_percentual'],
+    granularidades: ['pedido', 'plataforma', 'transportadora', 'regra_transporte']
   }),
   analisar_operacao: capacidade({
     dominio: 'operacao', intencoes: ['resumir', 'listar', 'ranquear'],
     entidades: ['pedido', 'plataforma'],
     campos: ['status', 'cancelados', 'pendentes', 'devolvidos'],
-    operacoes: ['funil', 'ranquear']
+    operacoes: ['funil', 'ranquear'],
+    transformacoesPermitidas: ['resumir', 'agrupar', 'ordenar', 'destacar', 'formatar_tabela'],
+    derivacoesPermitidas: ['taxa_sobre_total'],
+    granularidades: ['pedido', 'plataforma', 'status']
   }),
   analisar_vendas: capacidade({
     dominio: 'vendas', intencoes: ['resumir', 'listar', 'ranquear', 'localizar', 'agregar'],
     entidades: ['pedido', 'nota_saida', 'produto', 'marca', 'cliente', 'transportadora'],
     campos: [
       'marketplace_pedido', 'nota_fiscal', 'quantidade', 'valor',
-      'faturamento', 'data_pedido'
+      'faturamento', 'data_pedido', 'plataforma',
+      'quantidade_pedidos', 'quantidade_notas_fiscais', 'quantidade_itens',
+      'quantidade_vendida', 'valor_total', 'valor_total_pedidos',
+      'valor_total_vendido', 'faturamento_emitido'
     ],
-    operacoes: ['resumir', 'listar', 'ranquear', 'localizar_notas']
+    operacoes: ['resumir', 'listar', 'ranquear', 'localizar_notas'],
+    transformacoesPermitidas: [
+      'resumir', 'agrupar', 'ordenar', 'destacar', 'remover_repeticoes', 'formatar_tabela'
+    ],
+    derivacoesPermitidas: ['participacao_percentual', 'variacao_absoluta', 'variacao_percentual'],
+    granularidades: ['pedido', 'nota_saida', 'item', 'produto', 'marca', 'transportadora']
   }),
   analisar_catalogo: capacidade({
     dominio: 'catalogo', intencoes: ['resumir', 'listar', 'detalhar', 'ranquear'],
@@ -218,15 +283,45 @@ function obterCapacidade(nome) {
   return REGISTRO_CAPACIDADES[nome] || null;
 }
 
+function calcularOrcamentoTecnico(decisao, ferramentas = []) {
+  const capacidades = ferramentas.map(obterCapacidade).filter(Boolean);
+  const fachadas = capacidades.filter((item) => item.camada === 'negocio');
+  const camposPedidos = decisao.camposSolicitados || [];
+  const comparacaoCoberta = decisao.intencao === 'comparar' && fachadas.some(
+    (item) => item.intencoes.includes('comparar') &&
+      camposPedidos.every((campo) => item.campos.includes(campo))
+  );
+  const dominiosNecessarios = new Set(fachadas.map((item) => item.dominio));
+  let consultasFinais = 1;
+  if (decisao.intencao === 'comparar' && !comparacaoCoberta) consultasFinais = 2;
+  if (dominiosNecessarios.size > 1) consultasFinais = Math.max(
+    consultasFinais,
+    Math.min(3, dominiosNecessarios.size)
+  );
+  return Object.freeze({ descoberta: 1, final: consultasFinais, maximoFinal: 3 });
+}
+
 function validarPlanoSugerido(decisao) {
   const dominios = new Set([
     decisao.dominioPrimario,
     ...(decisao.dominiosSecundarios || [])
   ].filter(Boolean));
-  const aceitas = [];
+  const contextoDecisao = JSON.stringify({
+    pergunta: decisao.perguntaAutonoma,
+    campos: decisao.camposSolicitados,
+    filtros: decisao.filtros,
+    requisitos: decisao.requisitosResposta
+  }).toLowerCase();
+  const influenciaPorPlataforma = decisao.intencao === 'comparar' &&
+    /faturamento/.test(contextoDecisao) && /(marketplace|plataforma|canal)/.test(contextoDecisao);
+  if (influenciaPorPlataforma) dominios.add('influencias');
+  const aceitas = influenciaPorPlataforma ? ['analisar_influencias'] : [];
   const rejeitadas = [];
   for (const sugestao of decisao.planoSugerido || []) {
     const nome = sugestao.ferramenta;
+    if (influenciaPorPlataforma && ['analisar_indicadores', 'analisar_vendas'].includes(nome)) {
+      continue;
+    }
     const item = obterCapacidade(nome);
 
     if (!item) {
@@ -269,6 +364,9 @@ function validarPlanoSugerido(decisao) {
   }
 
   for (const dominio of dominios) {
+    if (influenciaPorPlataforma && dominio === decisao.dominioPrimario && dominio !== 'influencias') {
+      continue;
+    }
     if (dominio !== decisao.dominioPrimario) continue;
     if (dominio === 'hibrido') continue;
     if (dominio === 'bronze' && decisao.intencao !== 'auditar') continue;
@@ -301,9 +399,12 @@ function validarPlanoSugerido(decisao) {
   ));
   const camposAusentes = (decisao.camposSolicitados || [])
     .filter((campo) => !camposDisponiveis.has(campo));
-  const dominiosExigidos = new Set([decisao.dominioPrimario]);
+  const dominiosExigidos = new Set([
+    influenciaPorPlataforma ? 'influencias' : decisao.dominioPrimario
+  ]);
   for (const sugestao of decisao.planoSugerido || []) {
     const dominio = REGISTRO_CAPACIDADES[sugestao.ferramenta]?.dominio;
+    if (influenciaPorPlataforma && dominio !== 'influencias') continue;
     if (dominio && dominios.has(dominio)) dominiosExigidos.add(dominio);
   }
   const dominiosSemFerramenta = [...dominiosExigidos].filter((dominio) => (
@@ -315,22 +416,29 @@ function validarPlanoSugerido(decisao) {
   const camposFiltroPermitidos = new Set([
     ...camposDisponiveis,
     ...ferramentas.flatMap((nome) => REGISTRO_CAPACIDADES[nome]?.entidades || []),
-    'data_inicial', 'data_final', 'periodo', 'empresa', 'id_empresa', 'limite'
+    'data_inicial', 'data_final', 'data_inicial_anterior', 'data_final_anterior',
+    'periodo', 'periodo_comparacao_data_inicial', 'periodo_comparacao_data_final',
+    'empresa', 'id_empresa', 'limite'
   ]);
   for (const filtro of decisao.filtros || []) {
     if (camposFiltroPermitidos.has(filtro.campo)) filtrosAceitos.push(filtro);
     else filtrosRejeitados.push({ ...filtro, motivo: 'campo_de_filtro_nao_coberto' });
   }
+  const capacidadesDeclaradasAusentes = (decisao.capacidadesAusentes || []).filter((item) => {
+    const nome = String(item).replace(/^campo:/, '');
+    return !camposDisponiveis.has(nome);
+  });
   return {
     ferramentas,
     rejeitadas,
     filtrosAceitos,
     filtrosRejeitados,
     capacidadesAusentes: [...new Set([
-      ...(decisao.capacidadesAusentes || []),
+      ...capacidadesDeclaradasAusentes,
       ...camposAusentes.map((campo) => `campo:${campo}`),
       ...dominiosSemFerramenta.map((dominio) => `intencao:${decisao.intencao}@${dominio}`)
-    ])]
+    ])],
+    orcamentoTecnico: calcularOrcamentoTecnico(decisao, ferramentas)
   };
 }
 
@@ -338,6 +446,7 @@ module.exports = {
   DOMINIOS,
   INTENCOES,
   REGISTRO_CAPACIDADES,
+  calcularOrcamentoTecnico,
   dominioCobreSolicitacao,
   extrairReferenciasResultado,
   obterCapacidade,

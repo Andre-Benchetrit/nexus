@@ -1,6 +1,12 @@
 # Dependências e artefatos gerados
 node_modules/
 dist/
+.next/
+out/
+.turbo/
+.vercel/
+coverage/
+*.tsbuildinfo
 lake/
 
 # Credenciais e configurações locais
@@ -13,6 +19,8 @@ lake/
 *.duckdb
 *.wal
 .tmp/
+tmp/
+outputs/
 *.log
 npm-debug.log*
 ~$*

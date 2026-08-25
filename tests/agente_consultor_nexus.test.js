@@ -338,7 +338,8 @@ test('libera Bronze para auditoria explicita e preserva a visao historica', asyn
   assert.equal(resultado.roteamento.aprofundamento.camada, 'bronze');
 });
 
-test('bloqueia repeticao identica e mais de uma consulta tecnica final', async () => {
+test('reutiliza consulta tecnica identica sem executar novamente', async () => {
+  let execucoes = 0;
   const provider = {
     async executar(contexto) {
       await contexto.tools.find((item) => item.definicao.name === 'solicitar_aprofundamento')
@@ -349,15 +350,14 @@ test('bloqueia repeticao identica e mais de uma consulta tecnica final', async (
       const consultar = contexto.tools.find((item) => item.definicao.name === 'consultar_silver');
       await consultar.executar({ operacao: 'consultar', objeto: 'dim_cliente', limite: 5 });
       await consultar.executar({ operacao: 'consultar', objeto: 'dim_cliente', limite: 5 });
+      return { texto: 'Consulta concluida.', provider: 'teste', modelo: 'mock' };
     }
   };
-  await assert.rejects(
-    executarAgente('Consulte detalhes adicionais de clientes', {
-      provider,
-      executarConsultarSilverTool: async () => '{}'
-    }),
-    /Chamada repetida bloqueada/
-  );
+  await executarAgente('Consulte detalhes adicionais de clientes', {
+    provider,
+    executarConsultarSilverTool: async () => { execucoes += 1; return '{}'; }
+  });
+  assert.equal(execucoes, 1);
 });
 
 test('forca hoje literal e corrige deterministicamente a resposta do modelo', async () => {

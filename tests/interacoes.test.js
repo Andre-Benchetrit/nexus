@@ -118,6 +118,23 @@ test('esclarecimento de rota vira tarefa e recompõe a pergunta original', async
   assert.equal(memoria.obterTarefaAtiva(), null);
 });
 
+test('nova solicitação não é anexada a esclarecimento de rota órfão', async (t) => {
+  const memoria = memoriaTemporaria(t);
+  const tarefa = await registrarEsclarecimentoRota(memoria, {
+    perguntaOriginal: 'Como estamos?',
+    perguntaEsclarecimento: 'Você quer vendas, estoque ou operação?'
+  });
+  const resultado = await processarMensagemInterativa(
+    'Quais pedidos estão bloqueados por falta de estoque hoje?',
+    { memoria, interactionMode: 'v1', dataReferencia: '2026-08-11' }
+  );
+  assert.equal(resultado.acao, 'continuar');
+  assert.equal(resultado.texto, 'Quais pedidos estão bloqueados por falta de estoque hoje?');
+  assert.equal(memoria.listarTarefas({ incluirFinalizadas: true })
+    .find((item) => item.id === tarefa.id).estado, 'pausada');
+  assert.equal(memoria.obterTarefaAtiva(), null);
+});
+
 test('conversa SQL esclarece antes de executar e preserva a consulta fora da memoria', async (t) => {
   const memoria = memoriaTemporaria(t);
   let providerExecutado = false;

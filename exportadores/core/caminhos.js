@@ -1,6 +1,5 @@
 const path = require('path');
-
-const RAIZ_PROJETO = path.resolve(__dirname, '../..');
+const { resolverRaizLake } = require('../../nexus/lake_storage');
 
 function formatarData(data) {
   return data.toISOString().slice(0, 10);
@@ -10,12 +9,11 @@ function formatarExecucao(data) {
   return data.toISOString().replace(/[-:.]/g, '').replace('Z', 'Z');
 }
 
-function criarCaminhosExportacao(entidade, data = new Date()) {
+function criarCaminhosExportacao(entidade, data = new Date(), opcoes = {}) {
   const dataExtracao = formatarData(data);
   const idExecucao = formatarExecucao(data);
   const raizEntidade = path.join(
-    RAIZ_PROJETO,
-    'lake',
+    resolverRaizLake(opcoes),
     entidade.destino.camada,
     entidade.fonte,
     entidade.nome

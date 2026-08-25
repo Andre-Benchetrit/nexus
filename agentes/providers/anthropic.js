@@ -4,6 +4,7 @@ const {
   normalizarUsageAnthropic
 } = require('./telemetria');
 const { normalizarArgumentosPeloSchema } = require('./schema');
+const { emitirCheckpoint } = require('./checkpoints');
 
 function converterToolAnthropic(definicao) {
   return {
@@ -43,12 +44,14 @@ function criarProviderAnthropic(opcoes = {}) {
     executarTool,
     maxRodadas = 8,
     onEvento,
+    onCheckpoint,
     telemetria,
     stage = 'business_reasoning',
     stageFinal,
     purpose = 'corporate_query',
     parentCallId = null,
-    fallbackFromCallId = null
+    fallbackFromCallId = null,
+    returnAfterTerminalTool = false
   }) {
     const client = obterCliente();
     const ferramentas = tools?.length
@@ -66,6 +69,9 @@ function criarProviderAnthropic(opcoes = {}) {
       const definicoes = ferramentas.map((item) => converterToolAnthropic(item.definicao));
       const estagioAtual = houveTool && stageFinal ? stageFinal : stage;
       onEvento?.(`Anthropic: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
+      emitirCheckpoint(onCheckpoint, 'modelo_solicitado', {
+        etapa: estagioAtual, provider: 'anthropic', rodada: rodada + 1
+      });
       const auditada = await executarChamadaAuditada({
         telemetria,
         provider: 'anthropic',
@@ -98,10 +104,18 @@ function criarProviderAnthropic(opcoes = {}) {
         })
       });
       const resposta = auditada.resposta;
+      emitirCheckpoint(onCheckpoint, 'modelo_respondeu', {
+        etapa: estagioAtual, provider: 'anthropic', rodada: rodada + 1,
+        callId: auditada.callId, stopReason: resposta.stop_reason || null
+      });
       onEvento?.(`Anthropic: rodada ${rodada + 1} recebida.`);
       const chamadas = (resposta.content || []).filter((item) => item.type === 'tool_use');
       messages.push({ role: 'assistant', content: resposta.content || [] });
       if (!chamadas.length) {
+        emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
+          etapa: estagioAtual, provider: 'anthropic', rodada: rodada + 1,
+          callId: auditada.callId
+        });
         return {
           texto: (resposta.content || []).filter((item) => item.type === 'text')
             .map((item) => item.text).join('\n'),
@@ -117,6 +131,10 @@ function criarProviderAnthropic(opcoes = {}) {
       for (const chamada of chamadas) {
         let output;
         let isError = false;
+        emitirCheckpoint(onCheckpoint, 'tool_sugerida', {
+          etapa: estagioAtual, provider: 'anthropic', nome: chamada.name,
+          callId: auditada.callId
+        });
         try {
           const ferramenta = ferramentasPorNome.get(chamada.name);
           if (!ferramenta) throw new Error(`Tool desconhecida: ${chamada.name}`);
@@ -124,12 +142,19 @@ function criarProviderAnthropic(opcoes = {}) {
             chamada.input || {}, ferramenta.definicao.parameters
           );
           output = await ferramenta.executar(argumentos);
+          emitirCheckpoint(onCheckpoint, 'tool_aceita', {
+            etapa: estagioAtual, provider: 'anthropic', nome: chamada.name
+          });
           const terminal = typeof ferramenta.terminal === 'function'
             ? ferramenta.terminal(argumentos, output) : ferramenta.terminal;
           if (terminal === true) deveFinalizar = true;
         } catch (erro) {
           output = JSON.stringify({ erro: erro.message });
           isError = true;
+          emitirCheckpoint(onCheckpoint, 'tool_rejeitada', {
+            etapa: estagioAtual, provider: 'anthropic', nome: chamada.name,
+            codigo: erro.codigo || erro.code || erro.name || 'ERRO_TOOL'
+          });
         }
         resultados.push({
           type: 'tool_result', tool_use_id: chamada.id,
@@ -139,8 +164,25 @@ function criarProviderAnthropic(opcoes = {}) {
         resultadosParaAuditoria.push(output);
       }
       messages.push({ role: 'user', content: resultados });
+      if (returnAfterTerminalTool && deveFinalizar) {
+        emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
+          etapa: estagioAtual, provider: 'anthropic', rodada: rodada + 1,
+          callId: auditada.callId, motivo: 'tool_terminal'
+        });
+        return {
+          texto: (resposta.content || []).filter((item) => item.type === 'text')
+            .map((item) => item.text).join('\n'),
+          provider: 'anthropic', modelo, rodadas: rodada + 1,
+          responseId: resposta.id || null, stopReason: resposta.stop_reason || null
+        };
+      }
     }
-    throw new Error(`O provider anthropic excedeu ${maxRodadas} rodadas de tools.`);
+    emitirCheckpoint(onCheckpoint, 'provider_esgotou_rodadas', {
+      etapa: stage, provider: 'anthropic', maxRodadas
+    });
+    const erro = new Error(`O provider anthropic excedeu ${maxRodadas} rodadas de tools.`);
+    erro.codigo = 'MAX_RODADAS';
+    throw erro;
   }
 
   return { nome: 'anthropic', modelo, executar };

@@ -124,6 +124,14 @@ const definicaoAnalisarIndicadores = {
       data_final: {
         type: ['string', 'null']
       },
+      data_inicial_anterior: {
+        description: 'Inicio opcional do periodo de comparacao em AAAA-MM-DD.',
+        type: ['string', 'null']
+      },
+      data_final_anterior: {
+        description: 'Fim opcional do periodo de comparacao em AAAA-MM-DD.',
+        type: ['string', 'null']
+      },
       recencia: {
         description: 'Use mais_recente_completo para excluir o ultimo dia parcial.',
         type: ['string', 'null'],
@@ -504,11 +512,22 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
       });
     }
 
+    const recebeuInicioAnterior = argumentos.data_inicial_anterior != null;
+    const recebeuFimAnterior = argumentos.data_final_anterior != null;
+    if (recebeuInicioAnterior !== recebeuFimAnterior) {
+      throw new Error('data_inicial_anterior e data_final_anterior devem ser informadas juntas.');
+    }
     const dias = duracaoPeriodo(periodo.inicio, periodo.fim);
-    const periodoAnterior = {
+    const periodoAnterior = recebeuInicioAnterior ? {
+      inicio: dataIso(argumentos.data_inicial_anterior, 'data_inicial_anterior'),
+      fim: dataIso(argumentos.data_final_anterior, 'data_final_anterior')
+    } : {
       fim: deslocarData(periodo.inicio, -1),
       inicio: deslocarData(periodo.inicio, -dias)
     };
+    if (periodoAnterior.inicio > periodoAnterior.fim) {
+      throw new Error('data_inicial_anterior nao pode ser posterior a data_final_anterior.');
+    }
     if (periodoAnterior.inicio < cobertura.inicio) {
       throw new Error(`Periodo anterior fora da cobertura Gold, que inicia em ${cobertura.inicio}.`);
     }

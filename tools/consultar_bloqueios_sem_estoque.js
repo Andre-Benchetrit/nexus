@@ -33,7 +33,10 @@ const definicaoConsultarBloqueiosSemEstoque = {
           { type: 'null' }
         ]
       },
-      limite: { type: 'integer', minimum: 1, maximum: 500 }
+      limite: {
+        description: 'Limite seguro de linhas expostas ao modelo. Use no máximo 50.',
+        type: 'integer', minimum: 1, maximum: 50
+      }
     },
     required: [
       'operacao', 'marketplace_pedido', 'marketplace_pedidos',

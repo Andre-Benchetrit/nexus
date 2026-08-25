@@ -1,6 +1,7 @@
 const path = require('path');
+const { resolverRaizLake } = require('../../nexus/lake_storage');
 
-const RAIZ_LAKE_PADRAO = path.resolve(__dirname, '..', '..', 'lake');
+const RAIZ_LAKE_PADRAO = resolverRaizLake();
 
 function formatarData(data) {
   return data.toISOString().slice(0, 10);

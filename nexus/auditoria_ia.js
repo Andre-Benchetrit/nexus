@@ -117,13 +117,14 @@ function criarServicoAuditoriaIA(opcoes = {}) {
           INSERT INTO nexus.llm_calls
             (id, turn_id, trace_id, parent_call_id, fallback_from_call_id,
              principal_id, conversation_id, stage, purpose, provider, modelo,
-             composicao_input_estimada)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+             composicao_input_estimada, semantic_tier)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13)
         `, [id, turno.id, turno.traceId, dados.parentCallId || this.ultimoCallId || null,
           dados.fallbackFromCallId || null, turno.principalId, turno.conversationId,
           dados.stage || padroes.stage || 'business_reasoning',
           dados.purpose || padroes.purpose || turno.finalidade,
-          dados.provider, dados.modelo, JSON.stringify(sanitizarComposicao(dados.composicao || {}))]);
+          dados.provider, dados.modelo, JSON.stringify(sanitizarComposicao(dados.composicao || {})),
+          dados.semanticTier || this.semanticTier || padroes.semanticTier || null]);
         return { id };
       },
       async concluirChamada(id, resultado) {
@@ -200,7 +201,7 @@ function criarServicoAuditoriaIA(opcoes = {}) {
           VALUES ($1,$2,'llm',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         `, [turno.id, id, chamada.provider, item.servico, chamada.modelo, item.metrica,
           item.quantidade, preco?.id || null, cambio?.id || null, usd, brl,
-          preco ? 'priced' : 'pricing_missing']);
+          !preco ? 'pricing_missing' : cambio ? 'priced' : 'missing_exchange_rate']);
       }
       await cliente.query(`
         UPDATE nexus.llm_calls SET
@@ -208,7 +209,8 @@ function criarServicoAuditoriaIA(opcoes = {}) {
           cache_write_tokens=$6, usage_provider=$7::jsonb, response_id=$8,
           stop_reason=$9, duracao_ms=$10, erro_codigo=$11,
           estimated_cost_usd=$12, estimated_cost_brl=$13,
-          pricing_complete=$14, composicao_input_estimada=$15::jsonb, concluida_em=now()
+          pricing_complete=$14, pricing_usd_complete=$15, pricing_brl_complete=$16,
+          composicao_input_estimada=$17::jsonb, concluida_em=now()
         WHERE id=$1
       `, [id, resultado.sucesso === false ? 'erro' : 'sucesso',
         usage.inputTokens ?? null, usage.outputTokens ?? null,
@@ -217,10 +219,12 @@ function criarServicoAuditoriaIA(opcoes = {}) {
         resultado.stopReason || null, Math.max(0, Math.round(resultado.duracaoMs || 0)),
         codigoErro(resultado.erro), precosCompletos ? custoUsd : null,
         precosCompletos && cambio ? custoBrl : null, precosCompletos && Boolean(cambio),
-        JSON.stringify(composicao)]);
+        precosCompletos, precosCompletos && Boolean(cambio), JSON.stringify(composicao)]);
       return {
         id,
         pricingComplete: precosCompletos && Boolean(cambio),
+        pricingUsdComplete: precosCompletos,
+        pricingBrlComplete: precosCompletos && Boolean(cambio),
         costUsd: precosCompletos ? custoUsd : null,
         costBrl: precosCompletos && cambio ? custoBrl : null
       };
@@ -236,12 +240,60 @@ function criarServicoAuditoriaIA(opcoes = {}) {
     `, [turno.conversationId, turno.id, turno.traceId, papel, String(conteudo), proveniencia]);
   }
 
+  async function registrarEvento(turno, { tipo, recurso = null, resultado = null, metadados = {} }) {
+    await pool.query(`
+      INSERT INTO nexus.audit_events
+        (principal_id, conversation_id, tipo, recurso, resultado, metadados,
+         trace_id,turn_id,call_id)
+      VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
+    `, [turno.principalId, turno.conversationId, tipo, recurso, resultado,
+      JSON.stringify(sanitizarMetadados(metadados)), turno.traceId, turno.id,
+      metadados.call_id || null]);
+  }
+
+  async function registrarFaixaSemantica(turno, decisao = {}) {
+    const fase = decisao.fase === 'final' ? 'final' : 'inicial';
+    const faixa = String(decisao.faixa || 'basica');
+    const pontos = Math.max(0, Math.round(Number(decisao.pontos || 0)));
+    const motivos = [...new Set((decisao.motivos || []).map((item) => String(item).slice(0, 80)))];
+    if (fase === 'inicial') {
+      await pool.query(`
+        UPDATE nexus.ai_turns SET
+          semantic_tier_initial=$2,
+          semantic_score_initial=$3,
+          semantic_tier_final=COALESCE(semantic_tier_final,$2),
+          semantic_score_final=COALESCE(semantic_score_final,$3),
+          semantic_escalation_reasons=$4::jsonb
+        WHERE id=$1
+      `, [turno.id, faixa, pontos, JSON.stringify(motivos)]);
+    } else {
+      await pool.query(`
+        UPDATE nexus.ai_turns SET
+          semantic_tier_final=$2,
+          semantic_score_final=$3,
+          semantic_escalation_reasons=$4::jsonb
+        WHERE id=$1
+      `, [turno.id, faixa, pontos, JSON.stringify(motivos)]);
+    }
+    await registrarEvento(turno, {
+      tipo: 'semantic_tier_decision', recurso: fase, resultado: faixa,
+      metadados: {
+        semantic_score: pontos,
+        motivos,
+        modo: decisao.modo || null,
+        provider_recomendado: decisao.providerSelecionado || null
+      }
+    });
+  }
+
   async function listarMensagens(limite = Number(process.env.NEXUS_GENERALIST_HISTORY_MESSAGES || 20)) {
     const base = await contexto();
     const linhas = (await pool.query(`
-      SELECT papel, conteudo, proveniencia, criado_em
-      FROM nexus.conversation_messages WHERE conversation_id=$1
-      ORDER BY criado_em DESC, id DESC LIMIT $2
+      SELECT m.papel, m.conteudo, m.proveniencia, m.criado_em
+      FROM nexus.conversation_messages m
+      JOIN nexus.ai_turns t ON t.id=m.turn_id AND t.status='sucesso'
+      WHERE m.conversation_id=$1
+      ORDER BY m.criado_em DESC, m.id DESC LIMIT $2
     `, [base.conversationId, limite])).rows.reverse();
     return linhas.map((item) => ({
       role: item.papel, content: item.conteudo, provenance: item.proveniencia,
@@ -266,8 +318,8 @@ function criarServicoAuditoriaIA(opcoes = {}) {
         COALESCE(sum(output_tokens),0)::bigint AS output_tokens,
         COALESCE(sum(cache_read_tokens),0)::bigint AS cache_read_tokens,
         COALESCE(sum(cache_write_tokens),0)::bigint AS cache_write_tokens,
-        bool_and(estimated_cost_usd IS NOT NULL) FILTER (WHERE status='sucesso') AS pricing_usd_complete,
-        bool_and(estimated_cost_brl IS NOT NULL) FILTER (WHERE status='sucesso') AS pricing_brl_complete,
+        bool_and(pricing_usd_complete) FILTER (WHERE status='sucesso') AS pricing_usd_complete,
+        bool_and(pricing_brl_complete) FILTER (WHERE status='sucesso') AS pricing_brl_complete,
         sum(estimated_cost_usd) AS custo_usd,
         sum(estimated_cost_brl) AS custo_brl
       FROM nexus.llm_calls WHERE turn_id=$1
@@ -282,14 +334,17 @@ function criarServicoAuditoriaIA(opcoes = {}) {
         input_tokens_total=$6, output_tokens_total=$7,
         cache_read_tokens_total=$8, cache_write_tokens_total=$9,
         estimated_cost_usd=$10, estimated_cost_brl=$11,
-        pricing_complete=$12, duracao_ms=$13, erro_codigo=$14, concluido_em=now()
+        pricing_complete=$12, pricing_usd_complete=$13, pricing_brl_complete=$14,
+        duracao_ms=$15, erro_codigo=$16, concluido_em=now()
       WHERE id=$1
     `, [turno.id, sucesso ? 'sucesso' : 'erro', proveniencia,
       resumo.provider_calls, tools, resumo.input_tokens, resumo.output_tokens,
       resumo.cache_read_tokens, resumo.cache_write_tokens,
       resumo.pricing_usd_complete ? resumo.custo_usd : null,
       resumo.pricing_brl_complete ? resumo.custo_brl : null,
-      Boolean(resumo.pricing_usd_complete && resumo.pricing_brl_complete), duracao, codigoErro(erro)]);
+      Boolean(resumo.pricing_usd_complete && resumo.pricing_brl_complete),
+      Boolean(resumo.pricing_usd_complete), Boolean(resumo.pricing_brl_complete),
+      duracao, codigoErro(erro)]);
     await pool.query(`
       INSERT INTO nexus.audit_events
         (principal_id, conversation_id, tipo, recurso, resultado, metadados)
@@ -299,6 +354,8 @@ function criarServicoAuditoriaIA(opcoes = {}) {
         turn_id: turno.id, provider_calls: resumo.provider_calls, tool_calls: tools,
         input_tokens: String(resumo.input_tokens), output_tokens: String(resumo.output_tokens),
         cache_read_tokens: String(resumo.cache_read_tokens), cache_write_tokens: String(resumo.cache_write_tokens),
+        pricing_usd_complete: Boolean(resumo.pricing_usd_complete),
+        pricing_brl_complete: Boolean(resumo.pricing_brl_complete),
         pricing_complete: Boolean(resumo.pricing_usd_complete && resumo.pricing_brl_complete), duracao_ms: duracao,
         erro_codigo: codigoErro(erro)
       })]);
@@ -315,6 +372,8 @@ function criarServicoAuditoriaIA(opcoes = {}) {
     listarMensagens,
     modo,
     paraTelemetria,
+    registrarFaixaSemantica,
+    registrarEvento,
     registrarMensagem
   };
 }

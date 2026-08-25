@@ -35,13 +35,17 @@ Use `--sem-memoria` para uma pergunta isolada.
 
 ## Memoria longa
 
-A memoria longa registra correcoes e vocabulario estaveis, nao resultados
-numericos. Ela e consultada por relevancia e suas regras nunca prevalecem sobre
-os contratos das tools ou sobre os modelos Silver e Gold.
+A memoria longa governada registra tres tipos separados: conhecimento de
+negocio, playbooks de execucao e preferencias pessoais. Nao registra resultados
+numericos temporarios. Conhecimento entra no contexto corporativo, playbook
+orienta somente roteador/planejador e preferencia vale apenas para seu usuario.
+Nenhum deles prevalece sobre seguranca, permissao ou contratos das tools.
 
-O agente nao grava aprendizados sozinho. Isso evita transformar uma resposta
-errada ou uma instrucao maliciosa em regra permanente. O aprendizado entra por
-um comando explicito e fica versionado em `memoria/conhecimento.json`:
+O generalista e regras locais podem pedir uma revisao depois de um processo
+concluido. Um revisor dedicado produz no maximo uma candidatura, o usuario
+confirma o envio e um aprovador autorizado publica a memoria. Nenhuma IA publica
+diretamente. Em PostgreSQL, ate `--lembrar` cria uma candidatura; publicacao
+direta permanece apenas no backend de arquivos para desenvolvimento:
 
 ```powershell
 npm run agente:memoria -- --listar
@@ -53,7 +57,22 @@ npm run agente:memoria -- --lembrar "Numero do pedido significa marketplace_pedi
 npm run agente:memoria -- --esquecer numero-do-pedido-significa-marketplace_pedido
 ```
 
-`--esquecer` desativa o item em vez de apagar seu historico.
+Fila e aprovacao pelo CLI:
+
+```powershell
+npm run nexus:memory:candidates -- list --principal auditor
+npm run nexus:memory:candidates -- show <id> --principal gestor --setor comercial
+npm run nexus:memory:candidates -- approve <id> --principal gestor --setor comercial --motivo "Regra confirmada"
+npm run nexus:memory:candidates -- reject <id> --principal gestor --setor comercial --motivo "Sem evidencia"
+npm run nexus:memory:candidates -- request-changes <id> --principal gestor --motivo "Ajustar escopo"
+npm run nexus:memory:candidates -- revoke <id> --principal admin --motivo "Regra substituida"
+```
+
+Use `NEXUS_MEMORY_AUTOMATION_MODE=observe` durante avaliacao e `propose` para
+ofertas reais. `NEXUS_PLAYBOOK_MODE=shadow` mede correspondencias; `assist`
+entrega playbooks aprovados como dicas que continuam sujeitas ao validador.
+
+Revogacao desativa o item sem apagar versoes, revisoes ou auditoria.
 
 As categorias recomendadas, criterios e exemplos de cadastro ficam em
 [`../memoria/GUIA_CATEGORIAS.md`](../memoria/GUIA_CATEGORIAS.md).

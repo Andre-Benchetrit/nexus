@@ -31,10 +31,18 @@ function obterConfiguracaoBanco(env = process.env) {
 
 function criarPoolNexus(opcoes = {}) {
   if (opcoes.pool) return opcoes.pool;
-  return new Pool({
+  const pool = new Pool({
     ...obterConfiguracaoBanco(opcoes.env),
     ...(opcoes.configuracao || {})
   });
+  // O pg remove automaticamente do pool um cliente ocioso que perdeu a
+  // conexao. Sem listener, porém, o EventEmitter encerra todo o processo.
+  pool.on('error', (erro) => {
+    opcoes.onErro?.({
+      codigo: String(erro?.code || erro?.name || 'DB_CONNECTION_LOST')
+    });
+  });
+  return pool;
 }
 
 async function comTransacao(pool, executar) {

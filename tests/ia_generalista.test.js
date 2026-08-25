@@ -27,10 +27,10 @@ function memoriaFalsa(tarefaAtiva = null) {
   return { obterTarefaAtiva: async () => tarefaAtiva, sessao: 'teste' };
 }
 
-test('registro generalista habilita apenas conversa e consulta corporativa', () => {
+test('registro generalista habilita conversa, consulta corporativa e revisao governada', () => {
   assert.deepEqual(
     capacidadesGeneralistasHabilitadas().map((item) => item.id),
-    ['ia.conversar', 'ia.nexus.consultar']
+    ['ia.conversar', 'ia.nexus.consultar', 'ia.memoria.revisar']
   );
   assert.equal(obterCapacidadeGeneralista('ia.imagem.analisar').habilitada, false);
   assert.equal(obterCapacidadeGeneralista('ia.planilha.criar').executor, 'nexus_local');
@@ -39,6 +39,9 @@ test('registro generalista habilita apenas conversa e consulta corporativa', () 
 test('guarda de fonte exige Nexus para identificador, fato mutavel e tarefa ativa', () => {
   assert.equal(exigeFonteCorporativa('Explique EBITDA').obrigatoria, false);
   assert.equal(exigeFonteCorporativa('Como esta meu faturamento hoje?').obrigatoria, true);
+  assert.equal(exigeFonteCorporativa(
+    'Quais pedidos estavam bloqueados em 17/08/2026?'
+  ).obrigatoria, true);
   assert.equal(exigeFonteCorporativa('Veja o produto 7899552110892').obrigatoria, true);
   assert.equal(exigeFonteCorporativa('Crie uma query SQL de produtos').obrigatoria, true);
   assert.equal(exigeFonteCorporativa('sim', { tarefaAtiva: { id: '1' } }).obrigatoria, true);
@@ -224,7 +227,10 @@ test('fallback generalista reutiliza a consulta Nexus feita no turno', async () 
     nome: 'fallback', modelo: 'f',
     async executar(contexto) {
       assert.equal(contexto.tools.length, 0);
-      assert.match(contexto.mensagens.at(-1).content, /ja consultada/);
+      assert.match(
+        contexto.mensagens.at(-1).content,
+        /ja consultada|Nao repita tools concluidas/
+      );
       return { texto: 'Resposta preservada.', provider: 'fallback', modelo: 'f' };
     }
   };
@@ -262,11 +268,19 @@ test('historico visivel remove inicio invalido e combina papeis consecutivos', (
 test('CLI le configuracoes independentes da IA generalista', () => {
   const recebido = lerArgumentos([
     '--assistant-mode', 'generalist', '--generalist-provider', 'anthropic',
-    '--generalist-model', 'claude-x', '--provider', 'groq', 'Ola'
+    '--generalist-model', 'claude-x', '--provider', 'groq',
+    '--handoff-mode', 'v1', '--playbook-mode', 'assist',
+    '--memory-automation-mode', 'propose', '--memory-review-provider', 'openai',
+    '--memory-review-model', 'revisor-x', 'Ola'
   ]);
   assert.equal(recebido.opcoes.assistantMode, 'generalist');
   assert.equal(recebido.opcoes.generalistProviderNome, 'anthropic');
   assert.equal(recebido.opcoes.generalistModelo, 'claude-x');
   assert.equal(recebido.opcoes.providerNome, 'groq');
+  assert.equal(recebido.opcoes.handoffMode, 'v1');
+  assert.equal(recebido.opcoes.playbookMode, 'assist');
+  assert.equal(recebido.opcoes.memoryAutomationMode, 'propose');
+  assert.equal(recebido.opcoes.memoryReviewProviderNome, 'openai');
+  assert.equal(recebido.opcoes.memoryReviewModelo, 'revisor-x');
   assert.equal(resolverModoAssistente('corporate'), 'corporate');
 });

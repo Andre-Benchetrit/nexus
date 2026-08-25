@@ -11,7 +11,10 @@ function exigeFonteCorporativa(pergunta, contexto = {}) {
   const identificador = /\b\d{7,14}\b|\b\d{3}-\d{7}-\d{7}\b|\b(?=[A-Z0-9_]*\d)[A-Z0-9]{8,}(?:_[A-Z0-9]+)?\b/i.test(pergunta);
   const posseCorporativa = /\b(meu|minha|meus|minhas|nosso|nossa|nossos|nossas)\b/.test(texto) &&
     /\b(pedidos?|vendas?|faturamentos?|estoques?|produtos?|notas?|agendamentos?|reposicoes?|fretes?|clientes?|funcionarios?|margens?)\b/.test(texto);
-  const fatoOperacional = /\b(hoje|ontem|este mes|nesse mes|agora|atual|ultimo|ultima|quantos|quanto|listar|mostre)\b/.test(texto) &&
+  const fatoOperacional = (
+    /\b(hoje|ontem|este mes|nesse mes|agora|atual|ultimo|ultima|quantos|quanto|quais|listar|liste|mostre|temos)\b/.test(texto) ||
+    /\b\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b/.test(texto)
+  ) &&
     /\b(pedidos?|vendas?|faturamentos?|estoques?|bloqueios?|rupturas?|agendamentos?|reposicoes?|notas? fiscais?|fretes?)\b/.test(texto);
   const sqlCorporativo = /\b(sql|query|select)\b/.test(texto) &&
     /\b(pedidos?|vendas?|faturamentos?|estoques?|produtos?|notas?|agendamentos?|reposicoes?|fretes?|clientes?|funcionarios?)\b/.test(texto);

@@ -4,7 +4,7 @@ const { criarProviderOpenAI } = require('./openai');
 const { criarProviderAnthropic } = require('./anthropic');
 const { criarProviderResiliente } = require('./resiliente');
 
-const PROVIDER_PADRAO = 'gemini';
+const PROVIDER_PADRAO = 'groq';
 const PROVIDERS_DISPONIVEIS = ['gemini', 'groq', 'openai', 'anthropic'];
 
 function criarProviderBase(nome, opcoes = {}) {

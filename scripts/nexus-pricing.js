@@ -17,10 +17,12 @@ async function main() {
         SELECT
           (SELECT count(*)::int FROM nexus.pricing_rates) AS tarifas,
           (SELECT count(*)::int FROM nexus.exchange_rates) AS cambios,
-          (SELECT count(*)::int FROM nexus.llm_calls WHERE status='sucesso' AND NOT pricing_complete) AS chamadas_sem_preco,
+          (SELECT count(*)::int FROM nexus.llm_calls WHERE status='sucesso' AND NOT pricing_usd_complete) AS chamadas_sem_preco,
+          (SELECT count(*)::int FROM nexus.llm_calls WHERE status='sucesso'
+             AND pricing_usd_complete AND NOT pricing_brl_complete) AS chamadas_sem_cambio,
           (SELECT count(*)::int FROM nexus.usage_line_items WHERE pricing_status='pricing_missing') AS itens_sem_tarifa,
           (SELECT count(*)::int FROM nexus.usage_line_items
-             WHERE pricing_status='priced' AND exchange_rate_id IS NULL) AS itens_sem_cambio,
+             WHERE pricing_status='missing_exchange_rate') AS itens_sem_cambio,
           (SELECT count(*)::int FROM nexus.llm_calls WHERE status='iniciada') AS chamadas_pendentes
       `)).rows[0];
       console.log(JSON.stringify(resultado, null, 2));

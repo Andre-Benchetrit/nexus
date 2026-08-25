@@ -4,8 +4,9 @@ const path = require('path');
 const { entidades: catalogoPadrao, obterEntidade } = require('../exportadores/catalogo');
 const { normalizarChavesPrimarias } = require('../exportadores/core/sql');
 const { criarConexaoDuckDB, fecharConexaoDuckDB, runDuckDB } = require('./connections');
+const { criarLakeStorage, resolverRaizLake } = require('../nexus/lake_storage');
 
-const RAIZ_LAKE_PADRAO = path.resolve(__dirname, '..', 'lake');
+const RAIZ_LAKE_PADRAO = resolverRaizLake();
 const IDENTIFICADOR_SEGURO = /^[a-zA-Z_][a-zA-Z0-9_$]*$/;
 const LIMITE_PADRAO = 50;
 const LIMITE_MAXIMO = 500;
@@ -60,63 +61,7 @@ async function listarArquivosRecursivamente(diretorio, nomeArquivo) {
 }
 
 async function descobrirExecucoesValidas(raizLake, entidade) {
-  const raizEntidade = path.join(
-    raizLake,
-    entidade.destino.camada,
-    entidade.fonte,
-    entidade.nome
-  );
-  const manifestos = await listarArquivosRecursivamente(raizEntidade, 'manifest.json');
-  const execucoes = [];
-
-  for (const caminhoManifesto of manifestos) {
-    let manifesto;
-    try {
-      manifesto = JSON.parse(await fs.readFile(caminhoManifesto, 'utf8'));
-    } catch (erro) {
-      throw new Error(`Manifesto inválido em ${caminhoManifesto}: ${erro.message}`);
-    }
-
-    if (manifesto.status !== 'sucesso' || manifesto.entidade !== entidade.nome) continue;
-
-    const nomeArquivo = manifesto.arquivo || 'dados.parquet';
-    if (path.basename(nomeArquivo) !== nomeArquivo) {
-      throw new Error(`Manifesto aponta para um arquivo inválido: ${caminhoManifesto}`);
-    }
-
-    const arquivo = path.join(path.dirname(caminhoManifesto), nomeArquivo);
-    try {
-      await fs.access(arquivo);
-    } catch (erro) {
-      if (erro.code === 'ENOENT') continue;
-      throw erro;
-    }
-
-    let arquivoChavesAtuais = null;
-    const reconciliacao = manifesto.reconciliacaoExclusoes;
-    if (reconciliacao) {
-      if (reconciliacao.estrategia !== 'snapshot_chaves_atuais') {
-        throw new Error(`Estrat\u00e9gia de reconcilia\u00e7\u00e3o inv\u00e1lida em ${caminhoManifesto}`);
-      }
-      const nomeArquivoChaves = reconciliacao.arquivo;
-      if (!nomeArquivoChaves || path.basename(nomeArquivoChaves) !== nomeArquivoChaves) {
-        throw new Error(`Manifesto aponta para snapshot de chaves inv\u00e1lido: ${caminhoManifesto}`);
-      }
-      arquivoChavesAtuais = path.join(path.dirname(caminhoManifesto), nomeArquivoChaves);
-      try {
-        await fs.access(arquivoChavesAtuais);
-      } catch (erro) {
-        // O manifesto e seus dois Parquets formam um unico commit. Se o snapshot
-        // de chaves sumiu, a execucao inteira nao pode participar da leitura.
-        if (erro.code === 'ENOENT') continue;
-        throw erro;
-      }
-    }
-
-    execucoes.push({ manifesto, caminhoManifesto, arquivo, arquivoChavesAtuais });
-  }
-
-  return execucoes.sort((a, b) => a.arquivo.localeCompare(b.arquivo));
+  return criarLakeStorage({ raizLake }).listarVersoes(entidade.destino.camada, entidade.nome);
 }
 
 function obterConfiguracaoEntidade(nome, catalogo) {
@@ -160,7 +105,8 @@ function normalizarDeslocamento(deslocamento = 0) {
 }
 
 function criarLeitorBronze(opcoes = {}) {
-  const raizLake = path.resolve(opcoes.raizLake || RAIZ_LAKE_PADRAO);
+  const storage = opcoes.lakeStorage || criarLakeStorage({ raizLake: opcoes.raizLake });
+  const raizLake = storage.raizLake || path.resolve(opcoes.raizLake || RAIZ_LAKE_PADRAO);
   const catalogo = opcoes.catalogo || catalogoPadrao;
   const con = opcoes.conexao || criarConexaoDuckDB();
   const entidadesPreparadas = new Map();
@@ -171,7 +117,7 @@ function criarLeitorBronze(opcoes = {}) {
     if (entidadesPreparadas.has(nome)) return entidadesPreparadas.get(nome);
 
     const entidade = obterConfiguracaoEntidade(nome, catalogo);
-    const execucoes = await descobrirExecucoesValidas(raizLake, entidade);
+    const execucoes = await storage.listarVersoes(entidade.destino.camada, entidade.nome);
     if (!execucoes.length) {
       throw new Error(`Nenhuma execução válida encontrada para ${nome}.`);
     }

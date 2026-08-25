@@ -1,7 +1,7 @@
 const path = require('node:path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), quiet: true });
 const { criarPoolNexus } = require('../nexus/db');
-const { relatorioExecutivo, relatorioTrace } = require('../nexus/relatorios_uso');
+const { relatorioComparativo, relatorioExecutivo, relatorioTrace } = require('../nexus/relatorios_uso');
 
 function argumentos(lista) {
   const opcoes = {};
@@ -18,7 +18,9 @@ async function main() {
   try {
     const resultado = acao === 'trace'
       ? await relatorioTrace(pool, process.argv[3])
-      : await relatorioExecutivo(pool, argumentos(process.argv.slice(3)));
+      : acao === 'compare'
+        ? await relatorioComparativo(pool, argumentos(process.argv.slice(3)))
+        : await relatorioExecutivo(pool, argumentos(process.argv.slice(3)));
     console.log(JSON.stringify(resultado, null, 2));
   } finally { await pool.end(); }
 }

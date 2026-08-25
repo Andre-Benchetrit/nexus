@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { resolverRaizLake } = require('../nexus/lake_storage');
 
 const { entidades: catalogoBronzePadrao } = require('../exportadores/catalogo');
 const { ADAPTADORES_FONTE } = require('../exportadores/adaptadores');
@@ -132,7 +133,7 @@ function resumirStatusExecucao(execucao) {
 }
 
 async function executarPipeline(opcoes = {}, dependencias = {}) {
-  const raizLake = path.resolve(opcoes.raizLake || path.join(__dirname, '..', 'lake'));
+  const raizLake = resolverRaizLake(opcoes);
   const estado = dependencias.estado || await (dependencias.lerEstado || lerEstado)(raizLake);
   const plano = await (dependencias.criarPlano || criarPlanoPipeline)(
     { ...opcoes, raizLake },

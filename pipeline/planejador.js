@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { resolverRaizLake } = require('../nexus/lake_storage');
 
 const { entidades: catalogoBronzePadrao } = require('../exportadores/catalogo');
 const {
@@ -177,7 +178,7 @@ async function planejarBronze(entidades, contexto) {
 
 async function criarPlanoPipeline(opcoes = {}, dependencias = {}) {
   const agora = opcoes.agora || new Date();
-  const raizLake = path.resolve(opcoes.raizLake || path.join(__dirname, '..', 'lake'));
+  const raizLake = resolverRaizLake(opcoes);
   const hoje = dataNoFuso(agora, opcoes.fuso || FUSO_NEGOCIO);
   const incluirHoje = opcoes.incluirHoje === true;
   const fim = validarDataISO(

@@ -1,5 +1,6 @@
 const OpenAI = require('openai');
 const { normalizarArgumentosPeloSchema } = require('./schema');
+const { emitirCheckpoint } = require('./checkpoints');
 const {
   estimarComposicaoInput,
   executarChamadaAuditada,
@@ -34,13 +35,15 @@ function criarProviderOpenAI(opcoes = {}) {
     executarTool,
     maxRodadas,
     onEvento,
+    onCheckpoint,
     mensagens,
     telemetria,
     stage = 'business_reasoning',
     stageFinal,
     purpose = 'corporate_query',
     parentCallId = null,
-    fallbackFromCallId = null
+    fallbackFromCallId = null,
+    returnAfterTerminalTool = false
   }) {
     const client = obterCliente();
     const input = mensagens?.length
@@ -57,6 +60,10 @@ function criarProviderOpenAI(opcoes = {}) {
         ferramentas.map((ferramenta) => [ferramenta.definicao.name, ferramenta])
       );
       onEvento?.(`OpenAI: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
+      emitirCheckpoint(onCheckpoint, 'modelo_solicitado', {
+        etapa: houveTool && stageFinal ? stageFinal : stage,
+        provider: 'openai', rodada: rodada + 1
+      });
       const auditada = await executarChamadaAuditada({
         telemetria, provider: 'openai', modelo,
         stage: houveTool && stageFinal ? stageFinal : stage,
@@ -84,11 +91,20 @@ function criarProviderOpenAI(opcoes = {}) {
         })
       });
       const resposta = auditada.resposta;
+      emitirCheckpoint(onCheckpoint, 'modelo_respondeu', {
+        etapa: houveTool && stageFinal ? stageFinal : stage,
+        provider: 'openai', rodada: rodada + 1,
+        callId: auditada.callId, stopReason: resposta.status || null
+      });
 
       input.push(...resposta.output);
       onEvento?.(`OpenAI: rodada ${rodada + 1} recebida.`);
       const chamadas = resposta.output.filter((item) => item.type === 'function_call');
       if (!chamadas.length) {
+        emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
+          etapa: houveTool && stageFinal ? stageFinal : stage,
+          provider: 'openai', rodada: rodada + 1, callId: auditada.callId
+        });
         return {
           texto: resposta.output_text,
           provider: 'openai',
@@ -104,6 +120,9 @@ function criarProviderOpenAI(opcoes = {}) {
       for (const chamada of chamadas) {
         houveTool = true;
         let output;
+        emitirCheckpoint(onCheckpoint, 'tool_sugerida', {
+          etapa: stage, provider: 'openai', nome: chamada.name, callId: auditada.callId
+        });
         try {
           const ferramenta = ferramentasPorNome.get(chamada.name);
           if (!ferramenta) throw new Error(`Tool desconhecida: ${chamada.name}`);
@@ -111,12 +130,19 @@ function criarProviderOpenAI(opcoes = {}) {
             JSON.parse(chamada.arguments), ferramenta.definicao.parameters
           );
           output = await ferramenta.executar(argumentos);
+          emitirCheckpoint(onCheckpoint, 'tool_aceita', {
+            etapa: stage, provider: 'openai', nome: chamada.name
+          });
           const terminal = typeof ferramenta.terminal === 'function'
             ? ferramenta.terminal(argumentos, output)
             : ferramenta.terminal;
           if (terminal === true) deveFinalizar = true;
         } catch (erro) {
           output = JSON.stringify({ erro: erro.message });
+          emitirCheckpoint(onCheckpoint, 'tool_rejeitada', {
+            etapa: stage, provider: 'openai', nome: chamada.name,
+            codigo: erro.codigo || erro.code || erro.name || 'ERRO_TOOL'
+          });
         }
         input.push({
           type: 'function_call_output',
@@ -125,9 +151,24 @@ function criarProviderOpenAI(opcoes = {}) {
         });
         resultadosParaAuditoria.push(output);
       }
+      if (returnAfterTerminalTool && deveFinalizar) {
+        emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
+          etapa: stage, provider: 'openai', rodada: rodada + 1,
+          callId: auditada.callId, motivo: 'tool_terminal'
+        });
+        return {
+          texto: resposta.output_text || '', provider: 'openai', modelo,
+          rodadas: rodada + 1, responseId: resposta.id
+        };
+      }
     }
 
-    throw new Error(`O provider openai excedeu ${maxRodadas} rodadas de tools.`);
+    emitirCheckpoint(onCheckpoint, 'provider_esgotou_rodadas', {
+      etapa: stage, provider: 'openai', maxRodadas
+    });
+    const erro = new Error(`O provider openai excedeu ${maxRodadas} rodadas de tools.`);
+    erro.codigo = 'MAX_RODADAS';
+    throw erro;
   }
 
   return { nome: 'openai', modelo, executar };

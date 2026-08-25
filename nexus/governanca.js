@@ -4,6 +4,7 @@ const MODOS_AUTORIZACAO = Object.freeze(['off', 'audit', 'enforce']);
 const PERMISSOES_ESPECIAIS = Object.freeze({
   ia_conversar: 'ia.conversar',
   consultar_nexus: 'ia.nexus.consultar',
+  solicitar_revisao_memoria: 'memoria.candidatar',
   construir_sql: 'sql.gerar',
   consultar_gold: 'gold.consultar',
   agregar_gold: 'gold.consultar',
@@ -120,7 +121,7 @@ function criarServicoGovernanca(opcoes) {
     const { permitida, motivo } = resolucao;
     const decisao = modo === 'off' ? 'off' : permitida ? 'allow' :
       modo === 'audit' ? 'would_deny' : 'deny';
-    const camada = nome === 'ia_conversar' || nome === 'consultar_nexus'
+    const camada = ['ia_conversar', 'consultar_nexus', 'solicitar_revisao_memoria'].includes(nome)
       ? 'generalista' : obterCapacidade(nome)?.camada || 'negocio';
     const registro = (await pool.query(`
       INSERT INTO nexus.authorization_decisions

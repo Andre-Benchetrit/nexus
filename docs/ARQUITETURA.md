@@ -21,6 +21,12 @@ consultor: ela responde conversas gerais ou chama `consultar_nexus`. O consultor
 o roteador e as tools abaixo dessa capability nao mudam de responsabilidade.
 Consulte [IA_GENERALISTA.md](IA_GENERALISTA.md).
 
+Entre o plano validado e o provider corporativo existe um seletor de faixa
+semantica. Ele usa dominio, intencao, confianca, tools, camadas e lacunas para
+recomendar ou aplicar uma faixa basica, assistida ou avancada. A decisao e
+auditada e nao altera as permissoes do planejador. Consulte
+[ESCALONAMENTO_SEMANTICO.md](ESCALONAMENTO_SEMANTICO.md).
+
 ## Banco operacional
 
 Governança, conversas, memória estruturada, tarefas interativas e auditoria usam
@@ -47,8 +53,12 @@ usar o leitor DuckDB.
 - `agentes/recuperacao_tools.js`: amplia uma vez uma rota automatica incompleta.
 - `agentes/resposta.js`: normaliza a apresentacao sem misturar regras ao fluxo.
 - `agentes/providers/`: adapters para Anthropic, Gemini, Groq e OpenAI.
+- `agentes/execucao_turno.js`: checkpoints, ledger idempotente e handoff universal.
+- `agentes/revisor_memoria.js`: avaliacao estruturada de aprendizados elegiveis.
 - `agentes/assistente_nexus.js`: conversa generalista e delegacao corporativa.
+- `agentes/escalonamento_semantico.js`: pontuacao, faixas e politica de provider/dados.
 - `nexus/auditoria_ia.js`: traces, usage real, custos e mensagens visiveis.
+- `nexus/memoria_governada.js`: candidaturas, confirmacao, revisao e publicacao.
 - `agentes/consultor_nexus.js`: facade de orquestracao e entrada de linha de comando.
 
 ## Padroes utilizados

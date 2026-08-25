@@ -4,8 +4,9 @@ const path = require('path');
 const { objetos: catalogoPadrao, obterObjeto } = require('../silver/catalogo');
 const { normalizarChavesPrimarias } = require('../exportadores/core/sql');
 const { criarConexaoDuckDB, fecharConexaoDuckDB, runDuckDB } = require('./connections');
+const { criarLakeStorage, resolverRaizLake } = require('../nexus/lake_storage');
 
-const RAIZ_LAKE_PADRAO = path.resolve(__dirname, '..', 'lake');
+const RAIZ_LAKE_PADRAO = resolverRaizLake();
 const IDENTIFICADOR_SEGURO = /^[a-zA-Z_][a-zA-Z0-9_$]*$/;
 const LIMITE_MAXIMO = 500;
 const OPERADORES_SQL = Object.freeze({
@@ -50,34 +51,12 @@ async function listarArquivos(diretorio, nomeArquivo) {
 }
 
 async function descobrirExecucoesSilver(raizLake, objeto, camada = 'silver') {
-  const raizObjeto = path.join(raizLake, camada, objeto.nome);
-  const manifestos = await listarArquivos(raizObjeto, 'manifest.json');
-  const execucoes = [];
-  for (const caminhoManifesto of manifestos) {
-    const manifesto = JSON.parse(await fs.readFile(caminhoManifesto, 'utf8'));
-    if (manifesto.status !== 'sucesso' || manifesto.objeto !== objeto.nome) continue;
-    const nomeArquivo = manifesto.arquivo || 'dados.parquet';
-    if (path.basename(nomeArquivo) !== nomeArquivo) {
-      throw new Error(`Manifesto ${camada} aponta para arquivo invalido: ${caminhoManifesto}`);
-    }
-    const arquivo = path.join(path.dirname(caminhoManifesto), nomeArquivo);
-    try {
-      await fs.access(arquivo);
-    } catch (erro) {
-      if (erro.code === 'ENOENT') continue;
-      throw erro;
-    }
-    execucoes.push({ manifesto, caminhoManifesto, arquivo });
-  }
-  return execucoes.sort((a, b) => {
-    const dataA = a.manifesto.fim || a.manifesto.inicio || '';
-    const dataB = b.manifesto.fim || b.manifesto.inicio || '';
-    return dataA.localeCompare(dataB) || a.arquivo.localeCompare(b.arquivo);
-  });
+  return criarLakeStorage({ raizLake }).listarVersoes(camada, objeto.nome);
 }
 
 function criarLeitorSilver(opcoes = {}) {
-  const raizLake = path.resolve(opcoes.raizLake || RAIZ_LAKE_PADRAO);
+  const storage = opcoes.lakeStorage || criarLakeStorage({ raizLake: opcoes.raizLake });
+  const raizLake = storage.raizLake || path.resolve(opcoes.raizLake || RAIZ_LAKE_PADRAO);
   const catalogo = opcoes.catalogo || catalogoPadrao;
   const camada = opcoes.camada || 'silver';
   const rotuloCamada = camada.charAt(0).toUpperCase() + camada.slice(1);
@@ -95,7 +74,7 @@ function criarLeitorSilver(opcoes = {}) {
     if (fechado) throw new Error(`O leitor ${rotuloCamada} ja foi fechado.`);
     if (preparados.has(nome)) return preparados.get(nome);
     const objeto = objetoPorNome(nome);
-    const execucoes = await descobrirExecucoesSilver(raizLake, objeto, camada);
+    const execucoes = await storage.listarVersoes(camada, objeto.nome);
     if (!execucoes.length) throw new Error(`Nenhuma execucao ${rotuloCamada} valida encontrada para ${nome}.`);
 
     const ultima = execucoes.at(-1);

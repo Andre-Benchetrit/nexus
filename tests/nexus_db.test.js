@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { comTransacao, obterConfiguracaoBanco } = require('../nexus/db');
+const { comTransacao, criarPoolNexus, obterConfiguracaoBanco } = require('../nexus/db');
 const { listarMigrations, obterStatusMigrations } = require('../nexus/migrations');
 
 test('configuracao do banco operacional exige URL e valida limites', () => {
@@ -16,6 +16,15 @@ test('configuracao do banco operacional exige URL e valida limites', () => {
   assert.throws(() => obterConfiguracaoBanco({
     NEXUS_DATABASE_URL: 'postgresql://exemplo', NEXUS_DB_POOL_MAX: '0'
   }), /NEXUS_DB_POOL_MAX/);
+});
+
+test('pool trata perda de conexao ociosa sem evento error nao observado', async () => {
+  const pool = criarPoolNexus({
+    env: { NEXUS_DATABASE_URL: 'postgresql://exemplo' },
+    configuracao: { connectionTimeoutMillis: 100 }
+  });
+  assert.ok(pool.listenerCount('error') > 0);
+  await pool.end();
 });
 
 test('migrations possuem ordem e checksum deterministico', (t) => {

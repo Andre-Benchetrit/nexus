@@ -10,8 +10,9 @@ const {
   executarChamadaAuditada,
   normalizarUsageOpenAI
 } = require('./telemetria');
+const { emitirCheckpoint } = require('./checkpoints');
 
-const MODELO_PADRAO = 'llama-3.3-70b-versatile';
+const MODELO_PADRAO = 'openai/gpt-oss-120b';
 
 function tolerarEntidadesParciaisDoRoteador(schema, nomeFerramenta) {
   if (nomeFerramenta !== 'registrar_decisao_rota') return schema;
@@ -29,6 +30,21 @@ function tolerarEntidadesParciaisDoRoteador(schema, nomeFerramenta) {
     }
   }
   visitar(copia);
+  copia.properties.entidades = {
+    description: 'Use sempre uma lista. Cada item exige tipo; valores e origem sao opcionais.',
+    type: 'array',
+    maxItems: 50,
+    items: {
+      type: 'object',
+      properties: {
+        tipo: { type: 'string' },
+        valores: { type: 'array', items: { type: 'string' }, maxItems: 500 },
+        origem: { type: 'string', enum: ['pergunta_atual', 'memoria'] }
+      },
+      required: ['tipo'],
+      additionalProperties: false
+    }
+  };
   return copia;
 }
 
@@ -81,13 +97,15 @@ function criarProviderGroq(opcoes = {}) {
       executarTool,
       maxRodadas = 8,
       onEvento,
+      onCheckpoint,
       mensagens,
       telemetria,
       stage = 'business_reasoning',
       stageFinal,
       purpose = 'corporate_query',
       parentCallId = null,
-      fallbackFromCallId = null
+      fallbackFromCallId = null,
+      returnAfterTerminalTool = false
     }) {
       const client = obterCliente();
       const ferramentas = Array.isArray(tools)
@@ -112,6 +130,10 @@ function criarProviderGroq(opcoes = {}) {
           ferramentas.map((tool) => [tool.definicao.name, tool.definicao])
         );
         onEvento?.(`Groq: aguardando resposta da rodada ${rodada + 1}/${maxRodadas}...`);
+        emitirCheckpoint(onCheckpoint, 'modelo_solicitado', {
+          etapa: houveTool && stageFinal ? stageFinal : stage,
+          provider: 'groq', rodada: rodada + 1
+        });
         const auditada = await executarChamadaAuditada({
           telemetria, provider: 'groq', modelo,
           stage: houveTool && stageFinal ? stageFinal : stage,
@@ -139,12 +161,21 @@ function criarProviderGroq(opcoes = {}) {
         });
         const resposta = auditada.resposta;
         const mensagem = resposta.choices?.[0]?.message;
+        emitirCheckpoint(onCheckpoint, 'modelo_respondeu', {
+          etapa: houveTool && stageFinal ? stageFinal : stage,
+          provider: 'groq', rodada: rodada + 1, callId: auditada.callId,
+          stopReason: resposta.choices?.[0]?.finish_reason || null
+        });
         onEvento?.(`Groq: rodada ${rodada + 1} recebida.`);
 
         if (!mensagem) throw new Error('O Groq não retornou uma mensagem válida.');
 
         const chamadas = mensagem.tool_calls || [];
         if (chamadas.length === 0) {
+          emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
+            etapa: houveTool && stageFinal ? stageFinal : stage,
+            provider: 'groq', rodada: rodada + 1, callId: auditada.callId
+          });
           return {
             texto: mensagem.content || 'O Groq não retornou texto.',
             provider: 'groq',
@@ -168,6 +199,9 @@ function criarProviderGroq(opcoes = {}) {
           const nome = chamada.function?.name;
           const ferramenta = ferramentasPorNome.get(nome);
           let resultado;
+          emitirCheckpoint(onCheckpoint, 'tool_sugerida', {
+            etapa: stage, provider: 'groq', nome, callId: auditada.callId
+          });
 
           try {
             if (!ferramenta) throw new Error(`Ferramenta desconhecida solicitada pelo Groq: ${nome}`);
@@ -177,12 +211,19 @@ function criarProviderGroq(opcoes = {}) {
               definicoesPorNome.get(nome)?.parameters
             );
             resultado = await ferramenta.executar(argumentos);
+            emitirCheckpoint(onCheckpoint, 'tool_aceita', {
+              etapa: stage, provider: 'groq', nome
+            });
             const terminal = typeof ferramenta.terminal === 'function'
               ? ferramenta.terminal(argumentos, resultado)
               : ferramenta.terminal;
             if (terminal === true) deveFinalizar = true;
           } catch (erro) {
             resultado = JSON.stringify({ erro: erro.message });
+            emitirCheckpoint(onCheckpoint, 'tool_rejeitada', {
+              etapa: stage, provider: 'groq', nome,
+              codigo: erro.codigo || erro.code || erro.name || 'ERRO_TOOL'
+            });
           }
           resultadosParaAuditoria.push(resultado);
 
@@ -192,9 +233,24 @@ function criarProviderGroq(opcoes = {}) {
             content: typeof resultado === 'string' ? resultado : JSON.stringify(resultado)
           });
         }
+        if (returnAfterTerminalTool && deveFinalizar) {
+          emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
+            etapa: stage, provider: 'groq', rodada: rodada + 1,
+            callId: auditada.callId, motivo: 'tool_terminal'
+          });
+          return {
+            texto: mensagem.content || '', provider: 'groq', modelo,
+            rodadas: rodada + 1, responseId: resposta.id || null
+          };
+        }
       }
 
-      throw new Error(`O Groq excedeu o limite de ${maxRodadas} rodadas de tools.`);
+      emitirCheckpoint(onCheckpoint, 'provider_esgotou_rodadas', {
+        etapa: stage, provider: 'groq', maxRodadas
+      });
+      const erro = new Error(`O Groq excedeu o limite de ${maxRodadas} rodadas de tools.`);
+      erro.codigo = 'MAX_RODADAS';
+      throw erro;
     }
   };
 }

@@ -3,6 +3,13 @@ const CODIGOS_TRANSITORIOS = new Set([
   'ABORT_ERR', 'ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT',
   'UNAVAILABLE', 'RESOURCE_EXHAUSTED'
 ]);
+const CODIGOS_FALLBACK_CONTROLADO = new Set([
+  ...CODIGOS_TRANSITORIOS,
+  'MAX_RODADAS', 'RESPOSTA_INVALIDA', 'SCHEMA_INVALIDO', 'TOOL_CALL_INVALIDO',
+  'TOOL_USE_FAILED'
+]);
+
+const { aplicarHandoffAoContexto, resolverModoHandoff } = require('../execucao_turno');
 
 function obterCodigoErro(erro) {
   const candidatos = [
@@ -22,6 +29,15 @@ function erroTransitorio(erro) {
   if (codigo && CODIGOS_TRANSITORIOS.has(codigo)) return true;
   const mensagem = String(erro?.message || '').toLowerCase();
   return /high demand|service unavailable|retryable http error|client closed request|request aborted|fetch failed|network error|temporar|timeout|timed out|rate limit|quota|resource exhausted|connection reset/.test(mensagem);
+}
+
+function erroElegivelFallback(erro) {
+  const codigo = obterCodigoErro(erro);
+  if (codigo === '401' || codigo === '403') return false;
+  if (codigo && CODIGOS_FALLBACK_CONTROLADO.has(codigo)) return true;
+  if (erroTransitorio(erro)) return true;
+  return /excedeu .*rodadas|resposta (invalida|inválida)|tool call validation failed/i
+    .test(String(erro?.message || ''));
 }
 
 function erroDeQuota(erro) {
@@ -67,10 +83,12 @@ function criarProviderResiliente(primario, fallback, opcoes = {}) {
         try {
           return await primario.executar(contexto);
         } catch (erro) {
-          if (!erroTransitorio(erro)) throw erro;
+          if (!erroElegivelFallback(erro)) throw erro;
           ultimoErro = erro;
 
-          const podeRepetir = !erroDeQuota(erro) && tentativa < tentativasExtras;
+          const codigo = obterCodigoErro(erro);
+          const podeRepetir = !erroDeQuota(erro) && codigo !== 'TOOL_USE_FAILED' &&
+            tentativa < tentativasExtras;
           if (!podeRepetir) break;
           contexto.onEvento?.(
             `${primario.nome}: falha temporária; nova tentativa em ${atrasoMs * (2 ** tentativa)} ms.`
@@ -82,14 +100,32 @@ function criarProviderResiliente(primario, fallback, opcoes = {}) {
       if (!fallback) throw ultimoErro;
 
       try {
-        contexto.onEvento?.(
-          `${primario.nome}: indisponível; acionando fallback ${fallback.nome}.`
-        );
+        if (contexto.debugFallback === true) {
+          contexto.onEvento?.(
+            `${primario.nome}: indisponível; acionando fallback ${fallback.nome}.`
+          );
+        }
         const contextoPreparado = contexto.prepararFallback
           ? await contexto.prepararFallback()
           : contexto;
+        const modoHandoff = resolverModoHandoff(contexto.handoffMode);
+        const handoff = contexto.estadoExecucao?.criarHandoff({
+          providerAnterior: primario.nome,
+          providerDestino: fallback.nome,
+          erro: ultimoErro
+        }) || null;
+        const preparadoComHandoff = handoff && modoHandoff === 'v1'
+          ? aplicarHandoffAoContexto(contextoPreparado, handoff)
+          : contextoPreparado;
+        await contexto.onHandoff?.({
+          modo: modoHandoff,
+          providerAnterior: primario.nome,
+          providerDestino: fallback.nome,
+          motivo: obterCodigoErro(ultimoErro) || 'erro_transitorio',
+          handoff
+        });
         const contextoFallback = {
-          ...contextoPreparado,
+          ...preparadoComHandoff,
           fallbackFromCallId: contexto.telemetria?.ultimoCallId || null
         };
         const resultado = await fallback.executar(contextoFallback);
@@ -113,6 +149,7 @@ function criarProviderResiliente(primario, fallback, opcoes = {}) {
 module.exports = {
   criarProviderResiliente,
   erroDeQuota,
+  erroElegivelFallback,
   erroTransitorio,
   obterCodigoErro
 };

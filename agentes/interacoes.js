@@ -328,6 +328,14 @@ function pareceNovoAssunto(texto) {
     !/\b(data|emissao|cancel|periodo|campo|metrica|listar|agregar|detalhar)\b/.test(t);
 }
 
+function pareceNovaSolicitacaoClara(texto) {
+  const t = normalizarTexto(texto);
+  return pareceNovoAssunto(texto) && (
+    /\?$/.test(String(texto).trim()) ||
+    /\b(quais|qual|como|quando|onde|liste|mostre|consulte|verifique|me diga|consegue)\b/.test(t)
+  );
+}
+
 function criarResultadoPergunta(tarefa) {
   return {
     status: 'precisa_esclarecimento', acao: 'responder', tarefa,
@@ -350,6 +358,11 @@ async function processarMensagemInterativa(texto, opcoes = {}) {
   }
 
   if (ativa?.tipo === 'esclarecimento_rota') {
+    if (pareceNovaSolicitacaoClara(texto)) {
+      await memoria.atualizarEstadoTarefa(ativa.id, 'pausada');
+      emitirEvento(onEvento, 'tarefa_pausada', ativa);
+      return { acao: 'continuar', texto };
+    }
     ativa.slots.resposta = texto;
     await memoria.salvarTarefa({ ...ativa, estado: 'concluida', camposPendentes: [], perguntas: [] }, { ativar: false });
     await memoria.atualizarEstadoTarefa(ativa.id, 'concluida');

@@ -1,5 +1,7 @@
 # Nexus
 
+Interface web, login e implantacao do piloto: [docs/HUB.md](docs/HUB.md).
+
 Referencia completa de comandos: [`docs/COMANDOS.md`](docs/COMANDOS.md).
 
 Indicadores e definicoes de negocio: [`docs/GOLD.md`](docs/GOLD.md).
@@ -104,20 +106,25 @@ Em `nota_saida`, a extração usa `dt_alteracao` para capturar atualizações e
 `dt_cadastro` para capturar registros novos cujo `dt_alteracao` ainda é nulo.
 `data_pedido` não é cursor de ingestão: ela permanece como data de negócio.
 
-O agente possui adaptadores separados para Gemini, Groq e OpenAI. A tool, as regras de
-acesso e o DuckDB são os mesmos nos três casos. Para configurá-lo, copie
-`agentes/.env.example` para `agentes/.env` e escolha o provider:
+O agente possui adaptadores separados para Anthropic, Gemini, Groq e OpenAI. A
+tool, as regras de acesso e o DuckDB são os mesmos. A composicao inicial usa
+Groq e Claude; Gemini fica preparado, mas bloqueado ate aprovacao de custo e
+politica de dados:
 
 ```text
-LLM_PROVIDER=gemini
-LLM_FALLBACK_PROVIDER=groq
+LLM_PROVIDER=groq
+LLM_FALLBACK_PROVIDER=anthropic
 LLM_REQUEST_TIMEOUT_MS=20000
 
-GEMINI_API_KEY=
-GEMINI_MODEL=gemini-3.1-flash-lite
-
 GROQ_API_KEY=
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
+
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-5
+
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.5-flash-lite
+NEXUS_GEMINI_USAGE_MODE=disabled
 
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.6-luna
@@ -132,13 +139,12 @@ npm run agente:nexus -- "Quantas notas de saída estão na situação B?"
 Também é possível escolher sem alterar o arquivo `.env`:
 
 ```powershell
-npm run agente:nexus -- --provider gemini "Quantos clientes temos?"
 npm run agente:nexus -- --provider groq "Quantos clientes temos?"
+npm run agente:nexus -- --provider anthropic --model claude-sonnet-5 "Quantos clientes temos?"
 npm run agente:nexus -- --provider openai "Quantos clientes temos?"
-npm run agente:nexus -- --provider gemini --model gemini-3.1-flash-lite "Quais dados temos?"
 ```
 
-Com `LLM_FALLBACK_PROVIDER=groq`, erros transitórios do Gemini acionam o Groq.
+Com `LLM_FALLBACK_PROVIDER=anthropic`, erros transitórios do Groq acionam Claude.
 Erros de quota (`429`) mudam imediatamente; indisponibilidade (`503`) e timeout
 têm uma tentativa curta antes da troca. Erros de configuração, autenticação ou
 validação não acionam fallback. Use `--no-fallback` para desativá-lo em uma execução.
@@ -162,7 +168,7 @@ O desenho completo esta em [docs/ARQUITETURA.md](docs/ARQUITETURA.md).
 Ao executar:
 
 ```powershell
-npm run agente:nexus -- --provider gemini --model gemini-3.1-flash-lite "Quantos clientes possuem MMA no nome fantasia ou razão social?"
+npm run agente:nexus -- --provider groq --model openai/gpt-oss-120b "Quantos clientes possuem MMA no nome fantasia ou razão social?"
 ```
 
 o fluxo é:
@@ -170,12 +176,12 @@ o fluxo é:
 ```text
 Terminal
   → agentes/consultor_nexus.js: envia pergunta, regras e definições das tools ao provider
-  → Gemini: escolhe uma ação estruturada, por exemplo contar clientes
+  → Groq: escolhe uma ação estruturada, por exemplo contar clientes
   → tools/consultar_bronze.js: valida operação, entidade, colunas, filtros e limites
   → duckdb/bronze.js: monta uma consulta interna parametrizada e somente leitura
   → DuckDB: lê os Parquets do Bronze
-  → tool: devolve o resultado estruturado ao Gemini
-  → Gemini: transforma o resultado em uma resposta em português
+  → tool: devolve o resultado estruturado ao provider
+  → provider: transforma o resultado em uma resposta em português
 ```
 
 Para essa pergunta, o Gemini pode pedir conceitualmente:

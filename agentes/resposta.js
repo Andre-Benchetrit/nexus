@@ -143,9 +143,236 @@ function normalizarResultadoTool(resultado) {
   }
 }
 
+function extrairIdentificadoresNegocio(texto) {
+  const valor = String(texto || '');
+  const padroes = [
+    /\b\d{3}-\d{7}-\d{7}\b/g,
+    /\b\d{13,14}\b/g,
+    /\b\d{7}\b/g,
+    /\b(?=[A-Z0-9_-]{8,}\b)(?=[A-Z0-9_-]*\d)[A-Z0-9_-]+\b/g
+  ];
+  const encontrados = padroes.flatMap((padrao) => valor.match(padrao) || []);
+  return [...new Set(encontrados)].filter((item) => (
+    !/^20\d{2}[01]\d[0-3]\d$/.test(item) &&
+    !/^\d{8}T\d/.test(item)
+  ));
+}
+
+function avaliarSustentacaoFactual(texto, resultadosTools = []) {
+  if (!resultadosTools.length) {
+    return { status: 'sem_evidencia', identificadoresNaoSustentados: [] };
+  }
+  const evidencia = JSON.stringify(resultadosTools.map((item) => item.resultado ?? item));
+  const identificadores = extrairIdentificadoresNegocio(texto);
+  const naoSustentados = identificadores.filter((item) => !evidencia.includes(item));
+  return {
+    status: naoSustentados.length ? 'revisao_necessaria' : 'comprovada',
+    identificadoresNaoSustentados: naoSustentados,
+    identificadoresVerificados: identificadores.length - naoSustentados.length
+  };
+}
+
+function possuiSinalParcial(valor) {
+  if (!valor || typeof valor !== 'object') return false;
+  if (Array.isArray(valor)) return valor.some(possuiSinalParcial);
+  if (
+    valor.resultado_truncado === true || valor.truncado === true ||
+    valor.dados_parciais === true || valor.status_conflitante === true
+  ) return true;
+  return Object.values(valor).some(possuiSinalParcial);
+}
+
+function possuiColecaoVazia(valor) {
+  if (!valor || typeof valor !== 'object') return false;
+  const chavesColecao = [
+    'dados', 'itens', 'pedidos', 'parcelas', 'resultados', 'bloqueios',
+    'agendamentos', 'linhas'
+  ];
+  return chavesColecao.some((chave) => Array.isArray(valor[chave]) && valor[chave].length === 0);
+}
+
+function resultadoExplicitamenteVazio(valor) {
+  if (!valor || typeof valor !== 'object') return false;
+  if (Array.isArray(valor)) return valor.length === 0;
+  return valor.dados_disponiveis === false || valor.encontrado === false ||
+    valor.total === 0 || possuiColecaoVazia(valor);
+}
+
+function extrairCamposValores(valor, acumulado = {}) {
+  if (Array.isArray(valor)) {
+    valor.forEach((item) => extrairCamposValores(item, acumulado));
+    return acumulado;
+  }
+  if (!valor || typeof valor !== 'object') return acumulado;
+  for (const [chave, item] of Object.entries(valor)) {
+    if (item == null) continue;
+    if (!acumulado[chave]) acumulado[chave] = [];
+    if (['string', 'number', 'boolean', 'bigint'].includes(typeof item)) {
+      acumulado[chave].push(String(item));
+    } else if (Array.isArray(item) && item.every((subitem) => (
+      subitem == null || ['string', 'number', 'boolean', 'bigint'].includes(typeof subitem)
+    ))) {
+      acumulado[chave].push(...item.filter((subitem) => subitem != null).map(String));
+    }
+    extrairCamposValores(item, acumulado);
+  }
+  return acumulado;
+}
+
+function extrairDatasEValores(valor, acumulado = { datas: new Set(), numeros: new Set() }) {
+  if (Array.isArray(valor)) {
+    valor.forEach((item) => extrairDatasEValores(item, acumulado));
+    return acumulado;
+  }
+  if (valor && typeof valor === 'object') {
+    Object.values(valor).forEach((item) => extrairDatasEValores(item, acumulado));
+    return acumulado;
+  }
+  if (typeof valor === 'number' && Number.isFinite(valor)) {
+    acumulado.numeros.add(String(valor));
+  }
+  if (typeof valor === 'string') {
+    for (const data of valor.match(/\b\d{4}-\d{2}-\d{2}\b/g) || []) acumulado.datas.add(data);
+    const numero = Number(valor.replace(',', '.'));
+    if (Number.isFinite(numero) && valor.trim() !== '') acumulado.numeros.add(String(numero));
+  }
+  return acumulado;
+}
+
+function classificarEvidencia(resultadosTools = []) {
+  if (!resultadosTools.length) return 'error';
+  const resultados = resultadosTools.map((item) => item.resultado ?? item);
+  if (resultados.every(resultadoExplicitamenteVazio)) return 'empty';
+  if (resultados.some(possuiSinalParcial) || resultados.some(resultadoExplicitamenteVazio)) {
+    return 'partial';
+  }
+  return 'complete';
+}
+
+function normalizarTextoBusca(valor) {
+  return String(valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function inferirCamposObrigatorios(decisao = {}) {
+  const obrigatorios = new Set();
+  const pergunta = normalizarTextoBusca(decisao.perguntaAutonoma);
+  for (const requisito of decisao.requisitosResposta || []) {
+    const correspondencia = String(requisito).match(/^campo:([a-z0-9_]+)$/i);
+    if (correspondencia) obrigatorios.add(correspondencia[1].toLowerCase());
+  }
+
+  // Campos sugeridos pelo roteador ajudam no planejamento, mas somente uma
+  // exigencia identificavel na pergunta ou no contrato torna o campo obrigatorio.
+  const regras = [
+    ['marketplace_pedido', /\bmarketplace[_ ]pedido\b|\bnumero(?:s)? (?:do )?pedido(?:s)?\b/],
+    ['ean', /\bean\b|codigo(?:s)? de barra(?:s)?/],
+    ['sku', /\bsku(?:s)?\b/],
+    ['fornecedor', /\bfornecedor(?:es)?\b/],
+    ['marca', /\bmarca(?:s)?\b/],
+    ['data_prevista', /data prevista|previsao de chegada/],
+    ['numero_pedido_compra', /pedido(?:s)? de compra/],
+    ['quantidade_pedida', /quantidade(?:s)? pedida(?:s)?/],
+    ['quantidade_recebida', /quantidade(?:s)? recebida(?:s)?/],
+    ['quantidade_pendente', /quantidade(?:s)? pendente(?:s)?/]
+  ];
+  for (const [campo, padrao] of regras) {
+    if (padrao.test(pergunta)) obrigatorios.add(campo);
+  }
+  return [...obrigatorios];
+}
+
+function criarManifestoFactual(resultadosTools = [], decisao = {}) {
+  const resultados = resultadosTools.map((item) => item.resultado ?? item);
+  const referencias = {};
+  for (const item of resultadosTools) {
+    for (const [chave, valores] of Object.entries(item.referencias || {})) {
+      referencias[chave] ||= [];
+      referencias[chave].push(...(Array.isArray(valores) ? valores : [valores]));
+    }
+  }
+  for (const [chave, valores] of Object.entries(referencias)) {
+    referencias[chave] = [...new Set(valores.map(String))];
+  }
+  const extraidos = extrairDatasEValores(resultados);
+  const camposValores = Object.fromEntries(Object.entries(extrairCamposValores(resultados))
+    .map(([campo, valores]) => [campo, [...new Set(valores)]]));
+  const camposSolicitados = [...new Set((decisao.camposSolicitados || []).map(String))];
+  const camposObrigatorios = inferirCamposObrigatorios(decisao);
+  return {
+    referencias,
+    identificadores: extrairIdentificadoresNegocio(JSON.stringify(resultados)),
+    datas: [...extraidos.datas],
+    numeros: [...extraidos.numeros],
+    camposSolicitados,
+    camposObrigatorios,
+    camposComprovados: Object.keys(camposValores),
+    camposAusentes: camposObrigatorios.filter((campo) => !Object.hasOwn(camposValores, campo)),
+    valoresPorCampo: camposValores,
+    ferramentas: resultadosTools.map((item) => item.nome),
+    resultados: resultados.length
+  };
+}
+
+function criarEnvelopeEvidencia(resultadosTools = [], decisao = {}) {
+  const manifesto = criarManifestoFactual(resultadosTools, decisao);
+  const statusBase = classificarEvidencia(resultadosTools);
+  const status = statusBase === 'complete' && manifesto.camposAusentes.length
+    ? 'partial' : statusBase;
+  return {
+    status,
+    manifesto,
+    comprovada: status === 'complete' || status === 'partial' || status === 'empty'
+  };
+}
+
+function textoIndicaIndisponibilidade(texto) {
+  return /(?:nao|não) (?:consegui|consigo|foi possivel|foi possível).{0,80}(?:acessar|consultar|obter)|consulta (?:esta|está|ficou) indisponivel|base.{0,30}indisponivel/i
+    .test(String(texto || ''));
+}
+
+function validarSinteseCorporativa(texto, envelope) {
+  const motivos = [];
+  const status = envelope?.evidence?.status || envelope?.status;
+  const manifesto = envelope?.evidence?.manifest || envelope?.manifesto || {};
+  if (['complete', 'partial', 'empty'].includes(status) && textoIndicaIndisponibilidade(texto)) {
+    motivos.push('contradicao_disponibilidade');
+  }
+  const identificadoresPermitidos = new Set(manifesto.identifiers || manifesto.identificadores || []);
+  const referencias = manifesto.references || manifesto.referencias || {};
+  Object.values(referencias).flat().forEach((item) => identificadoresPermitidos.add(String(item)));
+  const inventados = extrairIdentificadoresNegocio(texto)
+    .filter((item) => !identificadoresPermitidos.has(item));
+  if (inventados.length) motivos.push('identificador_sem_evidencia');
+  const datasPermitidas = new Set(manifesto.dates || manifesto.datas || []);
+  const datasTexto = String(texto || '').match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
+  if (datasTexto.some((data) => !datasPermitidas.has(data))) motivos.push('cobertura_temporal_alterada');
+  const camposIdentificadores = new Set([
+    'marketplace_pedido', 'id_nota_saida', 'nota_fiscal', 'sku', 'ean',
+    'numero_pedido_compra'
+  ]);
+  for (const campo of manifesto.camposObrigatorios || []) {
+    if (!camposIdentificadores.has(campo)) continue;
+    const valores = manifesto.valoresPorCampo?.[campo] || [];
+    if (valores.length && !valores.some((valor) => String(texto || '').includes(valor))) {
+      motivos.push(`campo_obrigatorio_ausente:${campo}`);
+    }
+  }
+  return { valida: motivos.length === 0, motivos: [...new Set(motivos)] };
+}
+
 module.exports = {
   aplicarGarantiasResposta,
+  avaliarSustentacaoFactual,
+  classificarEvidencia,
+  criarEnvelopeEvidencia,
+  criarManifestoFactual,
+  extrairIdentificadoresNegocio,
   formatarDatasResposta,
   formatarPainelFocado,
-  normalizarResultadoTool
+  normalizarResultadoTool,
+  textoIndicaIndisponibilidade,
+  validarSinteseCorporativa
 };

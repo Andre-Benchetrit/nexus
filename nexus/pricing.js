@@ -127,12 +127,86 @@ async function importarManifesto(pool, manifesto) {
       WHERE er.id IS NULL
       ORDER BY competencia
     `)).rows;
-    if (competenciasSemCambio.length) {
-      throw new Error(`Cotacao USD/BRL ausente para: ${competenciasSemCambio
-        .map((item) => dataBanco(item.competencia)).join(', ')}.`);
-    }
-    return { version: manifesto.version, tarifas, cambios };
+    const reconciliacao = await reconciliarPrecificacao(cliente);
+    return {
+      version: manifesto.version,
+      tarifas,
+      cambios,
+      reconciliacao,
+      competenciasSemCambio: competenciasSemCambio.map((item) => dataBanco(item.competencia))
+    };
   });
 }
 
-module.exports = { importarManifesto, lerManifesto };
+async function reconciliarPrecificacao(cliente) {
+  const itens = await cliente.query(`
+    WITH candidatos AS (
+      SELECT DISTINCT ON (u.id)
+        u.id AS usage_id, pr.id AS pricing_rate_id, er.id AS exchange_rate_id,
+        (u.quantidade / pr.tamanho_unidade * pr.preco_usd) AS custo_usd,
+        (u.quantidade / pr.tamanho_unidade * pr.preco_usd * er.taxa) AS custo_brl
+      FROM nexus.usage_line_items u
+      JOIN nexus.pricing_rates pr
+        ON pr.provider=u.provider AND pr.servico=u.servico AND pr.modelo=u.modelo
+       AND pr.metrica=u.metrica AND pr.vigente_desde <= u.criado_em::date
+       AND (pr.vigente_ate IS NULL OR pr.vigente_ate >= u.criado_em::date)
+      LEFT JOIN nexus.exchange_rates er
+        ON er.moeda_origem='USD' AND er.moeda_destino='BRL'
+       AND er.competencia=date_trunc('month',u.criado_em)::date
+      ORDER BY u.id, pr.vigente_desde DESC
+    )
+    UPDATE nexus.usage_line_items u SET
+      pricing_rate_id=c.pricing_rate_id,
+      exchange_rate_id=c.exchange_rate_id,
+      custo_usd=c.custo_usd,
+      custo_brl=c.custo_brl,
+      pricing_status=CASE WHEN c.exchange_rate_id IS NULL
+        THEN 'missing_exchange_rate' ELSE 'priced' END
+    FROM candidatos c WHERE u.id=c.usage_id
+    RETURNING u.id
+  `);
+  const chamadas = await cliente.query(`
+    WITH totais AS (
+      SELECT call_id,
+        count(*) > 0 AND bool_and(pricing_rate_id IS NOT NULL) AS usd_completo,
+        count(*) > 0 AND bool_and(pricing_rate_id IS NOT NULL AND exchange_rate_id IS NOT NULL)
+          AS brl_completo,
+        sum(custo_usd) AS custo_usd,
+        sum(custo_brl) AS custo_brl
+      FROM nexus.usage_line_items GROUP BY call_id
+    )
+    UPDATE nexus.llm_calls lc SET
+      estimated_cost_usd=CASE WHEN t.usd_completo THEN t.custo_usd ELSE NULL END,
+      estimated_cost_brl=CASE WHEN t.brl_completo THEN t.custo_brl ELSE NULL END,
+      pricing_usd_complete=t.usd_completo,
+      pricing_brl_complete=t.brl_completo,
+      pricing_complete=t.brl_completo
+    FROM totais t WHERE lc.id=t.call_id AND lc.status='sucesso'
+    RETURNING lc.id
+  `);
+  const turnos = await cliente.query(`
+    WITH totais AS (
+      SELECT turn_id,
+        count(*) > 0 AND bool_and(pricing_usd_complete) AS usd_completo,
+        count(*) > 0 AND bool_and(pricing_brl_complete) AS brl_completo,
+        sum(estimated_cost_usd) AS custo_usd,
+        sum(estimated_cost_brl) AS custo_brl
+      FROM nexus.llm_calls WHERE status='sucesso' GROUP BY turn_id
+    )
+    UPDATE nexus.ai_turns t SET
+      estimated_cost_usd=CASE WHEN x.usd_completo THEN x.custo_usd ELSE NULL END,
+      estimated_cost_brl=CASE WHEN x.brl_completo THEN x.custo_brl ELSE NULL END,
+      pricing_usd_complete=x.usd_completo,
+      pricing_brl_complete=x.brl_completo,
+      pricing_complete=x.brl_completo
+    FROM totais x WHERE t.id=x.turn_id
+    RETURNING t.id
+  `);
+  return {
+    itens: itens.rowCount,
+    chamadas: chamadas.rowCount,
+    turnos: turnos.rowCount
+  };
+}
+
+module.exports = { importarManifesto, lerManifesto, reconciliarPrecificacao };

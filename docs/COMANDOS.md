@@ -11,6 +11,7 @@ npm run nexus:pricing:import
 npm run nexus:pricing:status
 npm run nexus:usage:report
 npm run nexus:usage:trace -- <trace_id>
+npm run nexus:usage:compare -- --sessoes composicao-a,composicao-b
 npm run nexus:memory:import
 npm run nexus:memory:verify
 npm run nexus:memory:export-knowledge
@@ -219,20 +220,20 @@ Calculos disponiveis: `--contar`, `--somar`, `--media`, `--minimo` e `--maximo`.
 # Provider configurado no .env
 npm run agente:nexus -- "Quais tipos de produto predominam no catalogo atual?"
 
-# Gemini escolhido pela linha de comando
-npm run agente:nexus -- --provider gemini --model gemini-3.1-flash-lite "Quais tipos de produto predominam no catalogo atual?"
+# Gemini somente quando NEXUS_GEMINI_USAGE_MODE=paid estiver aprovado
+npm run agente:nexus -- --provider gemini --model gemini-3.5-flash-lite "Quais tipos de produto predominam no catalogo atual?"
 
 # Groq
-npm run agente:nexus -- --provider groq --model llama-3.3-70b-versatile "Quantos clientes temos?"
+npm run agente:nexus -- --provider groq --model openai/gpt-oss-120b "Quantos clientes temos?"
 
 # OpenAI
 npm run agente:nexus -- --provider openai "Quantos clientes temos?"
 
-# Gemini com fallback Groq definido pela linha de comando
-npm run agente:nexus -- --provider gemini --fallback-provider groq "Quantos clientes temos?"
+# Groq com fallback Claude definido pela linha de comando
+npm run agente:nexus -- --provider groq --fallback-provider anthropic "Quantos clientes temos?"
 
 # Desativa o fallback somente nesta execucao
-npm run agente:nexus -- --provider gemini --no-fallback "Quantos clientes temos?"
+npm run agente:nexus -- --provider groq --no-fallback "Quantos clientes temos?"
 
 # Rupturas e cobertura de estoque
 npm run agente:nexus -- "Quais produtos estão em ruptura atual?"
@@ -311,10 +312,26 @@ NEXUS_SESSION_HISTORY_LIMIT=10
 `v2` executa o plano semantico validado. `--perfil` continua tendo precedencia.
 O teto de seguranca tambem pode ser ajustado por `--max-rodadas` entre 1 e 20.
 
+O escalonamento de modelos e independente do modo do roteador:
+
+```powershell
+# Apenas mede a faixa recomendada
+npm run agente:nexus -- --semantic-escalation-mode shadow "Compare as vendas deste mes"
+
+# Aplica Groq/Claude conforme a faixa configurada
+npm run agente:nexus -- --semantic-escalation-mode v1 "Compare estoque, vendas e reposicoes"
+
+# Eleva a faixa para um teste; nunca reduz uma exigencia de seguranca
+npm run agente:nexus -- --semantic-tier avancada "Investigue esta divergencia"
+```
+
+Consulte [`ESCALONAMENTO_SEMANTICO.md`](ESCALONAMENTO_SEMANTICO.md) para a
+pontuacao, a politica de dados e a ativacao futura do Gemini pago.
+
 O comando antigo continua como alias compativel:
 
 ```powershell
-npm run agente:bronze -- --provider gemini --model gemini-3.1-flash-lite "Quantos clientes temos?"
+npm run agente:bronze -- --provider groq --model openai/gpt-oss-120b "Quantos clientes temos?"
 ```
 
 Para perguntas comuns, o agente envia somente a fachada de negocio reconhecida.
@@ -335,8 +352,8 @@ npm run agente:nexus -- "Me de as notas fiscais, separadas por espaco, dos marke
 Configuracao recomendada em `agentes/.env`:
 
 ```text
-LLM_PROVIDER=gemini
-LLM_FALLBACK_PROVIDER=groq
+LLM_PROVIDER=groq
+LLM_FALLBACK_PROVIDER=anthropic
 LLM_RETRY_ATTEMPTS=1
 LLM_RETRY_DELAY_MS=500
 LLM_REQUEST_TIMEOUT_MS=20000
@@ -347,17 +364,27 @@ NEXUS_ROUTER_MODE=shadow
 NEXUS_MAX_RODADAS=10
 NEXUS_SESSION_HISTORY_LIMIT=10
 
-GEMINI_API_KEY=sua_chave_gemini
-GEMINI_MODEL=gemini-3.1-flash-lite
-
 GROQ_API_KEY=sua_chave_groq
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
+
+ANTHROPIC_API_KEY=sua_chave_anthropic
+ANTHROPIC_MODEL=claude-sonnet-5
+
+NEXUS_SEMANTIC_ESCALATION_MODE=shadow
+NEXUS_MODEL_TIER_ASSISTED_PROVIDER=anthropic
+NEXUS_MODEL_TIER_ASSISTED_MODEL=claude-haiku-4-5
+NEXUS_MODEL_TIER_ADVANCED_PROVIDER=anthropic
+NEXUS_MODEL_TIER_ADVANCED_MODEL=claude-sonnet-5
+
+# Gemini preparado, mas inativo ate aprovacao:
+NEXUS_GEMINI_USAGE_MODE=disabled
+GEMINI_MODEL=gemini-3.5-flash-lite
 ```
 
 Em erro de quota (`429`), o agente troca direto para o fallback. Em `503` ou
 timeout, ele repete uma vez e depois troca. Erros de chave, configuracao ou
-validacao nao usam fallback. Quando houver troca, o terminal mostra qual provider
-gerou a resposta.
+validacao legitima de negocio nao usam fallback. No modo `v1`, a troca fica
+visivel no trace, mas nao no terminal normal. Use `--debug-fallback` para exibi-la.
 
 Durante a execucao, o terminal informa a rodada do provider e o tempo de cada
 tool. O timeout padrao por chamada e de 20 segundos e pode ser alterado somente
@@ -393,6 +420,8 @@ Gerencie correcoes revisadas da memoria longa:
 npm run agente:memoria -- --listar
 npm run agente:memoria -- --lembrar "Numero do pedido significa marketplace_pedido." --categoria vocabulario --gatilhos "numero do pedido,marketplace_pedido"
 npm run agente:memoria -- --esquecer id-do-aprendizado
+npm run nexus:memory:candidates -- list --principal auditor
+npm run nexus:memory:candidates -- approve <id> --principal gestor --setor comercial --motivo "Confirmado"
 ```
 
 Valide a bateria sem API ou execute uma amostra real no Groq:

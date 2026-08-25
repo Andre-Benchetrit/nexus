@@ -2,6 +2,10 @@
   "name": "nexus",
   "version": "1.0.0",
   "description": "Hub de ingestão e organização de dados para o data lake Nexus",
+  "workspaces": [
+    "hub",
+    "services/*"
+  ],
   "directories": {
     "doc": "docs"
   },
@@ -34,10 +38,16 @@
     "nexus:memory:import": "node scripts/nexus-memory.js import",
     "nexus:memory:verify": "node scripts/nexus-memory.js verify",
     "nexus:memory:export-knowledge": "node scripts/nexus-memory.js export-knowledge",
+    "nexus:memory:candidates": "node scripts/nexus-memory-candidates.js",
     "nexus:pricing:import": "node scripts/nexus-pricing.js import",
     "nexus:pricing:status": "node scripts/nexus-pricing.js status",
     "nexus:usage:report": "node scripts/nexus-usage.js report",
     "nexus:usage:trace": "node scripts/nexus-usage.js trace",
+    "nexus:usage:compare": "node scripts/nexus-usage.js compare",
+    "nexus:hub:bootstrap-admin": "node scripts/nexus-hub-bootstrap.js",
+    "nexus:api": "npm run start --workspace @nexus/api",
+    "nexus:hub": "npm run dev --workspace @nexus/hub",
+    "nexus:hub:build": "npm run build --workspace @nexus/hub",
     "nexus:ai:smoke": "node scripts/nexus-ai-smoke.js",
     "avaliar:agente": "node scripts/avaliar-agente.js",
     "test": "node --test"

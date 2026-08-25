@@ -23,7 +23,7 @@ const {
   extrairContextoTemporal,
   obterDataReferencia
 } = require('./contexto_temporal');
-const { aplicarPoliticaArgumentos } = require('./politicas_tools');
+const { aplicarPoliticaArgumentos, validarPoliticaExecucao } = require('./politicas_tools');
 const {
   criarMemoria,
   extrairReferenciasTemporais,
@@ -44,6 +44,8 @@ const {
 } = require('./roteador_semantico');
 const {
   aplicarGarantiasResposta,
+  avaliarSustentacaoFactual,
+  criarEnvelopeEvidencia,
   normalizarResultadoTool
 } = require('./resposta');
 const {
@@ -56,6 +58,15 @@ const { formatarRespostaSql } = require('../tools/construir_sql');
 const { criarServicoGovernanca } = require('../nexus/governanca');
 const { criarServicoAuditoriaIA } = require('../nexus/auditoria_ia');
 const { criarPoolNexus } = require('../nexus/db');
+const { criarEstadoExecucao } = require('./execucao_turno');
+const { resolverModoPlaybook } = require('../nexus/memoria_governada');
+const {
+  avaliarFaixaSemantica,
+  maiorFaixa,
+  resolverModoEscalonamento,
+  selecionarProviderDaFaixa,
+  validarProviderParaDados
+} = require('./escalonamento_semantico');
 
 const MAX_RODADAS_NEGOCIO = 10;
 const MAX_RODADAS_GENERICAS = 10;
@@ -93,6 +104,41 @@ function estabilizarDecisaoComHistorico(decisao, pergunta, historico = []) {
   const anterior = historico.at(-1);
   const dominioAnterior = anterior?.rota?.dominioPrimario ||
     String(anterior?.perfil || '').split('+')[0] || null;
+  const texto = String(pergunta || '').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const camposEnriquecimento = [
+    [/\bean\b|codigo(?:s)? de barra(?:s)?/, 'ean'],
+    [/\bsku(?:s)?\b/, 'sku'],
+    [/\bmarketplace[_ ]pedido\b/, 'marketplace_pedido']
+  ].filter(([padrao]) => padrao.test(texto)).map(([, campo]) => campo);
+  const enriquecerBloqueios = dominioAnterior === 'bloqueios_estoque' &&
+    (decisao.dominioPrimario === 'bloqueios_estoque' || referenciaContextual(pergunta)) &&
+    camposEnriquecimento.some(
+      (campo) => ['ean', 'sku'].includes(campo)
+    );
+  if (enriquecerBloqueios) {
+    const pedidos = anterior?.referencias?.marketplace_pedido ||
+      anterior?.entidades?.marketplace_pedido || [];
+    return {
+      ...decisao,
+      dominioPrimario: 'bloqueios_estoque',
+      dominiosSecundarios: (decisao.dominiosSecundarios || []).filter(
+        (dominio) => dominio !== 'bloqueios_estoque'
+      ),
+      intencao: 'enriquecer',
+      camposSolicitados: [...new Set([
+        ...(decisao.camposSolicitados || []),
+        ...camposEnriquecimento
+      ])],
+      entidades: pedidos.length ? [{
+        tipo: 'marketplace_pedido', valores: [...pedidos], origem: 'memoria'
+      }] : decisao.entidades,
+      codigosMotivo: [
+        ...(decisao.codigosMotivo || []),
+        'enriquecimento_contextual_deterministico'
+      ]
+    };
+  }
   if (
     !dominioAnterior ||
     dominioAnterior === decisao.dominioPrimario ||
@@ -119,6 +165,12 @@ function estabilizarDecisaoComHistorico(decisao, pergunta, historico = []) {
 async function executarAgenteInterno(pergunta, dependencias = {}) {
   if (!pergunta || !pergunta.trim()) throw new Error('Informe uma pergunta.');
   const texto = pergunta.trim();
+  const estadoExecucao = dependencias.estadoExecucao || criarEstadoExecucao({
+    objetivo: texto,
+    modo: dependencias.handoffMode,
+    onCheckpoint: dependencias.onCheckpoint
+  });
+  estadoExecucao.atualizarContexto({ objetivo: texto, etapa: 'corporate_entry' });
   const dataReferencia = dependencias.dataReferencia || obterDataReferencia();
   let perguntaNormalizada = completarAnoEmDatas(texto, dataReferencia);
   const memoriaDesabilitada = dependencias.memoria === false
@@ -129,7 +181,8 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       sessao: dependencias.sessaoMemoria,
       backend: dependencias.memoryBackend,
       pool: dependencias.poolNexus,
-      principalSlug: dependencias.principalSlug
+      principalSlug: dependencias.principalSlug,
+      departamentoSlug: dependencias.departamentoSlug
     });
   const governanca = dependencias.governanca || (memoria?.pool
     ? criarServicoGovernanca({
@@ -177,11 +230,18 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       );
       const inicioSql = Date.now();
       try {
+        estadoExecucao.prepararTool('construir_sql', interacao.argumentos, {
+          efeito: 'leitura', idempotencia: true
+        });
         resultadoSql = await ferramentaSql.executar(interacao.argumentos);
+        estadoExecucao.concluirTool('construir_sql', interacao.argumentos, resultadoSql, {
+          execucaoId: contextoGovernanca?.execucaoId || null
+        });
         await governanca?.concluirTool(contextoGovernanca, {
           sucesso: true, duracaoMs: Date.now() - inicioSql
         });
       } catch (erro) {
+        estadoExecucao.falharTool('construir_sql', interacao.argumentos, erro);
         await governanca?.concluirTool(contextoGovernanca, {
           sucesso: false, duracaoMs: Date.now() - inicioSql, erro
         });
@@ -192,6 +252,9 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       throw erro;
     }
     if (interacao.tarefa?.id) await memoria?.atualizarEstadoTarefa?.(interacao.tarefa.id, 'concluida');
+    estadoExecucao.checkpoint('tarefa_concluida', {
+      etapa: 'business_reasoning', dados: { tipo: 'construir_sql' }
+    });
     const resultadoEstruturado = typeof resultadoSql === 'string'
       ? JSON.parse(resultadoSql)
       : resultadoSql;
@@ -237,6 +300,11 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
   }
   const contextoTemporal = extrairContextoTemporal(perguntaNormalizada, dataReferencia);
   const historicoCurto = await memoria?.listarCurta() || [];
+  const modoPlaybook = resolverModoPlaybook(dependencias.playbookMode);
+  const playbooks = modoPlaybook === 'off' ? [] : await memoria?.buscarPlaybooks?.(perguntaNormalizada) || [];
+  if (modoPlaybook === 'shadow' && playbooks.length) {
+    dependencias.onEvento?.(`Playbook shadow: ${playbooks.length} orientacao(oes) aplicavel(is).`);
+  }
   const ultimaPergunta = historicoCurto.at(-1)?.pergunta;
   const perguntaParaRoteamento = pareceContinuacao(perguntaNormalizada) && ultimaPergunta
     ? `${ultimaPergunta} ${perguntaNormalizada}`
@@ -267,7 +335,7 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       decisaoSemantica = await interpretarRotaSemantica(
         perguntaNormalizada,
         await memoria?.montarContextoEstruturado?.() || [],
-        dependencias
+        { ...dependencias, estadoExecucao, playbooks: modoPlaybook === 'assist' ? playbooks : [] }
       );
       decisaoSemantica = estabilizarDecisaoComHistorico(
         decisaoSemantica,
@@ -308,6 +376,13 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
   const planoValidado = decisaoRota
     ? validarPlanoSugerido(decisaoRota)
     : { ferramentas: [], rejeitadas: [], capacidadesAusentes: [] };
+  estadoExecucao.atualizarContexto({
+    perguntaAutonoma: decisaoRota?.perguntaAutonoma || perguntaNormalizada,
+    etapa: 'business_reasoning',
+    rota: decisaoRota,
+    plano: planoValidado,
+    capacidadesAusentes: planoValidado.capacidadesAusentes || []
+  });
   const roteamento = usarDecisaoSemantica
     ? {
       perfil: decisaoRota.dominioPrimario,
@@ -336,10 +411,57 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
   } else {
     ferramentas = obterFerramentasDoPerfil(perfilInicial, dependencias);
   }
-  const provider = criarProviderConfigurado(dependencias);
+  const modoEscalonamento = resolverModoEscalonamento(
+    dependencias.semanticEscalationMode
+  );
+  const faixaInicial = avaliarFaixaSemantica({
+    decisao: decisaoRota || {
+      dominioPrimario: perfilInicial,
+      dominiosSecundarios: [],
+      intencao: 'listar',
+      confianca: roteamento.confianca
+    },
+    plano: planoValidado,
+    faixaForcada: dependencias.semanticTier
+  });
+  const selecaoInicial = modoEscalonamento === 'v1'
+    ? selecionarProviderDaFaixa(faixaInicial.faixa, dependencias, 'dados_corporativos')
+    : { usarAtual: true, permitido: true, motivo: `modo_${modoEscalonamento}` };
+  if (!selecaoInicial.permitido) {
+    dependencias.onEvento?.(
+      `Escalonamento semantico: provider de ${faixaInicial.faixa} ignorado por ` +
+      `politica de dados (${selecaoInicial.motivo}).`
+    );
+  }
+  let provider = criarProviderDaFaixa(dependencias, selecaoInicial);
+  const faixaSemantica = {
+    modo: modoEscalonamento,
+    inicial: faixaInicial.faixa,
+    final: faixaInicial.faixa,
+    pontosIniciais: faixaInicial.pontos,
+    pontosFinais: faixaInicial.pontos,
+    motivos: faixaInicial.motivos,
+    transformacoes: faixaInicial.transformacoes,
+    providerInicial: provider.nome || dependencias.providerNome || null,
+    modeloInicial: provider.modelo || dependencias.modelo || null,
+    providerRecomendado: selecaoInicial.provider || null,
+    providerBloqueado: selecaoInicial.permitido === false,
+    sinteseEscalonada: false
+  };
+  if (dependencias.telemetria) dependencias.telemetria.semanticTier = faixaInicial.faixa;
+  estadoExecucao.atualizarContexto({ faixaSemantica });
+  estadoExecucao.checkpoint('faixa_semantica_decidida', {
+    etapa: 'business_reasoning',
+    dados: { faixa: faixaInicial.faixa, pontos: faixaInicial.pontos, modo: modoEscalonamento }
+  });
+  await auditarFaixaSemantica(dependencias, {
+    ...faixaInicial,
+    modo: modoEscalonamento,
+    providerSelecionado: faixaSemantica.providerInicial
+  });
   const resultadosTools = [];
-  const assinaturasExecutadas = new Set();
   const usosTecnicos = { descoberta: 0, final: 0 };
+  let camadaTecnicaAtiva = null;
   let aprofundamento = null;
   let ferramentasInstrumentadas = [];
 
@@ -455,21 +577,41 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       normalizarArgumentos: (nome, argumentos) => aplicarPoliticaArgumentos(
         nome,
         argumentos,
-        { temporal: contextoTemporal }
+        {
+          temporal: contextoTemporal,
+          decisao: decisaoRota,
+          pergunta: perguntaNormalizada,
+          referenciasAnteriores: historicoCurto.at(-1)?.referencias || {}
+        }
       ),
+      async onArgumentosNormalizados(nome, ajustes) {
+        if (!dependencias.auditoriaIA || !dependencias.turnoIA) return;
+        await dependencias.auditoriaIA.registrarEvento?.(dependencias.turnoIA, {
+          tipo: 'tool_arguments_normalized',
+          recurso: nome,
+          resultado: 'normalized',
+          metadados: {
+            fields: ajustes.map((item) => item.campo),
+            adjustments_count: ajustes.length
+          }
+        });
+      },
       async antesDeExecutar(nome, argumentos) {
-        const assinatura = `${nome}:${JSON.stringify(assinaturaEstavel(argumentos))}`;
-        if (assinaturasExecutadas.has(assinatura)) {
-          throw new Error(`Chamada repetida bloqueada para ${nome}.`);
-        }
-        assinaturasExecutadas.add(assinatura);
+        validarPoliticaExecucao(nome, { temporal: contextoTemporal, dataReferencia });
         if (ferramentaTecnica(nome)) {
-        const descoberta = nome.startsWith('consultar_') &&
-          /^(listar_|descrever_)/.test(argumentos.operacao || '');
-        const tipo = descoberta ? 'descoberta' : 'final';
-        if (usosTecnicos[tipo] >= 1) {
-          throw new Error(`Limite de uma chamada tecnica de ${tipo} por pergunta excedido.`);
-        }
+          const descoberta = nome.startsWith('consultar_') &&
+            /^(listar_|descrever_)/.test(argumentos.operacao || '');
+          const tipo = descoberta ? 'descoberta' : 'final';
+          const camada = nome.match(/_(gold|silver|bronze)$/)?.[1] || null;
+          const orcamento = planoValidado.orcamentoTecnico || { descoberta: 1, final: 1 };
+          if (camadaTecnicaAtiva && camada !== camadaTecnicaAtiva) {
+            throw new Error(
+              `Consulta tecnica em ${camada} rejeitada: a camada ${camadaTecnicaAtiva} ja foi autorizada neste plano.`
+            );
+          }
+          if (usosTecnicos[tipo] >= Number(orcamento[tipo] || 1)) {
+            throw new Error(`Orcamento de chamadas tecnicas de ${tipo} excedido para o plano validado.`);
+          }
         }
         return governanca?.iniciarTool(nome, argumentos, {
           provider: provider.nome || dependencias.providerNome || process.env.LLM_PROVIDER || null,
@@ -484,25 +626,50 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       },
       async onResultado(nome, resultado, argumentos, execucao) {
         const normalizado = normalizarResultadoTool(resultado);
-        resultadosTools.push({
-          nome,
-          argumentos,
-          resultado: normalizado,
-          referencias: extrairReferenciasResultado(normalizado)
-        });
-        if (ferramentaTecnica(nome)) {
+        const assinatura = `${nome}:${JSON.stringify(assinaturaEstavel(argumentos))}`;
+        if (!resultadosTools.some((item) => item.assinatura === assinatura)) {
+          resultadosTools.push({
+            assinatura,
+            nome,
+            argumentos,
+            resultado: normalizado,
+            referencias: extrairReferenciasResultado(normalizado)
+          });
+        }
+        if (ferramentaTecnica(nome) && !execucao?.reutilizado) {
           const descoberta = nome.startsWith('consultar_') &&
             /^(listar_|descrever_)/.test(argumentos.operacao || '');
           usosTecnicos[descoberta ? 'descoberta' : 'final'] += 1;
+          camadaTecnicaAtiva ||= nome.match(/_(gold|silver|bronze)$/)?.[1] || null;
         }
-        await governanca?.concluirTool(execucao?.contextoExecucao, {
-          sucesso: true, duracaoMs: execucao?.duracaoMs
-        });
+        if (!execucao?.reutilizado) {
+          await governanca?.concluirTool(execucao?.contextoExecucao, {
+            sucesso: true, duracaoMs: execucao?.duracaoMs
+          });
+        }
       },
       async onErro(_nome, erro, _argumentos, execucao) {
         await governanca?.concluirTool(execucao?.contextoExecucao, {
           sucesso: false, duracaoMs: execucao?.duracaoMs, erro
         });
+      },
+      estadoExecucao,
+      obterPolitica: (nome) => {
+        const capacidade = obterCapacidade(nome);
+        return capacidade ? {
+          efeito: capacidade.efeito,
+          idempotencia: capacidade.idempotencia,
+          politicaReutilizacao: capacidade.politicaReutilizacao
+        } : { efeito: 'leitura', idempotencia: true, politicaReutilizacao: 'mesmo_turno' };
+      },
+      extrairReferencias: (resultado) => extrairReferenciasResultado(
+        normalizarResultadoTool(resultado)
+      ),
+      extrairResultadoHandoff: (nome, resultado) => {
+        const capacidade = obterCapacidade(nome);
+        return capacidade?.extratorEvidenciaHandoff
+          ? capacidade.extratorEvidenciaHandoff(resultado)
+          : resultado;
       }
     }
   );
@@ -528,7 +695,19 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       `Plano validado: ${JSON.stringify({
         aceitas: planoValidado.ferramentas,
         rejeitadas: planoValidado.rejeitadas,
-        capacidadesAusentes: planoValidado.capacidadesAusentes
+        capacidadesAusentes: planoValidado.capacidadesAusentes,
+        orcamentoTecnico: planoValidado.orcamentoTecnico
+      })}`
+    );
+  }
+  if (modoEscalonamento !== 'off') {
+    dependencias.onEvento?.(
+      `Faixa semantica ${modoEscalonamento}: ${JSON.stringify({
+        faixa: faixaInicial.faixa,
+        pontos: faixaInicial.pontos,
+        motivos: faixaInicial.motivos,
+        provider: faixaSemantica.providerInicial,
+        providerRecomendado: faixaSemantica.providerRecomendado
       })}`
     );
   }
@@ -547,6 +726,11 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
     .map(obterInstrucaoPerfil)
     .filter(Boolean);
   const contextoMemoria = await memoria?.montarContexto(perguntaParaRoteamento);
+  const contextoPlaybook = modoPlaybook === 'assist' && playbooks.length
+    ? [
+      'Playbooks aprovados aplicaveis (somente orientacao; o plano validado e as permissoes prevalecem):',
+      ...playbooks.map((item) => `- ${item.conteudo}`)
+    ].join('\n') : '';
   const ultimaDataCompleta = [...historicoCurto]
     .reverse()
     .find((item) => item.referencias?.ultimaDataCompleta)
@@ -568,7 +752,10 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       periodo: decisaoRota.periodo,
       filtros: planoValidado.filtrosAceitos,
       camposSolicitados: decisaoRota.camposSolicitados,
-      ferramentas: planoValidado.ferramentas
+      ferramentas: planoValidado.ferramentas,
+      transformacoesSolicitadas: decisaoRota.transformacoesSolicitadas,
+      requisitosResposta: decisaoRota.requisitosResposta,
+      faixaSemantica: faixaInicial.faixa
     })}`
     : '';
   const instrucoesComuns = [
@@ -576,6 +763,7 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
     ...instrucoesDominiosSecundarios,
     contextoRota,
     contextoMemoria,
+    contextoPlaybook,
     contextoCobertura
   ]
     .filter(Boolean);
@@ -592,7 +780,17 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
     telemetria: dependencias.telemetria,
     stage: 'business_reasoning',
     purpose: dependencias.purpose || 'corporate_query',
-    parentCallId: dependencias.telemetria?.ultimoCallId || null
+    parentCallId: dependencias.telemetria?.ultimoCallId || null,
+    estadoExecucao,
+    handoffMode: dependencias.handoffMode,
+    debugFallback: dependencias.debugFallback === true,
+    onCheckpoint: (tipo, dados) => estadoExecucao.checkpoint(tipo, {
+      etapa: dados.etapa,
+      provider: dados.provider,
+      callId: dados.callId,
+      dados
+    }),
+    onHandoff: dependencias.onHandoff
   });
   let resultado;
   let recuperacao = null;
@@ -617,6 +815,9 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
     dependencias.onEvento?.(
       `Roteamento ampliado: ${recuperacao.nome} foi solicitada pelo provider.`
     );
+    estadoExecucao.checkpoint('rota_recuperada', {
+      etapa: 'business_reasoning', dados: { ferramenta: recuperacao.nome }
+    });
     resultadosTools.length = 0;
     ferramentas = [
       ...ferramentas,
@@ -628,6 +829,133 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       obterInstrucaoPerfil(recuperacao.perfil),
       `Recuperacao de roteamento: a fachada ${recuperacao.nome} agora esta disponivel.`
     ]);
+  }
+  let sustentacaoFactual = avaliarSustentacaoFactual(resultado.texto, resultadosTools);
+  const evidenciaFactual = criarEnvelopeEvidencia(resultadosTools, decisaoRota || {});
+  const faixaFinalAvaliada = avaliarFaixaSemantica({
+    decisao: decisaoRota || {
+      dominioPrimario: perfilInicial,
+      dominiosSecundarios: [],
+      intencao: 'listar',
+      confianca: roteamento.confianca
+    },
+    plano: planoValidado,
+    ferramentasExecutadas: resultadosTools.map((item) => item.nome),
+    resultadosTools,
+    aprofundamento,
+    recuperacao,
+    faixaForcada: dependencias.semanticTier
+  });
+  let faixaFinal = maiorFaixa(faixaInicial.faixa, faixaFinalAvaliada.faixa);
+  if (sustentacaoFactual.status === 'revisao_necessaria') {
+    faixaFinal = 'avancada';
+    faixaFinalAvaliada.motivos.push('identificador_sem_evidencia');
+  }
+  faixaSemantica.final = faixaFinal;
+  if (dependencias.telemetria) dependencias.telemetria.semanticTier = faixaFinal;
+  faixaSemantica.pontosFinais = Math.max(faixaInicial.pontos, faixaFinalAvaliada.pontos);
+  faixaSemantica.motivos = [...new Set([
+    ...faixaSemantica.motivos,
+    ...faixaFinalAvaliada.motivos
+  ])];
+  const houvePromocao = faixaFinal !== faixaInicial.faixa;
+  if (houvePromocao) {
+    estadoExecucao.checkpoint('faixa_semantica_promovida', {
+      etapa: 'business_reasoning',
+      dados: { de: faixaInicial.faixa, para: faixaFinal, motivos: faixaSemantica.motivos }
+    });
+  }
+  if (modoEscalonamento === 'v1' && houvePromocao && resultadosTools.length) {
+    const selecaoFinal = selecionarProviderDaFaixa(
+      faixaFinal,
+      dependencias,
+      'dados_corporativos'
+    );
+    const providerFinal = criarProviderDaFaixa(dependencias, selecaoFinal, provider);
+    const mudouProvider = !selecaoFinal.usarAtual && selecaoFinal.permitido && (
+      providerFinal.nome !== provider.nome || providerFinal.modelo !== provider.modelo
+    );
+    if (mudouProvider) {
+      const evidencias = resultadosTools.map((item) => ({
+        ferramenta: item.nome,
+        argumentos: item.argumentos,
+        resultado: item.resultado,
+        referencias: item.referencias
+      }));
+      try {
+        const sintetizado = await providerFinal.executar({
+          pergunta: decisaoRota?.perguntaAutonoma || perguntaNormalizada,
+          instrucoes: [
+            ...instrucoesComuns,
+            'Intervencao semantica: produza a resposta final somente com as evidencias abaixo.',
+            'Nao solicite novas ferramentas, nao invente filtros ou metricas e preserve limites e cobertura.',
+            `Evidencias corporativas autorizadas: ${JSON.stringify(evidencias)}`
+          ].join('\n\n'),
+          tools: [],
+          maxRodadas: 1,
+          onEvento: dependencias.onEvento,
+          telemetria: dependencias.telemetria,
+          stage: 'business_reasoning',
+          purpose: 'semantic_synthesis',
+          parentCallId: dependencias.telemetria?.ultimoCallId || null,
+          estadoExecucao,
+          handoffMode: dependencias.handoffMode,
+          debugFallback: dependencias.debugFallback === true,
+          onCheckpoint: (tipo, dados) => estadoExecucao.checkpoint(tipo, {
+            etapa: dados.etapa,
+            provider: dados.provider,
+            callId: dados.callId,
+            dados
+          }),
+          onHandoff: dependencias.onHandoff
+        });
+        resultado = sintetizado;
+        sustentacaoFactual = avaliarSustentacaoFactual(resultado.texto, resultadosTools);
+        provider = providerFinal;
+        faixaSemantica.sinteseEscalonada = true;
+        faixaSemantica.providerFinal = providerFinal.nome;
+        faixaSemantica.modeloFinal = providerFinal.modelo;
+        dependencias.onEvento?.(
+          `Intervencao semantica concluida na faixa ${faixaFinal} por ${providerFinal.nome}.`
+        );
+      } catch (erroIntervencao) {
+        faixaSemantica.falhaIntervencao = erroIntervencao.codigo ||
+          erroIntervencao.code || erroIntervencao.name || 'ERRO_INTERVENCAO';
+        dependencias.onEvento?.(
+          'Intervencao semantica indisponivel; preservando a resposta corporativa comprovada.'
+        );
+      }
+    }
+  }
+  await auditarFaixaSemantica(dependencias, {
+    ...faixaFinalAvaliada,
+    faixa: faixaFinal,
+    modo: modoEscalonamento,
+    providerSelecionado: faixaSemantica.providerFinal || faixaSemantica.providerInicial
+  }, 'final');
+  const intencaoFinal = decisaoRota?.intencao || 'listar';
+  const transformacoesFinais = faixaFinalAvaliada.transformacoes || [];
+  const exigeSintese = (
+    ['comparar', 'explicar', 'diagnosticar', 'auditar'].includes(intencaoFinal) ||
+    evidenciaFactual.status === 'partial' ||
+    resultadosTools.length > 1 ||
+    transformacoesFinais.some((item) => [
+      'comparar_periodos', 'calcular_derivacao', 'explicar_variacao', 'combinar_evidencias'
+    ].includes(item))
+  );
+  const respostaPronta = ['complete', 'empty'].includes(evidenciaFactual.status) &&
+    sustentacaoFactual.status !== 'revisao_necessaria' && !exigeSintese;
+  if (dependencias.auditoriaIA && dependencias.turnoIA) {
+    await dependencias.auditoriaIA.registrarEvento?.(dependencias.turnoIA, {
+      tipo: 'corporate_evidence',
+      recurso: perfilEfetivo,
+      resultado: evidenciaFactual.status,
+      metadados: {
+        evidence_status: evidenciaFactual.status,
+        synthesis_required: exigeSintese,
+        tools_count: resultadosTools.length
+      }
+    });
   }
   const resultadoFormatado = {
     ...resultado,
@@ -642,6 +970,11 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       modo: modoRoteador,
       decisao: decisaoRota,
       plano: planoValidado,
+      faixaSemantica,
+      sustentacaoFactual,
+      respostaPronta,
+      exigeSintese,
+      evidenciaFactual,
       ferramentasExecutadas: resultadosTools.map((item) => item.nome),
       shadow: modoRoteador === 'shadow' && decisaoSemantica ? {
         dominioLegado: decisaoLegada.dominioPrimario,
@@ -688,6 +1021,65 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
   return resultadoFormatado;
 }
 
+function criarProviderDaFaixa(dependencias, selecao, providerAtual = null) {
+  if (
+    dependencias.provider ||
+    !selecao ||
+    selecao.usarAtual ||
+    !selecao.permitido
+  ) {
+    const atual = providerAtual || criarProviderConfigurado(dependencias);
+    if (!dependencias.provider) {
+      const politica = validarProviderParaDados(
+        atual.nome,
+        'dados_corporativos',
+        dependencias
+      );
+      if (!politica.permitido) {
+        const erro = new Error(
+          `Provider ${atual.nome} bloqueado para dados corporativos: ${politica.motivo}.`
+        );
+        erro.codigo = 'PROVIDER_DATA_POLICY_DENIED';
+        throw erro;
+      }
+    }
+    return atual;
+  }
+  const selecionado = criarProvider({
+    nome: selecao.provider,
+    modelo: selecao.modelo,
+    fallbackNome: dependencias.fallbackNome,
+    modeloFallback: dependencias.modeloFallback,
+    cliente: dependencias.clientesPorProvider?.[selecao.provider],
+    clienteFallback: dependencias.clienteFallback,
+    semFallback: dependencias.semFallback,
+    timeoutMs: dependencias.timeoutMs
+  });
+  return selecionado;
+}
+
+async function auditarFaixaSemantica(dependencias, decisao, fase = 'inicial') {
+  if (!dependencias.auditoriaIA || !dependencias.turnoIA) return;
+  if (typeof dependencias.auditoriaIA.registrarFaixaSemantica === 'function') {
+    await dependencias.auditoriaIA.registrarFaixaSemantica(
+      dependencias.turnoIA,
+      { ...decisao, fase }
+    );
+    return;
+  }
+  await dependencias.auditoriaIA.registrarEvento?.(dependencias.turnoIA, {
+    tipo: 'semantic_tier_decision',
+    recurso: fase,
+    resultado: decisao.faixa,
+    metadados: {
+      semantic_score: decisao.pontos,
+      motivos: decisao.motivos,
+      modo: decisao.modo,
+      provider_recomendado: decisao.providerSelecionado || null
+    }
+  });
+}
+
 async function executarAgente(pergunta, dependencias = {}) {
   if (dependencias.turnoIA || dependencias.telemetria || dependencias.auditoriaIA === false) {
     return executarAgenteInterno(pergunta, dependencias);
@@ -698,7 +1090,8 @@ async function executarAgente(pergunta, dependencias = {}) {
     sessao: dependencias.sessaoMemoria,
     backend: dependencias.memoryBackend,
     pool: dependencias.poolNexus,
-    principalSlug: dependencias.principalSlug
+    principalSlug: dependencias.principalSlug,
+    departamentoSlug: dependencias.departamentoSlug
   });
   if (!memoria?.pool && dependencias.provider) {
     return executarAgenteInterno(pergunta, { ...dependencias, memoria });
@@ -716,10 +1109,29 @@ async function executarAgente(pergunta, dependencias = {}) {
   const telemetria = auditoria.paraTelemetria(turno, {
     stage: 'business_reasoning', purpose: 'corporate_query'
   });
+  const onHandoff = async (evento) => {
+    await auditoria.registrarEvento(turno, {
+      tipo: 'provider_handoff', recurso: evento.providerAnterior,
+      resultado: evento.providerDestino,
+      metadados: {
+        modo: evento.modo,
+        motivo_codigo: evento.motivo,
+        tools_reaproveitadas: evento.handoff?.toolsConcluidas?.length || 0,
+        tools_reaproveitadas_nomes: evento.handoff?.toolsConcluidas?.map((item) => item.nome) || [],
+        evidencias_reaproveitadas: evento.handoff?.toolsConcluidas?.filter(
+          (item) => Object.keys(item.referencias || {}).length > 0
+        ).length || 0,
+        chamadas_evitadas: evento.handoff?.toolsConcluidas?.reduce(
+          (total, item) => total + Number(item.reutilizacoes || 0), 0
+        ) || 0
+      }
+    });
+    await dependencias.onHandoff?.(evento);
+  };
   try {
     const resultado = await executarAgenteInterno(pergunta, {
       ...dependencias, memoria, auditoriaIA: auditoria, turnoIA: turno,
-      telemetria, purpose: 'corporate_query'
+      telemetria, purpose: 'corporate_query', onHandoff
     });
     const resumo = await auditoria.concluirTurno(turno, {
       sucesso: true,
@@ -759,7 +1171,21 @@ function lerArgumentos(argumentos) {
     ['--generalist-provider', 'generalistProviderNome'],
     ['--generalist-model', 'generalistModelo'],
     ['--generalist-fallback-provider', 'generalistFallbackNome'],
-    ['--generalist-fallback-model', 'generalistFallbackModelo']
+    ['--generalist-fallback-model', 'generalistFallbackModelo'],
+    ['--handoff-mode', 'handoffMode'],
+    ['--playbook-mode', 'playbookMode'],
+    ['--memory-automation-mode', 'memoryAutomationMode'],
+    ['--memory-review-provider', 'memoryReviewProviderNome'],
+    ['--memory-review-model', 'memoryReviewModelo'],
+    ['--semantic-escalation-mode', 'semanticEscalationMode'],
+    ['--semantic-tier', 'semanticTier'],
+    ['--basic-provider', 'basicProviderNome'],
+    ['--basic-model', 'basicModelo'],
+    ['--assisted-provider', 'assistedProviderNome'],
+    ['--assisted-model', 'assistedModelo'],
+    ['--advanced-provider', 'advancedProviderNome'],
+    ['--advanced-model', 'advancedModelo'],
+    ['--gemini-usage-mode', 'geminiUsageMode']
   ]);
 
   for (let indice = 0; indice < argumentos.length; indice += 1) {
@@ -771,6 +1197,10 @@ function lerArgumentos(argumentos) {
     }
     if (argumento === '--debug-tools') {
       opcoes.debugTools = true;
+      continue;
+    }
+    if (argumento === '--debug-fallback') {
+      opcoes.debugFallback = true;
       continue;
     }
     if (argumento === '--sem-memoria') {
@@ -841,7 +1271,7 @@ async function main() {
     console.error(`[fonte] ${rotulo}`);
   }
   if (resultado.traceId) console.error(`[trace] ${resultado.traceId}`);
-  if (resultado.fallbackDe) {
+  if (resultado.fallbackDe && opcoes.debugFallback) {
     console.error(
       `[fallback] ${resultado.fallbackDe} indisponível; resposta gerada por ` +
       `${resultado.provider} (${resultado.modelo}).`

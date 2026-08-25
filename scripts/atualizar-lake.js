@@ -3,6 +3,7 @@
 const path = require('node:path');
 const { executarPipeline } = require('../pipeline/executar');
 const { lerEstado, lerUltimaExecucao } = require('../pipeline/controle');
+const { resolverRaizLake } = require('../nexus/lake_storage');
 
 function lerArgumentos(argumentos) {
   const opcoes = {};
@@ -72,7 +73,7 @@ function resumirExecucao(execucao) {
 
 async function main() {
   const opcoes = lerArgumentos(process.argv.slice(2));
-  const raizLake = path.resolve(__dirname, '..', 'lake');
+  const raizLake = resolverRaizLake();
   if (opcoes.status) {
     const [estado, ultimaExecucao] = await Promise.all([
       lerEstado(raizLake),

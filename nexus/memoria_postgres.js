@@ -39,6 +39,7 @@ function criarPostgresMemoryStore(opcoes = {}) {
   }
   const pool = opcoes.pool || criarPoolNexus(opcoes);
   const principalSlug = opcoes.principalSlug || 'legacy-cli';
+  const departamentoSlug = opcoes.departamentoSlug || null;
 
   async function obterContexto(cliente = pool) {
     const principal = (await cliente.query(
@@ -52,7 +53,16 @@ function criarPostgresMemoryStore(opcoes = {}) {
       DO UPDATE SET atualizada_em = now()
       RETURNING id, tarefa_ativa_id
     `, [principal.id, sessao])).rows[0];
-    return { principalId: principal.id, conversationId: conversa.id, tarefaAtivaId: conversa.tarefa_ativa_id };
+    let departmentId = null;
+    if (departamentoSlug) {
+      departmentId = (await cliente.query(`
+        SELECT d.id FROM nexus.departments d
+        JOIN nexus.principal_departments pd ON pd.department_id=d.id
+        WHERE pd.principal_id=$1 AND d.slug=$2 AND d.ativo=true
+      `, [principal.id, departamentoSlug])).rows[0]?.id || null;
+    }
+    return { principalId: principal.id, conversationId: conversa.id,
+      tarefaAtivaId: conversa.tarefa_ativa_id, departmentId };
   }
 
   async function listarCurta() {
@@ -216,28 +226,53 @@ function criarPostgresMemoryStore(opcoes = {}) {
     });
   }
 
-  async function listarLonga({ somenteAtivos = false } = {}) {
+  async function listarLonga({ somenteAtivos = false, tipos = null, somenteAplicaveis = false } = {}) {
+    const base = await obterContexto();
     const linhas = (await pool.query(`
       SELECT k.*, COALESCE(jsonb_agg(t.gatilho) FILTER (WHERE t.gatilho IS NOT NULL), '[]') AS gatilhos
       FROM nexus.knowledge_items k
       LEFT JOIN nexus.knowledge_triggers t ON t.knowledge_id = k.id
       WHERE ($1::boolean = false OR k.ativo = true)
+        AND ($2::text[] IS NULL OR k.tipo=ANY($2::text[]))
+        AND ($3::boolean = false OR k.escopo='global'
+          OR (k.escopo='principal' AND k.principal_id=$4)
+          OR (k.escopo='department' AND k.department_id=$5))
       GROUP BY k.id ORDER BY k.criado_em, k.id
-    `, [somenteAtivos])).rows;
+    `, [somenteAtivos, tipos, somenteAplicaveis, base.principalId, base.departmentId])).rows;
     return linhas.map((item) => ({
       id: item.id, categoria: item.categoria, conteudo: item.conteudo,
       gatilhos: item.gatilhos, origem: item.origem, ativo: item.ativo,
+      tipo: item.tipo || 'business_knowledge', escopo: item.escopo || 'global',
+      principalId: item.principal_id || null, departmentId: item.department_id || null,
+      versao: Number(item.versao || 1), payload: item.payload || {},
       criadoEm: item.criado_em?.toISOString?.() || item.criado_em,
       ...(item.desativado_em ? { desativadoEm: item.desativado_em.toISOString?.() || item.desativado_em } : {})
     }));
   }
 
-  async function buscarLonga(pergunta, limite = 5) {
-    return (await listarLonga({ somenteAtivos: true }))
+  async function buscarPorTipo(pergunta, tipos, limite = 5) {
+    return (await listarLonga({ somenteAtivos: true, somenteAplicaveis: true, tipos }))
       .map((item) => ({ item, pontuacao: pontuarConhecimento(item, pergunta) }))
       .filter(({ pontuacao }) => pontuacao >= 2 || pontuacao === 100)
-      .sort((a, b) => b.pontuacao - a.pontuacao)
+      .sort((a, b) => b.pontuacao - a.pontuacao || (
+        ({ global: 0, department: 1, principal: 2 }[a.item.escopo] ?? 3) -
+        ({ global: 0, department: 1, principal: 2 }[b.item.escopo] ?? 3)
+      ))
       .slice(0, limite).map(({ item }) => item);
+  }
+
+  async function buscarLonga(pergunta, limite = 5) {
+    return buscarPorTipo(pergunta, ['business_knowledge'], limite);
+  }
+
+  async function buscarPlaybooks(pergunta, limite = 5) {
+    return buscarPorTipo(pergunta, ['execution_playbook'], limite);
+  }
+
+  async function listarPreferencias() {
+    return listarLonga({
+      somenteAtivos: true, somenteAplicaveis: true, tipos: ['personal_preference']
+    });
   }
 
   async function montarContexto(pergunta) {
@@ -254,7 +289,7 @@ function criarPostgresMemoryStore(opcoes = {}) {
         `   Resposta resumida: ${item.resposta}`)
     );
     if (longa.length) blocos.push(
-      'Memoria longa relevante (aprendizados revisados; regras oficiais das tools prevalecem):',
+      'Memoria longa relevante (aprendizados revisados; regras oficiais das tools prevalecem; em conflito, escopo global prevalece):',
       ...longa.map((item) => `- [${item.categoria}] ${item.conteudo}`)
     );
     return blocos.join('\n');
@@ -320,10 +355,11 @@ function criarPostgresMemoryStore(opcoes = {}) {
   }
 
   return {
-    adicionarConhecimento, atualizarEstadoTarefa, buscarLonga, expirarTarefas,
+    adicionarConhecimento, atualizarEstadoTarefa, buscarLonga, buscarPlaybooks, expirarTarefas,
     limparCurta, listarCurta, listarLonga, listarTarefas, montarContexto,
     montarContextoEstruturado, obterContexto, obterTarefaAtiva, registrarInteracao,
-    removerConhecimento, retomarTarefa, salvarTarefa, pool, principalSlug, sessao,
+    removerConhecimento, retomarTarefa, salvarTarefa, listarPreferencias,
+    pool, principalSlug, departamentoSlug, sessao,
     backend: 'postgres'
   };
 }

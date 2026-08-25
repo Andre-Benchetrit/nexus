@@ -1,5 +1,35 @@
 {
-  "version": "2026-08-inicial",
-  "pricingRates": [],
-  "exchangeRates": []
+  "version": "2026-08-24-teste-ptax",
+  "pricingRates": [
+    { "provider": "groq", "service": "llm", "model": "openai/gpt-oss-120b", "metric": "input_tokens", "unitSize": 1000000, "priceUsd": 0.15, "effectiveFrom": "2026-08-17" },
+    { "provider": "groq", "service": "llm", "model": "openai/gpt-oss-120b", "metric": "cache_read_tokens", "unitSize": 1000000, "priceUsd": 0.075, "effectiveFrom": "2026-08-17" },
+    { "provider": "groq", "service": "llm", "model": "openai/gpt-oss-120b", "metric": "output_tokens", "unitSize": 1000000, "priceUsd": 0.60, "effectiveFrom": "2026-08-17" },
+
+    { "provider": "anthropic", "service": "llm", "model": "claude-sonnet-5", "metric": "input_tokens", "unitSize": 1000000, "priceUsd": 2.00, "effectiveFrom": "2026-06-30", "effectiveTo": "2026-08-31" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-sonnet-5", "metric": "cache_write_tokens", "unitSize": 1000000, "priceUsd": 2.50, "effectiveFrom": "2026-06-30", "effectiveTo": "2026-08-31" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-sonnet-5", "metric": "cache_read_tokens", "unitSize": 1000000, "priceUsd": 0.20, "effectiveFrom": "2026-06-30", "effectiveTo": "2026-08-31" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-sonnet-5", "metric": "output_tokens", "unitSize": 1000000, "priceUsd": 10.00, "effectiveFrom": "2026-06-30", "effectiveTo": "2026-08-31" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-sonnet-5", "metric": "input_tokens", "unitSize": 1000000, "priceUsd": 3.00, "effectiveFrom": "2026-09-01" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-sonnet-5", "metric": "cache_write_tokens", "unitSize": 1000000, "priceUsd": 3.75, "effectiveFrom": "2026-09-01" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-sonnet-5", "metric": "cache_read_tokens", "unitSize": 1000000, "priceUsd": 0.30, "effectiveFrom": "2026-09-01" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-sonnet-5", "metric": "output_tokens", "unitSize": 1000000, "priceUsd": 15.00, "effectiveFrom": "2026-09-01" },
+
+    { "provider": "anthropic", "service": "llm", "model": "claude-haiku-4-5", "metric": "input_tokens", "unitSize": 1000000, "priceUsd": 1.00, "effectiveFrom": "2026-08-17" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-haiku-4-5", "metric": "cache_write_tokens", "unitSize": 1000000, "priceUsd": 1.25, "effectiveFrom": "2026-08-17" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-haiku-4-5", "metric": "cache_read_tokens", "unitSize": 1000000, "priceUsd": 0.10, "effectiveFrom": "2026-08-17" },
+    { "provider": "anthropic", "service": "llm", "model": "claude-haiku-4-5", "metric": "output_tokens", "unitSize": 1000000, "priceUsd": 5.00, "effectiveFrom": "2026-08-17" },
+
+    { "provider": "gemini", "service": "llm", "model": "gemini-3.5-flash-lite", "metric": "input_tokens", "unitSize": 1000000, "priceUsd": 0.30, "effectiveFrom": "2026-08-17" },
+    { "provider": "gemini", "service": "llm", "model": "gemini-3.5-flash-lite", "metric": "cache_read_tokens", "unitSize": 1000000, "priceUsd": 0.03, "effectiveFrom": "2026-08-17" },
+    { "provider": "gemini", "service": "llm", "model": "gemini-3.5-flash-lite", "metric": "output_tokens", "unitSize": 1000000, "priceUsd": 2.50, "effectiveFrom": "2026-08-17" }
+  ],
+  "exchangeRates": [
+    {
+      "from": "USD",
+      "to": "BRL",
+      "competence": "2026-08-01",
+      "rate": 5.1625,
+      "source": "BCB PTAX venda 2026-08-21 - referencia de teste"
+    }
+  ]
 }
