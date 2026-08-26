@@ -4,10 +4,10 @@ const assert = require('node:assert/strict');
 const { lerManifesto } = require('../nexus/pricing');
 const { construirFiltros } = require('../nexus/relatorios_uso');
 
-test('manifesto versionado cobre composicao oficial sem inventar cambio corporativo', () => {
+test('manifesto versionado cobre composicao oficial e cambio de agosto configurado', () => {
   const manifesto = lerManifesto();
-  assert.equal(manifesto.version, '2026-08-17-oficial');
-  assert.equal(manifesto.pricingRates.length, 18);
+  assert.equal(manifesto.version, '2026-08-24-teste-ptax');
+  assert.equal(manifesto.pricingRates.length, 20);
   assert.ok(manifesto.pricingRates.some((item) => (
     item.provider === 'groq' && item.model === 'openai/gpt-oss-120b' &&
     item.metric === 'output_tokens' && item.priceUsd === 0.6
@@ -20,7 +20,14 @@ test('manifesto versionado cobre composicao oficial sem inventar cambio corporat
   assert.ok(manifesto.pricingRates.some((item) => (
     item.provider === 'gemini' && item.model === 'gemini-3.5-flash-lite'
   )));
-  assert.deepEqual(manifesto.exchangeRates, []);
+  assert.ok(manifesto.pricingRates.some((item) => (
+    item.provider === 'tavily' && item.service === 'tavily_search' &&
+    item.model === 'basic' && item.metric === 'credits' && item.priceUsd === 0.008
+  )));
+  assert.deepEqual(manifesto.exchangeRates, [{
+    from: 'USD', to: 'BRL', competence: '2026-08-01', rate: 5.1625,
+    source: 'BCB PTAX venda 2026-08-21 - referencia de teste'
+  }]);
 });
 
 test('relatorio aceita somente filtros declarados e parametrizados', () => {

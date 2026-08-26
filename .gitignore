@@ -8,12 +8,16 @@ out/
 coverage/
 *.tsbuildinfo
 lake/
+__pycache__/
+*.py[cod]
+services/nexus-api/*.traineddata
 
 # Credenciais e configurações locais
 # A regra sem barra também cobre, por exemplo, agentes/.env.
 .env
 .env.*
 !.env.example
+atestados_inventory.json
 
 # Bancos locais e arquivos temporários
 *.duckdb
@@ -21,10 +25,13 @@ lake/
 .tmp/
 tmp/
 outputs/
+*.inspect.ndjson
+/Nexus_Analise_de_Custos_IA/
 *.log
 npm-debug.log*
 ~$*
 memoria/.runtime/
+.runtime/
 avaliacoes/resultados/
 
 # Preferências locais do editor

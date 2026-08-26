@@ -40,8 +40,18 @@ function criarPostgresMemoryStore(opcoes = {}) {
   const pool = opcoes.pool || criarPoolNexus(opcoes);
   const principalSlug = opcoes.principalSlug || 'legacy-cli';
   const departamentoSlug = opcoes.departamentoSlug || null;
+  const contextoPreResolvido = opcoes.principalId && opcoes.conversationId ? {
+    principalId: opcoes.principalId,
+    conversationId: opcoes.conversationId,
+    tarefaAtivaId: opcoes.tarefaAtivaId || null,
+    departmentId: opcoes.departamentoId || null
+  } : null;
+  let contextoResolvido = contextoPreResolvido ? Promise.resolve(contextoPreResolvido) : null;
 
   async function obterContexto(cliente = pool) {
+    if (contextoPreResolvido) return contextoPreResolvido;
+    if (cliente === pool && contextoResolvido) return contextoResolvido;
+    const resolver = async () => {
     const principal = (await cliente.query(
       'SELECT id FROM nexus.principals WHERE slug = $1 AND ativo = true', [principalSlug]
     )).rows[0];
@@ -63,6 +73,15 @@ function criarPostgresMemoryStore(opcoes = {}) {
     }
     return { principalId: principal.id, conversationId: conversa.id,
       tarefaAtivaId: conversa.tarefa_ativa_id, departmentId };
+    };
+    if (cliente === pool) {
+      contextoResolvido = resolver().catch((erro) => {
+        contextoResolvido = null;
+        throw erro;
+      });
+      return contextoResolvido;
+    }
+    return resolver();
   }
 
   async function listarCurta() {
@@ -139,13 +158,28 @@ function criarPostgresMemoryStore(opcoes = {}) {
   }
 
   async function obterTarefaAtiva() {
-    await expirarTarefas();
     const { conversationId } = await obterContexto();
     const linha = (await pool.query(`
-      SELECT t.* FROM nexus.conversations c
-      JOIN nexus.interaction_tasks t ON t.id = c.tarefa_ativa_id
-      WHERE c.id = $1 AND t.estado IN ('ativa','aguardando_usuario')
-    `, [conversationId])).rows[0];
+      WITH expiradas AS (
+        UPDATE nexus.interaction_tasks
+        SET estado='expirada', atualizada_em=now()
+        WHERE conversation_id=$1
+          AND estado=ANY($2::text[]) AND expira_em<=now()
+        RETURNING id
+      ), conversa AS (
+        UPDATE nexus.conversations
+        SET tarefa_ativa_id=CASE
+          WHEN tarefa_ativa_id IN (SELECT id FROM expiradas) THEN NULL
+          ELSE tarefa_ativa_id
+        END,
+        atualizada_em=now()
+        WHERE id=$1
+        RETURNING tarefa_ativa_id
+      )
+      SELECT t.* FROM conversa c
+      JOIN nexus.interaction_tasks t ON t.id=c.tarefa_ativa_id
+      WHERE t.estado IN ('ativa','aguardando_usuario') AND t.expira_em>now()
+    `, [conversationId, ESTADOS_PENDENTES])).rows[0];
     return linha ? linhaParaTarefa(linha) : null;
   }
 

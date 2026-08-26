@@ -208,6 +208,24 @@ const REGRAS_SQL = Object.freeze({
     entidadesNecessarias: ['produto'],
     expressao: `(p."codigo_auxiliar" !~ '(_[0-9]+|_OUT)$')`,
     descricao: 'Exclui SKUs terminados em _<número> ou _OUT.'
+  },
+  sku_com_espaco_final: {
+    entidadesNecessarias: ['produto'],
+    expressao: `(p."codigo_auxiliar" ~ '[[:space:]]$')`,
+    descricao: 'Mantém somente produtos cujo SKU termina com espaço em branco.'
+  },
+  codigo_fabricante_com_espaco_final: {
+    entidadesNecessarias: ['produto'],
+    expressao: `(p."cod_fabrica" ~ '[[:space:]]$')`,
+    descricao: 'Mantém somente produtos cujo código do fabricante termina com espaço em branco.'
+  },
+  codigos_produto_com_espaco_final: {
+    entidadesNecessarias: ['produto'],
+    expressao: `(
+      p."codigo_auxiliar" ~ '[[:space:]]$'
+      OR p."cod_fabrica" ~ '[[:space:]]$'
+    )`,
+    descricao: 'Mantém produtos cujo SKU ou código do fabricante termina com espaço em branco.'
   }
 });
 

@@ -28,11 +28,10 @@ Uma guarda local obriga consulta para identificadores e fatos corporativos
 mutaveis. Ela nao escolhe tools. Respostas retornam `conhecimento_geral` ou
 `dados_nexus`, e o CLI mostra um rotulo curto da fonte.
 
-Somente `ia.conversar`, `ia.nexus.consultar` e `ia.memoria.revisar` estao
-habilitadas. A ultima apenas solicita uma avaliacao: nao cria nem publica
-memoria. Visao, web,
-geracao de imagens e planilhas constam como extensoes desabilitadas: atualizar
-um SDK nunca libera servicos do provider automaticamente.
+`ia.conversar`, `ia.nexus.consultar` e `ia.memoria.revisar` formam a base. Web e
+imagens sao habilitadas somente pelos modos e permissoes descritos em
+[WEB_E_IMAGENS.md](WEB_E_IMAGENS.md). Atualizar um SDK nunca libera servicos do
+provider automaticamente. Geracao de imagens e planilhas continuam desativadas.
 
 ## Auditoria e custo
 

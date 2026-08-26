@@ -4,9 +4,18 @@ const assert = require('node:assert/strict');
 const {
   analisarRoteamento,
   classificarPergunta,
+  referenciaContextual,
   resolverPerfil,
   resolverPerfilComContexto
 } = require('../agentes/roteador');
+
+test('reconhece continuacao contextual com outros bloqueios e tambem no fim', () => {
+  assert.equal(referenciaContextual('Você consegue verificar outros bloqueios também?'), true);
+  assert.equal(resolverPerfilComContexto(
+    'Você consegue verificar outros bloqueios também?',
+    [{ pergunta: 'Quais pedidos estão bloqueados por falta de estoque?', perfil: 'bloqueios_estoque' }]
+  ), 'bloqueios_estoque');
+});
 
 test('roteia vendas, catalogo e auditoria sem usar modelo', () => {
   assert.equal(classificarPergunta('Compare o faturamento deste mês com o anterior'), 'indicadores');

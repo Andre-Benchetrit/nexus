@@ -361,7 +361,12 @@ function criarServicoHub(opcoes = {}) {
     const limite = Math.min(LIMITE_MENSAGENS, Math.max(1, Number(filtros.limite || 50)));
     const linhas = (await pool.query(`
       SELECT m.id,m.turn_id,m.trace_id,m.papel,m.conteudo,m.proveniencia,m.criado_em,
-        t.status AS turn_status
+        t.status AS turn_status,
+        CASE WHEN m.papel='user' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'id',a.id,'mediaType',a.media_type,'bytes',a.bytes,'width',a.width,'height',a.height,
+          'url','/api/nexus/conversations/' || a.conversation_id || '/attachments/' || a.id
+        ) ORDER BY a.criado_em,a.id) FROM nexus.conversation_attachments a
+          WHERE a.turn_id=m.turn_id AND a.status='ready'), '[]'::jsonb) ELSE '[]'::jsonb END AS attachments
       FROM nexus.conversation_messages m
       LEFT JOIN nexus.ai_turns t ON t.id=m.turn_id
       WHERE m.conversation_id=$1 AND ($2::timestamptz IS NULL OR m.criado_em<$2)
@@ -369,7 +374,7 @@ function criarServicoHub(opcoes = {}) {
     `, [conversationId, filtros.cursor || null, limite])).rows.reverse();
     return linhas.map((linha) => ({ id: linha.id, turnId: linha.turn_id, traceId: linha.trace_id,
       role: linha.papel, content: linha.conteudo, provenance: linha.proveniencia,
-      turnStatus: linha.turn_status, createdAt: linha.criado_em }));
+      attachments: linha.attachments || [], turnStatus: linha.turn_status, createdAt: linha.criado_em }));
   }
 
   async function iniciarSolicitacao(conversationId, dados) {

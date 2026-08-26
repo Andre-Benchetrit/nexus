@@ -57,6 +57,7 @@
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
+    "@zxing/library": "^0.21.3",
     "@google/genai": "^2.11.0",
     "dotenv": "^17.4.2",
     "duckdb": "^1.4.4",
@@ -64,6 +65,8 @@
     "openai": "^6.46.0",
     "pg": "^8.22.0",
     "pg-copy-streams": "^7.0.0",
-    "read-excel-file": "^8.0.3"
+    "read-excel-file": "^8.0.3",
+    "sharp": "^0.35.3",
+    "tesseract.js": "^6.0.1"
   }
 }

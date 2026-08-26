@@ -108,6 +108,21 @@ test('compila listagem de produtos ativos com projeção e regras de SKU aprovad
   ]);
 });
 
+test('compila filtro aprovado para espaco final em SKU ou codigo do fabricante', () => {
+  const resultado = construirSql(especificacao({
+    objetivo: 'listar', entidade_principal: 'produto',
+    campos: ['codigo_barra', 'descricao_produto', 'sku', 'codigo_fabricante'],
+    dimensoes: [], metricas: [], periodo: null,
+    regras: ['produto_ativo_vendavel', 'codigos_produto_com_espaco_final']
+  }));
+  assert.match(resultado.sql, /p\."cod_barra" AS "codigo_barra"/);
+  assert.match(resultado.sql, /p\."descricao" AS "descricao_produto"/);
+  assert.match(resultado.sql, /p\."codigo_auxiliar" AS "sku"/);
+  assert.match(resultado.sql, /p\."cod_fabrica" AS "codigo_fabricante"/);
+  assert.match(resultado.sql, /p\."codigo_auxiliar" ~ '\[\[:space:\]\]\$'/);
+  assert.match(resultado.sql, /OR p\."cod_fabrica" ~ '\[\[:space:\]\]\$'/);
+});
+
 test('escapa literais para DBeaver sem inserir SQL do usuario', () => {
   const resultado = construirSql(especificacao({
     objetivo: 'listar', metricas: [], dimensoes: [], campos: ['marketplace_pedido'],

@@ -33,11 +33,22 @@ const CAPACIDADES_GENERALISTAS = Object.freeze({
     unidadesFaturaveis: []
   }),
   'ia.imagem.analisar': capacidade({
-    executor: 'provider_native', permissao: 'ia.imagem.analisar', modalidades: ['imagem', 'texto']
+    habilitada: ['local', 'v1'].includes(String(process.env.NEXUS_IMAGE_MODE || 'off').toLowerCase()),
+    executor: 'nexus_local', permissao: 'ia.imagem.processar_local', modalidades: ['imagem', 'texto']
+  }),
+  'ia.imagem.processar_local': capacidade({
+    habilitada: ['local', 'v1'].includes(String(process.env.NEXUS_IMAGE_MODE || 'off').toLowerCase()),
+    executor: 'nexus_local', permissao: 'ia.imagem.processar_local', modalidades: ['imagem', 'texto'],
+    unidadesFaturaveis: ['images', 'megapixels', 'ocr_seconds']
+  }),
+  'ia.imagem.interpretar': capacidade({
+    habilitada: String(process.env.NEXUS_IMAGE_MODE || 'off').toLowerCase() === 'v1',
+    executor: 'provider_native', permissao: 'ia.imagem.interpretar', modalidades: ['imagem', 'texto']
   }),
   'ia.web.pesquisar': capacidade({
-    executor: 'provider_native', permissao: 'ia.web.pesquisar',
-    unidadesFaturaveis: ['input_tokens', 'output_tokens', 'web_search_requests']
+    habilitada: String(process.env.NEXUS_WEB_MODE || 'off').toLowerCase() === 'v1',
+    executor: 'nexus_local', permissao: 'ia.web.pesquisar',
+    unidadesFaturaveis: ['web_search_credits']
   }),
   'ia.imagem.gerar': capacidade({
     executor: 'nexus_local', permissao: 'ia.imagem.gerar', modalidades: ['texto', 'imagem'],

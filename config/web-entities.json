@@ -1,0 +1,11 @@
+{
+  "entities": [
+    {
+      "id": "fid",
+      "aliases": ["fid", "fid comex"],
+      "publicQuery": "FID Comex",
+      "officialDomains": ["fidcomex.com.br"],
+      "requiredTerms": ["fid", "comex"]
+    }
+  ]
+}

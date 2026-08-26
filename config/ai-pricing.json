@@ -21,7 +21,10 @@
 
     { "provider": "gemini", "service": "llm", "model": "gemini-3.5-flash-lite", "metric": "input_tokens", "unitSize": 1000000, "priceUsd": 0.30, "effectiveFrom": "2026-08-17" },
     { "provider": "gemini", "service": "llm", "model": "gemini-3.5-flash-lite", "metric": "cache_read_tokens", "unitSize": 1000000, "priceUsd": 0.03, "effectiveFrom": "2026-08-17" },
-    { "provider": "gemini", "service": "llm", "model": "gemini-3.5-flash-lite", "metric": "output_tokens", "unitSize": 1000000, "priceUsd": 2.50, "effectiveFrom": "2026-08-17" }
+    { "provider": "gemini", "service": "llm", "model": "gemini-3.5-flash-lite", "metric": "output_tokens", "unitSize": 1000000, "priceUsd": 2.50, "effectiveFrom": "2026-08-17" },
+
+    { "provider": "tavily", "service": "tavily_search", "model": "basic", "metric": "credits", "unitSize": 1, "priceUsd": 0.008, "effectiveFrom": "2026-08-25" },
+    { "provider": "tavily", "service": "tavily_search", "model": "advanced", "metric": "credits", "unitSize": 1, "priceUsd": 0.008, "effectiveFrom": "2026-08-25" }
   ],
   "exchangeRates": [
     {

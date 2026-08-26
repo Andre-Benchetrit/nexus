@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Department, NexusProfile, nexusFetch } from "@/lib/types";
 import { NexusLogo } from "./nexus-logo";
@@ -13,6 +13,7 @@ type Principal = {
 type Role = { id: string; slug: string; nome: string; descricao?: string };
 type Usage = { resumo: Record<string, string | number | null>;
   porModelo: Array<Record<string, string | number | null>>;
+  porServico: Array<Record<string, string | number | null>>;
   porAtribuicao: Array<Record<string, string | number | null>>;
   porFaixa: Array<Record<string, string | number | null>> };
 
@@ -36,6 +37,10 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   const [lake, setLake] = useState<Record<string, any> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedSector, setSelectedSector] = useState(profile.setores[0]?.slug || "");
+  const [loading, setLoading] = useState(true);
+  const [loadedTabs, setLoadedTabs] = useState<Set<string>>(() => new Set());
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const loadSequence = useRef(0);
 
   const tabs = useMemo(() => [
     canCost && ["overview", "Visão executiva"],
@@ -46,6 +51,8 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   ].filter(Boolean) as string[][], [canCost, isAdmin, canAudit]);
 
   async function load() {
+    const sequence = ++loadSequence.current;
+    setLoading(true);
     try {
       setError(null);
       if (tab === "overview") setUsage(await nexusFetch<Usage>(
@@ -61,24 +68,53 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
       if (tab === "departments") setDepartments(await nexusFetch<Department[]>("admin/departments"));
       if (tab === "audit") setAudit(await nexusFetch("admin/audit"));
       if (tab === "lake") setLake(await nexusFetch("admin/lake"));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar painel."); }
+    } catch (cause) {
+      if (sequence === loadSequence.current) {
+        setError(cause instanceof Error ? cause.message : "Falha ao carregar painel.");
+      }
+    } finally {
+      if (sequence === loadSequence.current) {
+        setLoading(false);
+        setLoadedTabs((current) => new Set(current).add(tab));
+      }
+    }
   }
   useEffect(() => { load(); }, [tab, selectedSector]);
 
+  async function runAction(key: string, action: () => Promise<void>) {
+    if (pendingAction) return;
+    setPendingAction(key);
+    setError(null);
+    try {
+      await action();
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível concluir a operação.");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   async function createPerson(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await nexusFetch("admin/principals", { method: "POST",
-      body: JSON.stringify({ name: form.get("name"), email: form.get("email") }) });
-    event.currentTarget.reset(); await load();
+    const element = event.currentTarget;
+    const form = new FormData(element);
+    await runAction("create-person", async () => {
+      await nexusFetch("admin/principals", { method: "POST",
+        body: JSON.stringify({ name: form.get("name"), email: form.get("email") }) });
+      element.reset();
+    });
   }
 
   async function createDepartment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await nexusFetch("admin/departments", { method: "POST",
-      body: JSON.stringify({ name: form.get("name"), slug: form.get("slug") }) });
-    event.currentTarget.reset(); await load();
+    const element = event.currentTarget;
+    const form = new FormData(element);
+    await runAction("create-department", async () => {
+      await nexusFetch("admin/departments", { method: "POST",
+        body: JSON.stringify({ name: form.get("name"), slug: form.get("slug") }) });
+      element.reset();
+    });
   }
 
   async function saveAssignments(person: Principal, form: HTMLFormElement) {
@@ -88,10 +124,11 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
     const global = data.get("global") === "on";
     const assignments = global ? [{ role, departmentId: null }]
       : departmentIds.map((departmentId) => ({ role, departmentId }));
-    await nexusFetch(`admin/principals/${person.id}/assignments`, {
-      method: "PUT", body: JSON.stringify({ departmentIds, assignments })
+    await runAction(`assignments-${person.id}`, async () => {
+      await nexusFetch(`admin/principals/${person.id}/assignments`, {
+        method: "PUT", body: JSON.stringify({ departmentIds, assignments })
+      });
     });
-    await load();
   }
 
   return <main className="admin-layout">
@@ -101,8 +138,15 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
       <div className="profile-mini"><span>{profile.nome.slice(0, 1)}</span><div><strong>{profile.nome}</strong><small>{profile.email}</small></div></div>
     </aside>
     <section className="admin-content"><header><div><p className="eyebrow">CONTROLE OPERACIONAL</p>
-      <h1>{tabs.find(([value]) => value === tab)?.[1]}</h1></div><button className="secondary-button" onClick={load}>Atualizar</button></header>
+      <h1>{tabs.find(([value]) => value === tab)?.[1]}</h1></div><button className="secondary-button" onClick={() => runAction("refresh", async () => {})}
+        disabled={Boolean(pendingAction)} aria-busy={pendingAction === "refresh"}>
+        {pendingAction === "refresh" ? "Atualizando…" : "Atualizar"}</button></header>
       {error && <div className="error-banner">{error}</div>}
+      {loading && loadedTabs.has(tab) && <div className="admin-refresh-progress" role="status">
+        <i /> Atualizando informações…
+      </div>}
+
+      {loading && !loadedTabs.has(tab) ? <AdminLoading /> : <>
 
       {tab === "overview" && usage && <>
         {!profile.permissoes.includes("custos.consultar.global") && <label className="filter-field">Setor
@@ -117,6 +161,7 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
           <Metric label="Erros" value={usage.resumo.erros} />
         </div>
         <DataTable title="Consumo por modelo" rows={usage.porModelo} />
+        <DataTable title="Pesquisa e processamento de imagens" rows={usage.porServico || []} />
         <DataTable title="Consumo por setor e usuário" rows={usage.porAtribuicao} />
         <DataTable title="Consumo por nível semântico" rows={usage.porFaixa} />
       </>}
@@ -124,12 +169,19 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
       {tab === "people" && <><form className="inline-form glass-panel" onSubmit={createPerson}>
         <div><h2>Pré-cadastrar colaborador</h2><p>O vínculo Microsoft será feito no primeiro login.</p></div>
         <input name="name" placeholder="Nome completo" required /><input name="email" type="email" placeholder="E-mail corporativo" required />
-        <button className="primary-button">Cadastrar</button></form>
+        <button className="primary-button" disabled={Boolean(pendingAction)} aria-busy={pendingAction === "create-person"}>
+          {pendingAction === "create-person" ? "Cadastrando…" : "Cadastrar"}</button></form>
         <div className="admin-list">{people.map((person) => <article className="person-card glass-panel" key={person.id}>
           <div className="person-heading"><span className="avatar">{person.nome[0]}</span><div><strong>{person.nome}</strong><small>{person.email}</small></div>
-            <button className={person.ativo ? "status-active" : "status-inactive"} onClick={async () => {
-              await nexusFetch(`admin/principals/${person.id}`, { method: "PATCH", body: JSON.stringify({ active: !person.ativo }) }); load();
-            }}>{person.ativo ? "Ativo" : "Inativo"}</button></div>
+            <button className={person.ativo ? "status-active" : "status-inactive"}
+              disabled={Boolean(pendingAction)} aria-busy={pendingAction === `status-${person.id}`}
+              onClick={() => runAction(`status-${person.id}`, async () => {
+                await nexusFetch(`admin/principals/${person.id}`, {
+                  method: "PATCH", body: JSON.stringify({ active: !person.ativo })
+                });
+              })}>{pendingAction === `status-${person.id}`
+                ? (person.ativo ? "Desativando…" : "Ativando…")
+                : (person.ativo ? "Ativo" : "Inativo")}</button></div>
           <form className="assignment-form" onSubmit={(e) => { e.preventDefault(); saveAssignments(person, e.currentTarget); }}>
             <div className="assignment-departments"><span className="field-label">Setores com acesso</span>
               <div className="department-options">{departments.filter((d) => d.ativo !== false).map((d) =>
@@ -143,18 +195,25 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
               <option key={role.id} value={role.slug}>{role.nome}</option>)}</select></label>
             <label className="checkbox scope-toggle"><input type="checkbox" name="global" defaultChecked={person.atribuicoes.some((a) => !a.departmentId)} />
               <span><strong>Papel global</strong><small>Permissões válidas em todos os setores associados</small></span></label>
-            <button className="secondary-button">Salvar acessos</button>
+            <button className="secondary-button" disabled={Boolean(pendingAction)}
+              aria-busy={pendingAction === `assignments-${person.id}`}>
+              {pendingAction === `assignments-${person.id}` ? "Salvando…" : "Salvar acessos"}</button>
           </form></article>)}</div></>}
 
       {tab === "departments" && <><form className="inline-form glass-panel" onSubmit={createDepartment}>
         <div><h2>Novo setor</h2><p>Setores delimitam contexto, permissões e custos.</p></div>
         <input name="name" placeholder="Nome" required /><input name="slug" placeholder="Identificador opcional" />
-        <button className="primary-button">Cadastrar</button></form>
+        <button className="primary-button" disabled={Boolean(pendingAction)} aria-busy={pendingAction === "create-department"}>
+          {pendingAction === "create-department" ? "Cadastrando…" : "Cadastrar"}</button></form>
         <div className="department-grid">{departments.map((department) => <article className="glass-panel" key={department.id}>
           <span className="department-icon">◇</span><div><strong>{department.nome}</strong><small>{department.slug}</small></div>
-          <button className="secondary-button" onClick={async () => {
-            await nexusFetch(`admin/departments/${department.id}`, { method: "PATCH", body: JSON.stringify({ active: false }) }); load();
-          }}>Desativar</button></article>)}</div></>}
+          <button className="secondary-button" disabled={Boolean(pendingAction)}
+            aria-busy={pendingAction === `department-${department.id}`}
+            onClick={() => runAction(`department-${department.id}`, async () => {
+              await nexusFetch(`admin/departments/${department.id}`, {
+                method: "PATCH", body: JSON.stringify({ active: false })
+              });
+            })}>{pendingAction === `department-${department.id}` ? "Desativando…" : "Desativar"}</button></article>)}</div></>}
 
       {tab === "audit" && <DataTable title="Eventos recentes" rows={audit} />}
       {tab === "lake" && lake && <><div className="metric-grid">
@@ -163,8 +222,18 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
         <Metric label="Silver" value={lake.health?.camadas?.silver || 0} />
         <Metric label="Gold" value={lake.health?.camadas?.gold || 0} />
       </div><DataTable title="Atualizações recentes" rows={lake.events || []} /></>}
+      </>}
     </section>
   </main>;
+}
+
+function AdminLoading() {
+  return <section className="admin-loading" role="status" aria-label="Carregando painel">
+    <div className="admin-loading-heading"><i /><div><span /><span /></div></div>
+    <div className="admin-loading-metrics">{Array.from({ length: 6 }, (_, index) => <i key={index} />)}</div>
+    <div className="admin-loading-table"><span /><span /><span /><span /></div>
+    <p>Carregando informações autorizadas…</p>
+  </section>;
 }
 
 function Metric({ label, value }: { label: string; value: unknown }) {

@@ -3,7 +3,8 @@ const path = require('node:path');
 const { comTransacao } = require('./db');
 
 const METRICAS_PERMITIDAS = new Set([
-  'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'requests'
+  'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'requests',
+  'credits', 'images', 'megapixels', 'ocr_seconds'
 ]);
 
 function dataIso(valor, campo) {

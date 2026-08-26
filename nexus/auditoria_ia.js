@@ -75,13 +75,22 @@ function criarServicoAuditoriaIA(opcoes = {}) {
   const contextoBase = {
     principalSlug: opcoes.principalSlug || 'legacy-cli',
     sessao: opcoes.sessao || 'padrao',
-    departamentoSlug: opcoes.departamentoSlug || null
+    departamentoSlug: opcoes.departamentoSlug || null,
+    principalId: opcoes.principalId || null,
+    conversationId: opcoes.conversationId || null,
+    departamentoId: opcoes.departamentoId || null
   };
   const modo = modoPoliticaUso(opcoes.modo);
   let contextoResolvido;
 
   async function contexto() {
-    contextoResolvido ||= resolverContexto(pool, contextoBase);
+    contextoResolvido ||= contextoBase.principalId && contextoBase.conversationId
+      ? Promise.resolve({
+        principalId: contextoBase.principalId,
+        conversationId: contextoBase.conversationId,
+        departamentoId: contextoBase.departamentoId
+      })
+      : resolverContexto(pool, contextoBase);
     return contextoResolvido;
   }
 
@@ -155,6 +164,32 @@ function criarServicoAuditoriaIA(opcoes = {}) {
     `, [data])).rows[0] || null;
   }
 
+  async function registrarUsoServico(turno, dados = {}) {
+    const quantidade = Number(dados.quantidade || 0);
+    if (!turno?.id || !dados.callId || !(quantidade >= 0)) return null;
+    return comTransacao(pool, async (cliente) => {
+      const data = dados.data || new Date();
+      const preco = await buscarPreco(cliente, {
+        provider: dados.provider || 'nexus', servico: dados.servico,
+        modelo: dados.modelo || 'local', metrica: dados.metrica, data
+      });
+      const cambio = await buscarCambio(cliente, data);
+      const usd = preco ? quantidade / Number(preco.tamanho_unidade) * Number(preco.preco_usd) : null;
+      const brl = usd != null && cambio ? usd * Number(cambio.taxa) : null;
+      const status = !preco ? 'pricing_missing' : cambio ? 'priced' : 'missing_exchange_rate';
+      const linha = (await cliente.query(`
+        INSERT INTO nexus.usage_line_items
+          (turn_id, call_id, tipo_chamada, provider, servico, modelo, metrica,
+           quantidade, pricing_rate_id, exchange_rate_id, custo_usd, custo_brl, pricing_status)
+        VALUES ($1,$2,'service',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        RETURNING id
+      `, [turno.id, dados.callId, dados.provider || 'nexus', dados.servico,
+        dados.modelo || 'local', dados.metrica, quantidade, preco?.id || null,
+        cambio?.id || null, usd, brl, status])).rows[0];
+      return { id: linha.id, pricingStatus: status, costUsd: usd, costBrl: brl };
+    });
+  }
+
   async function concluirChamada(turno, id, resultado = {}) {
     return comTransacao(pool, async (cliente) => {
       const chamada = (await cliente.query(
@@ -181,27 +216,54 @@ function criarServicoAuditoriaIA(opcoes = {}) {
         }
       }
       const cambio = await buscarCambio(cliente, chamada.criada_em);
+      const precos = itens.length ? (await cliente.query(`
+        SELECT solicitadas.servico AS consulta_servico,
+          solicitadas.metrica AS consulta_metrica,
+          preco.id, preco.tamanho_unidade, preco.preco_usd
+        FROM unnest($4::text[], $5::text[]) AS solicitadas(servico,metrica)
+        LEFT JOIN LATERAL (
+          SELECT id,tamanho_unidade,preco_usd
+          FROM nexus.pricing_rates
+          WHERE provider=$1 AND servico=solicitadas.servico AND modelo=$2
+            AND metrica=solicitadas.metrica
+            AND vigente_desde<=$3::date
+            AND (vigente_ate IS NULL OR vigente_ate>=$3::date)
+          ORDER BY vigente_desde DESC LIMIT 1
+        ) preco ON true
+      `, [chamada.provider, chamada.modelo, chamada.criada_em,
+        itens.map((item) => item.servico), itens.map((item) => item.metrica)])).rows : [];
+      const precosPorItem = new Map(precos.map((item) => [
+        `${item.consulta_servico}:${item.consulta_metrica}`, item.id ? item : null
+      ]));
       let custoUsd = 0;
       let custoBrl = 0;
       let precosCompletos = itens.length > 0;
+      const linhasUso = [];
       for (const item of itens) {
-        const preco = await buscarPreco(cliente, {
-          provider: chamada.provider, servico: item.servico, modelo: chamada.modelo,
-          metrica: item.metrica, data: chamada.criada_em
-        });
+        const preco = precosPorItem.get(`${item.servico}:${item.metrica}`) || null;
         const usd = preco ? item.quantidade / Number(preco.tamanho_unidade) * Number(preco.preco_usd) : null;
         const brl = usd != null && cambio ? usd * Number(cambio.taxa) : null;
         if (!preco) precosCompletos = false;
         if (usd != null) custoUsd += usd;
         if (brl != null) custoBrl += brl;
+        linhasUso.push({ ...item, precoId: preco?.id || null, usd, brl,
+          status: !preco ? 'pricing_missing' : cambio ? 'priced' : 'missing_exchange_rate' });
+      }
+      if (linhasUso.length) {
         await cliente.query(`
           INSERT INTO nexus.usage_line_items
-            (turn_id, call_id, tipo_chamada, provider, servico, modelo, metrica,
-             quantidade, pricing_rate_id, exchange_rate_id, custo_usd, custo_brl, pricing_status)
-          VALUES ($1,$2,'llm',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-        `, [turno.id, id, chamada.provider, item.servico, chamada.modelo, item.metrica,
-          item.quantidade, preco?.id || null, cambio?.id || null, usd, brl,
-          !preco ? 'pricing_missing' : cambio ? 'priced' : 'missing_exchange_rate']);
+            (turn_id,call_id,tipo_chamada,provider,servico,modelo,metrica,
+             quantidade,pricing_rate_id,exchange_rate_id,custo_usd,custo_brl,pricing_status)
+          SELECT $1,$2,'llm',$3,uso.servico,$4,uso.metrica,uso.quantidade,
+            uso.pricing_rate_id,$5,uso.custo_usd,uso.custo_brl,uso.pricing_status
+          FROM unnest($6::text[],$7::text[],$8::numeric[],$9::uuid[],
+            $10::numeric[],$11::numeric[],$12::text[])
+            AS uso(servico,metrica,quantidade,pricing_rate_id,custo_usd,custo_brl,pricing_status)
+        `, [turno.id, id, chamada.provider, chamada.modelo, cambio?.id || null,
+          linhasUso.map((item) => item.servico), linhasUso.map((item) => item.metrica),
+          linhasUso.map((item) => item.quantidade), linhasUso.map((item) => item.precoId),
+          linhasUso.map((item) => item.usd), linhasUso.map((item) => item.brl),
+          linhasUso.map((item) => item.status)]);
       }
       await cliente.query(`
         UPDATE nexus.llm_calls SET
@@ -313,53 +375,67 @@ function criarServicoAuditoriaIA(opcoes = {}) {
   async function concluirTurno(turno, { sucesso = true, proveniencia = null, erro = null } = {}) {
     const resumo = (await pool.query(`
       SELECT
-        count(*)::int AS provider_calls,
-        COALESCE(sum(input_tokens),0)::bigint AS input_tokens,
-        COALESCE(sum(output_tokens),0)::bigint AS output_tokens,
-        COALESCE(sum(cache_read_tokens),0)::bigint AS cache_read_tokens,
-        COALESCE(sum(cache_write_tokens),0)::bigint AS cache_write_tokens,
-        bool_and(pricing_usd_complete) FILTER (WHERE status='sucesso') AS pricing_usd_complete,
-        bool_and(pricing_brl_complete) FILTER (WHERE status='sucesso') AS pricing_brl_complete,
-        sum(estimated_cost_usd) AS custo_usd,
-        sum(estimated_cost_brl) AS custo_brl
-      FROM nexus.llm_calls WHERE turn_id=$1
+        (SELECT count(*)::int FROM nexus.llm_calls WHERE turn_id=$1) AS provider_calls,
+        (SELECT COALESCE(sum(input_tokens),0)::bigint FROM nexus.llm_calls WHERE turn_id=$1) AS input_tokens,
+        (SELECT COALESCE(sum(output_tokens),0)::bigint FROM nexus.llm_calls WHERE turn_id=$1) AS output_tokens,
+        (SELECT COALESCE(sum(cache_read_tokens),0)::bigint FROM nexus.llm_calls WHERE turn_id=$1) AS cache_read_tokens,
+        (SELECT COALESCE(sum(cache_write_tokens),0)::bigint FROM nexus.llm_calls WHERE turn_id=$1) AS cache_write_tokens,
+        (SELECT count(*)::int FROM nexus.tool_executions WHERE turn_id=$1) AS tool_calls,
+        (SELECT count(*)::int FROM nexus.usage_line_items WHERE turn_id=$1) AS usage_total,
+        (SELECT bool_and(pricing_rate_id IS NOT NULL) FROM nexus.usage_line_items WHERE turn_id=$1) AS usd_completo,
+        (SELECT bool_and(pricing_rate_id IS NOT NULL AND exchange_rate_id IS NOT NULL)
+          FROM nexus.usage_line_items WHERE turn_id=$1) AS brl_completo,
+        (SELECT sum(custo_usd) FROM nexus.usage_line_items WHERE turn_id=$1) AS custo_usd,
+        (SELECT sum(custo_brl) FROM nexus.usage_line_items WHERE turn_id=$1) AS custo_brl
     `, [turno.id])).rows[0];
-    const tools = (await pool.query(
-      'SELECT count(*)::int AS total FROM nexus.tool_executions WHERE turn_id=$1', [turno.id]
-    )).rows[0].total;
+    const usdCompleto = Number(resumo.usage_total) > 0 && Boolean(resumo.usd_completo);
+    const brlCompleto = Number(resumo.usage_total) > 0 && Boolean(resumo.brl_completo);
+    const tools = resumo.tool_calls;
     const duracao = Date.now() - new Date(turno.iniciadoEm).getTime();
+    const metadadosResumo = JSON.stringify({
+      turn_id: turno.id, provider_calls: resumo.provider_calls, tool_calls: tools,
+      input_tokens: String(resumo.input_tokens), output_tokens: String(resumo.output_tokens),
+      cache_read_tokens: String(resumo.cache_read_tokens), cache_write_tokens: String(resumo.cache_write_tokens),
+      pricing_usd_complete: usdCompleto,
+      pricing_brl_complete: brlCompleto,
+      pricing_complete: Boolean(usdCompleto && brlCompleto), duracao_ms: duracao,
+      erro_codigo: codigoErro(erro)
+    });
     await pool.query(`
-      UPDATE nexus.ai_turns SET
+      WITH turno_atualizado AS (
+        UPDATE nexus.ai_turns SET
         status=$2, proveniencia=$3, provider_calls=$4, tool_calls=$5,
         input_tokens_total=$6, output_tokens_total=$7,
         cache_read_tokens_total=$8, cache_write_tokens_total=$9,
         estimated_cost_usd=$10, estimated_cost_brl=$11,
         pricing_complete=$12, pricing_usd_complete=$13, pricing_brl_complete=$14,
         duracao_ms=$15, erro_codigo=$16, concluido_em=now()
-      WHERE id=$1
+        WHERE id=$1 RETURNING id
+      )
+      INSERT INTO nexus.audit_events
+        (principal_id, conversation_id, tipo, recurso, resultado, metadados)
+      SELECT $17,$18,'turn_summary',$19,$20,$21::jsonb
+      FROM turno_atualizado
     `, [turno.id, sucesso ? 'sucesso' : 'erro', proveniencia,
       resumo.provider_calls, tools, resumo.input_tokens, resumo.output_tokens,
       resumo.cache_read_tokens, resumo.cache_write_tokens,
-      resumo.pricing_usd_complete ? resumo.custo_usd : null,
-      resumo.pricing_brl_complete ? resumo.custo_brl : null,
-      Boolean(resumo.pricing_usd_complete && resumo.pricing_brl_complete),
-      Boolean(resumo.pricing_usd_complete), Boolean(resumo.pricing_brl_complete),
-      duracao, codigoErro(erro)]);
-    await pool.query(`
-      INSERT INTO nexus.audit_events
-        (principal_id, conversation_id, tipo, recurso, resultado, metadados)
-      VALUES ($1,$2,'turn_summary',$3,$4,$5::jsonb)
-    `, [turno.principalId, turno.conversationId, turno.traceId,
-      sucesso ? 'sucesso' : 'erro', JSON.stringify({
-        turn_id: turno.id, provider_calls: resumo.provider_calls, tool_calls: tools,
-        input_tokens: String(resumo.input_tokens), output_tokens: String(resumo.output_tokens),
-        cache_read_tokens: String(resumo.cache_read_tokens), cache_write_tokens: String(resumo.cache_write_tokens),
-        pricing_usd_complete: Boolean(resumo.pricing_usd_complete),
-        pricing_brl_complete: Boolean(resumo.pricing_brl_complete),
-        pricing_complete: Boolean(resumo.pricing_usd_complete && resumo.pricing_brl_complete), duracao_ms: duracao,
-        erro_codigo: codigoErro(erro)
-      })]);
-    return { ...resumo, toolCalls: tools, durationMs: duracao };
+      usdCompleto ? resumo.custo_usd : null,
+      brlCompleto ? resumo.custo_brl : null,
+      Boolean(usdCompleto && brlCompleto), usdCompleto, brlCompleto,
+      duracao, codigoErro(erro), turno.principalId, turno.conversationId,
+      turno.traceId, sucesso ? 'sucesso' : 'erro', metadadosResumo]);
+    return {
+      ...resumo,
+      custo_usd: usdCompleto ? resumo.custo_usd : null,
+      custo_brl: brlCompleto ? resumo.custo_brl : null,
+      pricing_usd_complete: usdCompleto,
+      pricing_brl_complete: brlCompleto,
+      pricing_complete: Boolean(usdCompleto && brlCompleto),
+      costUsd: usdCompleto ? resumo.custo_usd : null,
+      costBrl: brlCompleto ? resumo.custo_brl : null,
+      toolCalls: tools,
+      durationMs: duracao
+    };
   }
 
   return {
@@ -372,6 +448,7 @@ function criarServicoAuditoriaIA(opcoes = {}) {
     listarMensagens,
     modo,
     paraTelemetria,
+    registrarUsoServico,
     registrarFaixaSemantica,
     registrarEvento,
     registrarMensagem

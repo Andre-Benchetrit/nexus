@@ -230,6 +230,29 @@ test('listagem de produtos ativos traduz todas as restrições explícitas', asy
   ]);
 });
 
+test('query de produtos reconhece nomes fisicos e filtro de espaco ao final', async (t) => {
+  const memoria = memoriaTemporaria(t);
+  const resultado = await processarMensagemInterativa(
+    'Me gere uma query SQL para buscar codigo_auxiliar e cod_fabrica de produtos ativos que têm um espaço no final, por exemplo: "GL1453PT ".',
+    { memoria, interactionMode: 'v1', dataReferencia: '2026-08-11' }
+  );
+  assert.equal(resultado.status, 'pronto');
+  assert.deepEqual(resultado.argumentos.campos, ['sku', 'codigo_fabricante']);
+  assert.deepEqual(resultado.argumentos.regras, [
+    'produto_ativo_vendavel', 'codigos_produto_com_espaco_final'
+  ]);
+});
+
+test('pedido de espaco final sem campo identificado pede esclarecimento', async (t) => {
+  const memoria = memoriaTemporaria(t);
+  const resultado = await processarMensagemInterativa(
+    'Crie um SQL de produtos ativos que tenham um espaço no final.',
+    { memoria, interactionMode: 'v1', dataReferencia: '2026-08-11' }
+  );
+  assert.equal(resultado.status, 'precisa_esclarecimento');
+  assert.deepEqual(resultado.tarefa.camposPendentes, ['campos', 'restricoes']);
+});
+
 test('restrição explícita desconhecida pede esclarecimento em vez de ser ignorada', async (t) => {
   const memoria = memoriaTemporaria(t);
   const resultado = await processarMensagemInterativa(

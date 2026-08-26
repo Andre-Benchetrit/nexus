@@ -115,7 +115,9 @@ function pedeMesmaCobertura(pergunta) {
 function referenciaContextual(pergunta) {
   const texto = normalizarTexto(pergunta);
   return /^(e |agora |tambem |nesse|nessa|nesses|nessas|desses|dessas|deles|delas|pode me passar|passe|repita|inclua|adicione|acrescente)/.test(texto)
-    || /\b(esses|essas|estes|estas|os mesmos|as mesmas|novamente|resultado anterior|dados anteriores)\b/.test(texto);
+    || /\b(esses|essas|estes|estas|os mesmos|as mesmas|novamente|resultado anterior|dados anteriores)\b/.test(texto)
+    || /\b(?:outros?|outras?)\s+(?:bloqueios?|pedidos?|produtos?|resultados?|registros?)\b/.test(texto)
+    || /\btambem\s*[?.!]*$/.test(texto);
 }
 
 function obterPerfilAnterior(historico = []) {

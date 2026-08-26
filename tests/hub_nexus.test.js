@@ -6,7 +6,9 @@ const {
   slugDoEmail, tituloDaPergunta
 } = require('../nexus/hub');
 const { assinarTokenHub, verificarTokenHub } = require('../nexus/hub_token');
-const { criarServidor, statusDoCheckpoint, statusDoEvento } = require('../services/nexus-api/server');
+const {
+  criarServidor, statusDoCheckpoint, statusDoEvento, validarResultadoTurno
+} = require('../services/nexus-api/server');
 
 test('composicao do hub so eleva a faixa e titulos nao consomem LLM', () => {
   assert.equal(normalizarComposicao('medio'), 'medio');
@@ -34,6 +36,14 @@ test('estagios SSE traduzem checkpoints sem expor conteudo tecnico', () => {
   assert.equal(statusDoCheckpoint({ tipo: 'tool_concluida' }), 'validando_evidencias');
   assert.equal(statusDoEvento('Executando tool analisar_vendas'), 'consultando_dados');
   assert.equal(statusDoEvento('Groq: aguardando resposta'), 'interpretando');
+});
+
+test('API recusa concluir turno com mensagem vazia', () => {
+  assert.equal(validarResultadoTurno({ texto: 'Resposta válida.' }).texto, 'Resposta válida.');
+  assert.throws(
+    () => validarResultadoTurno({ texto: '   ' }),
+    (erro) => erro.codigo === 'RESPOSTA_VAZIA' && erro.status === 502
+  );
 });
 
 function criarPoolIdentidade({ cadastrado = true } = {}) {

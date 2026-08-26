@@ -18,6 +18,7 @@ const {
 const {
   executarAssistente,
   normalizarHistoricoVisivel,
+  possuiTextoResposta,
   resolverModoAssistente
 } = require('../agentes/assistente_nexus');
 const { sanitizarMetadados } = require('../nexus/auditoria_ia');
@@ -45,6 +46,16 @@ test('guarda de fonte exige Nexus para identificador, fato mutavel e tarefa ativ
   assert.equal(exigeFonteCorporativa('Veja o produto 7899552110892').obrigatoria, true);
   assert.equal(exigeFonteCorporativa('Crie uma query SQL de produtos').obrigatoria, true);
   assert.equal(exigeFonteCorporativa('sim', { tarefaAtiva: { id: '1' } }).obrigatoria, true);
+});
+
+test('guarda de fonte distingue conversa, web e continuacao corporativa', () => {
+  assert.equal(exigeFonteCorporativa('Bom dia, como vai?').obrigatoria, false);
+  assert.equal(exigeFonteCorporativa('Quais são as últimas notícias da FID?').obrigatoria, false);
+  assert.equal(exigeFonteCorporativa('Explique o conceito de estoque de segurança.').obrigatoria, false);
+  assert.equal(exigeFonteCorporativa('Verifique nossos bloqueios de estoque.').obrigatoria, true);
+  assert.equal(exigeFonteCorporativa('Outros bloqueios também.', {
+    ultimaProveniencia: 'dados_nexus'
+  }).motivo, 'continuacao_corporativa');
 });
 
 test('normaliza usage sem inventar campos ausentes ou contar cache duas vezes', () => {
@@ -149,7 +160,7 @@ test('assistente responde conversa geral sem executar agente corporativo', async
     generalistProvider: {
       nome: 'mock', modelo: 'mock',
       async executar({ tools }) {
-        assert.equal(tools.length, 1);
+        assert.equal(tools.length, 0);
         return { texto: 'EBITDA e um indicador.', provider: 'mock', modelo: 'mock' };
       }
     },
@@ -161,8 +172,10 @@ test('assistente responde conversa geral sem executar agente corporativo', async
 
 test('guarda corporativa consulta o agente existente antes da resposta final', async () => {
   let perguntaCorporativa;
-  const resultado = await executarAssistente('Veja o produto 7899552110892', {
-    memoria: memoriaFalsa(), auditoriaIA: false,
+  let buscasWeb = 0;
+  const resultado = await executarAssistente('Quais pedidos estão bloqueados hoje?', {
+    memoria: memoriaFalsa(), auditoriaIA: false, webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar() { buscasWeb += 1; return { status: 'empty', fontes: [] }; } },
     governanca: {
       async avaliar() { return { permitida: true }; },
       async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
@@ -184,7 +197,8 @@ test('guarda corporativa consulta o agente existente antes da resposta final', a
       };
     }
   });
-  assert.equal(perguntaCorporativa, 'Veja o produto 7899552110892');
+  assert.equal(perguntaCorporativa, 'Quais pedidos estão bloqueados hoje?');
+  assert.equal(buscasWeb, 0);
   assert.equal(resultado.proveniencia, 'dados_nexus');
   assert.deepEqual(resultado.evidencia.toolsUsed, ['resolver_produto']);
 });
@@ -212,12 +226,77 @@ test('SQL corporativo e entregue diretamente sem passar por outra LLM', async ()
   assert.equal(resultado.provider, 'nexus');
 });
 
+test('perguntas do protocolo corporativo chegam intactas sem sintese generalista', async () => {
+  let chamouGeneralista = false;
+  const perguntas = [
+    'Em qual campo devo verificar o espaço ao final?',
+    'Você quer verificar codigo_auxiliar, cod_fabrica ou ambos?'
+  ].join('\n');
+  const resultado = await executarAssistente(
+    'Gere uma query para produtos ativos com espaço no final do código.',
+    {
+      memoria: memoriaFalsa(), auditoriaIA: false,
+      governanca: {
+        async avaliar() { return { permitida: true }; },
+        async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
+        async concluirTool() {}
+      },
+      generalistProvider: {
+        nome: 'mock', modelo: 'mock',
+        async executar() { chamouGeneralista = true; return { texto: 'perguntas alteradas' }; }
+      },
+      executarAgenteCorporativo: async () => ({
+        texto: perguntas,
+        provider: 'protocolo_interacao',
+        interacao: {
+          status: 'precisa_esclarecimento',
+          tarefa: { tipo: 'construir_sql', camposPendentes: ['filtros'] }
+        },
+        roteamento: { esclarecimento: true }
+      })
+    }
+  );
+  assert.equal(chamouGeneralista, false);
+  assert.equal(resultado.texto, perguntas);
+  assert.equal(resultado.provider, 'nexus');
+  assert.equal(resultado.evidencia.status, 'partial');
+});
+
+test('nao suportado pode receber orientacao limitada do generalista', async () => {
+  let chamouGeneralista = false;
+  const resultado = await executarAssistente('Gere uma query SQL de produtos usando uma fonte não catalogada.', {
+    memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: {
+      async avaliar() { return { permitida: true }; },
+      async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
+      async concluirTool() {}
+    },
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar({ mensagens }) {
+        chamouGeneralista = true;
+        assert.match(mensagens.at(-1).content, /nao_suportado/);
+        return {
+          texto: 'Essa fonte ainda não está catalogada. Posso ajudar a definir os campos necessários.',
+          provider: 'mock', modelo: 'mock'
+        };
+      }
+    },
+    executarAgenteCorporativo: async () => ({
+      texto: 'A fonte solicitada não faz parte do catálogo aprovado.',
+      interacao: { status: 'nao_suportado' },
+      roteamento: { esclarecimento: false }
+    })
+  });
+  assert.equal(chamouGeneralista, true);
+  assert.match(resultado.texto, /ainda não está catalogada/i);
+});
+
 test('fallback generalista reutiliza a consulta Nexus feita no turno', async () => {
   let consultasCorporativas = 0;
   const primario = {
     nome: 'primario', modelo: 'p',
-    async executar(contexto) {
-      await contexto.tools[0].executar({ objetivo: 'consultar pedidos internos' });
+    async executar() {
       const erro = new Error('rate limit');
       erro.status = 429;
       throw erro;
@@ -228,13 +307,13 @@ test('fallback generalista reutiliza a consulta Nexus feita no turno', async () 
     async executar(contexto) {
       assert.equal(contexto.tools.length, 0);
       assert.match(
-        contexto.mensagens.at(-1).content,
-        /ja consultada|Nao repita tools concluidas/
+        contexto.mensagens.map((item) => String(item.content)).join('\n'),
+        /Evidencia corporativa|Nao repita tools concluidas/
       );
       return { texto: 'Resposta preservada.', provider: 'fallback', modelo: 'f' };
     }
   };
-  const resultado = await executarAssistente('Pode me ajudar com uma analise?', {
+  const resultado = await executarAssistente('Analise minhas vendas de hoje.', {
     memoria: memoriaFalsa(), auditoriaIA: false,
     governanca: {
       async avaliar() { return { permitida: true }; },
@@ -263,6 +342,42 @@ test('historico visivel remove inicio invalido e combina papeis consecutivos', (
     { role: 'user', content: 'parte 1\n\nparte 2' },
     { role: 'assistant', content: 'resposta' }
   ]);
+});
+
+test('assistente nunca conclui com resposta textual vazia', async () => {
+  assert.equal(possuiTextoResposta('  '), false);
+  assert.equal(possuiTextoResposta('Resposta'), true);
+  await assert.rejects(executarAssistente('Explique EBITDA', {
+    memoria: memoriaFalsa(), auditoriaIA: false,
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar() { return { texto: '', provider: 'mock', modelo: 'mock' }; }
+    }
+  }), (erro) => erro.codigo === 'RESPOSTA_VAZIA');
+});
+
+test('sintese invalida nao usa resposta corporativa vazia como fallback', async () => {
+  await assert.rejects(executarAssistente('Quais pedidos internos estao bloqueados?', {
+    memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: {
+      async avaliar() { return { permitida: true }; },
+      async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
+      async concluirTool() {}
+    },
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar() {
+        return { texto: 'O pedido 701-3552839-4859420 esta bloqueado.', provider: 'mock', modelo: 'mock' };
+      }
+    },
+    executarAgenteCorporativo: async () => ({
+      texto: '',
+      roteamento: {
+        perfilInicial: 'bloqueios_estoque', ferramentasExecutadas: ['consultar_bloqueios_sem_estoque'],
+        exigeSintese: true, evidenciaFactual: { status: 'partial', manifesto: { identificadores: [] } }
+      }
+    })
+  }), (erro) => erro.codigo === 'RESPOSTA_CORPORATIVA_VAZIA');
 });
 
 test('CLI le configuracoes independentes da IA generalista', () => {

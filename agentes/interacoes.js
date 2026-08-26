@@ -132,7 +132,7 @@ function extrairSlotsSql(texto, dataReferencia, existentes = {}) {
   } else if (/somar|agregar|agrup| por /.test(` ${t} `)) {
     slots.objetivo ||= 'agregar';
   } else if (/detalh/.test(t)) slots.objetivo = 'detalhar';
-  else if (/list|mostr|select|consulta/.test(t)) slots.objetivo ||= 'listar';
+  else if (/list|mostr|select|consulta|busc|\bquery\b|\bsql\b/.test(t)) slots.objetivo ||= 'listar';
 
   const dimensoes = new Set(slots.dimensoes || []);
   if (/por marketplace|por plataforma|\bplataforma\b/.test(t)) dimensoes.add('plataforma');
@@ -157,6 +157,15 @@ function extrairSlotsSql(texto, dataReferencia, existentes = {}) {
   for (const campo of camposConhecidos) {
     if (new RegExp(`\\b${campo.replace(/_/g, '[ _]')}\\b`).test(t)) campos.add(campo);
   }
+  const aliasesCampos = [
+    ['sku', /\bsku\b|\bcodigo[ _]auxiliar\b/],
+    ['codigo_barra', /\bean\b|\bcod[ _]barra\b|\bcodigo(?:s)? (?:de )?barras?\b/],
+    ['codigo_fabricante', /\bcod[ _]fabrica\b|\bcodigo (?:do )?fabricante\b/],
+    ['descricao_produto', /\bdescricao (?:do )?produto\b|\bnome (?:do )?produto\b/]
+  ];
+  for (const [campo, padrao] of aliasesCampos) {
+    if (padrao.test(t)) campos.add(campo);
+  }
   if (campos.size) slots.campos = [...campos];
 
   const consultaProduto = slots.entidade_principal === 'produto' || /\bprodutos?\b/.test(t);
@@ -167,6 +176,20 @@ function extrairSlotsSql(texto, dataReferencia, existentes = {}) {
     /\b(nao|sem|exclu|retir|ignor)\w*\b/.test(t) &&
     /(_out|sufix|termin|final|_[0-9]|_ ou)/.test(t)
   ) regras.add('sku_sem_sufixo_variacao');
+  const solicitaEspacoFinal = /\bespa[cç]o(?:s)?(?: em branco)?\b.{0,24}\b(?:final|fim)\b|\b(?:final|fim)\b.{0,24}\bespa[cç]o(?:s)?\b/.test(t);
+  const mencionaCodigoAuxiliar = /\bsku\b|\bcodigo[ _]auxiliar\b/.test(t);
+  const mencionaCodigoFabricante = /\bcod[ _]fabrica\b|\bcodigo (?:do )?fabricante\b/.test(t);
+  let regraEspacoFinal = null;
+  if (consultaProduto && solicitaEspacoFinal) {
+    if (mencionaCodigoAuxiliar && mencionaCodigoFabricante) {
+      regraEspacoFinal = 'codigos_produto_com_espaco_final';
+    } else if (mencionaCodigoAuxiliar) {
+      regraEspacoFinal = 'sku_com_espaco_final';
+    } else if (mencionaCodigoFabricante) {
+      regraEspacoFinal = 'codigo_fabricante_com_espaco_final';
+    }
+    if (regraEspacoFinal) regras.add(regraEspacoFinal);
+  }
   slots.regras = [...regras];
 
   if (
@@ -192,6 +215,8 @@ function extrairSlotsSql(texto, dataReferencia, existentes = {}) {
     Boolean(periodo) || /cancel/.test(t);
   if (/\b(?:ignore|remova|desconsidere).{0,20}\brestri/.test(t)) {
     slots.restricoes_nao_interpretadas = [];
+  } else if (solicitaEspacoFinal && !regraEspacoFinal) {
+    slots.restricoes_nao_interpretadas = ['campo_espaco_final_nao_identificado'];
   } else if (temIndicadorRestricao && !reconheceuRestricao) {
     slots.restricoes_nao_interpretadas = ['restricao_explicita_nao_mapeada'];
   } else if (temIndicadorRestricao && reconheceuRestricao) {

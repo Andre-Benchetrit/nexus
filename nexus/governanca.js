@@ -3,6 +3,9 @@ const { obterCapacidade } = require('../agentes/capacidades');
 const MODOS_AUTORIZACAO = Object.freeze(['off', 'audit', 'enforce']);
 const PERMISSOES_ESPECIAIS = Object.freeze({
   ia_conversar: 'ia.conversar',
+  pesquisar_web: 'ia.web.pesquisar',
+  processar_imagem_local: 'ia.imagem.processar_local',
+  interpretar_imagem: 'ia.imagem.interpretar',
   consultar_nexus: 'ia.nexus.consultar',
   solicitar_revisao_memoria: 'memoria.candidatar',
   construir_sql: 'sql.gerar',
@@ -66,19 +69,25 @@ function criarServicoGovernanca(opcoes) {
   const principalSlug = opcoes.principalSlug || 'legacy-cli';
   const sessao = opcoes.sessao || 'padrao';
   const modo = resolverModoAutorizacao(opcoes.modo);
+  const principalId = opcoes.principalId || null;
+  const conversationId = opcoes.conversationId || null;
 
   async function contexto() {
     const principal = (await pool.query(
-      'SELECT id, ativo FROM nexus.principals WHERE slug = $1', [principalSlug]
+      principalId
+        ? 'SELECT id, ativo FROM nexus.principals WHERE id = $1'
+        : 'SELECT id, ativo FROM nexus.principals WHERE slug = $1',
+      [principalId || principalSlug]
     )).rows[0];
     if (!principal) throw new Error(`Principal de governanca nao encontrado: ${principalSlug}`);
+    if (conversationId) return { principal, conversationId };
     const conversa = (await pool.query(`
       INSERT INTO nexus.conversations (principal_id, chave_sessao)
       VALUES ($1, $2)
       ON CONFLICT (principal_id, chave_sessao) DO UPDATE SET atualizada_em = now()
       RETURNING id
     `, [principal.id, sessao])).rows[0];
-    return { principal, conversationId: conversa.id };
+  return { principal, conversationId: conversa.id };
   }
 
   async function avaliar(nome, departamentoSlug = null) {
@@ -121,7 +130,8 @@ function criarServicoGovernanca(opcoes) {
     const { permitida, motivo } = resolucao;
     const decisao = modo === 'off' ? 'off' : permitida ? 'allow' :
       modo === 'audit' ? 'would_deny' : 'deny';
-    const camada = ['ia_conversar', 'consultar_nexus', 'solicitar_revisao_memoria'].includes(nome)
+    const camada = ['ia_conversar', 'consultar_nexus', 'solicitar_revisao_memoria',
+      'pesquisar_web', 'processar_imagem_local', 'interpretar_imagem'].includes(nome)
       ? 'generalista' : obterCapacidade(nome)?.camada || 'negocio';
     const registro = (await pool.query(`
       INSERT INTO nexus.authorization_decisions

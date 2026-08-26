@@ -121,8 +121,14 @@ function criarServicoMemoriaGovernada(opcoes = {}) {
   const sessao = opcoes.sessao || 'padrao';
   const departamentoSlug = opcoes.departamentoSlug || null;
   const modo = resolverModoAutomacaoMemoria(opcoes.modo);
+  const contextoPreResolvido = opcoes.principalId && opcoes.conversationId ? {
+    principalId: opcoes.principalId,
+    conversationId: opcoes.conversationId,
+    departmentId: opcoes.departamentoId || null
+  } : null;
 
   async function contexto(cliente = pool) {
+    if (contextoPreResolvido) return contextoPreResolvido;
     const principal = (await cliente.query(
       'SELECT id, ativo FROM nexus.principals WHERE slug=$1', [principalSlug]
     )).rows[0];

@@ -6,12 +6,15 @@ require('dotenv').config({ path: path.resolve(__dirname, '..', '..', '.env'), qu
 const Fastify = require('fastify');
 const helmet = require('@fastify/helmet');
 const rateLimit = require('@fastify/rate-limit');
+const multipart = require('@fastify/multipart');
 const { criarPoolNexus } = require('../../nexus/db');
 const {
-  ErroHub, criarServicoHub, faixaMinimaDaComposicao, resolverIdentidadeMicrosoft
+  ErroHub, criarServicoHub, decisaoPermissao, faixaMinimaDaComposicao, resolverIdentidadeMicrosoft
 } = require('../../nexus/hub');
 const { verificarTokenHub } = require('../../nexus/hub_token');
 const { criarLakeStorage } = require('../../nexus/lake_storage');
+const { criarAttachmentStorage } = require('../../nexus/attachment_storage');
+const { criarServicoAnexos, processarFilaLimpeza } = require('../../nexus/anexos');
 const { executarAssistente } = require('../../agentes/assistente_nexus');
 const { criarAgendadorLake } = require('./scheduler');
 
@@ -26,6 +29,10 @@ function codigoErro(erro) {
 
 function statusDoCheckpoint(item = {}) {
   const tipo = String(item.tipo || '');
+  if (/web|pesquisa/.test(tipo)) return 'consultando_web';
+  if (/extraindo_texto/.test(tipo)) return 'extraindo_texto';
+  if (/ocr|imagem_local|anexo/.test(tipo)) return 'processando_imagem';
+  if (/vision|visao/.test(tipo)) return 'interpretando_imagem';
   if (/rota|router|faixa_semantica/.test(tipo)) return 'planejando';
   if (/tool.*(?:prepar|inicio)|ferramenta.*suger/.test(tipo)) return 'consultando_dados';
   if (/tool.*(?:conclu|result)|evidencia/.test(tipo)) return 'validando_evidencias';
@@ -49,16 +56,34 @@ function rotuloStatus(codigo) {
     planejando: 'Planejando a melhor resposta',
     consultando_dados: 'Consultando dados autorizados',
     validando_evidencias: 'Validando as evidências',
-    preparando_resposta: 'Preparando a resposta'
+    preparando_resposta: 'Preparando a resposta',
+    consultando_web: 'Pesquisando fontes na internet',
+    processando_imagem: 'Processando a imagem com segurança',
+    extraindo_texto: 'Extraindo texto e códigos',
+    interpretando_imagem: 'Interpretando o conteúdo visual'
   }[codigo] || 'Pensando';
+}
+
+function validarResultadoTurno(resultado) {
+  if (!resultado || typeof resultado.texto !== 'string' || !resultado.texto.trim()) {
+    throw new ErroHub(
+      'RESPOSTA_VAZIA',
+      'O Nexus concluiu o processamento sem produzir uma resposta valida. Tente novamente.',
+      502
+    );
+  }
+  return resultado;
 }
 
 async function criarServidor(opcoes = {}) {
   const logger = opcoes.logger ?? { level: process.env.NEXUS_API_LOG_LEVEL || 'info' };
-  const app = Fastify({ logger, trustProxy: true, bodyLimit: 64 * 1024 });
+  const app = Fastify({ logger, trustProxy: true,
+    bodyLimit: Math.max(64 * 1024, Number(process.env.NEXUS_IMAGE_MAX_BYTES || 10 * 1024 * 1024) + 64 * 1024) });
   const pool = opcoes.pool || criarPoolNexus();
   const lakeStorage = opcoes.lakeStorage || criarLakeStorage();
+  const attachmentStorage = opcoes.attachmentStorage || criarAttachmentStorage();
   const executor = opcoes.executarAssistente || executarAssistente;
+  let timerLimpezaAnexos = null;
   const agendador = opcoes.agendador || criarAgendadorLake({
     pool, storage: lakeStorage,
     onEvento: ({ tipo }) => app.log.info({ event: 'lake_update_progress', kind: tipo })
@@ -72,6 +97,9 @@ async function criarServidor(opcoes = {}) {
     max: Number(process.env.NEXUS_API_RATE_LIMIT_PER_MINUTE || 120),
     timeWindow: '1 minute',
     keyGenerator: (request) => request.ator?.principalId || request.ip
+  });
+  await app.register(multipart, {
+    limits: { files: 1, fileSize: Number(process.env.NEXUS_IMAGE_MAX_BYTES || 10 * 1024 * 1024) }
   });
 
   app.decorateRequest('ator', null);
@@ -112,6 +140,10 @@ async function criarServidor(opcoes = {}) {
       principalId: request.ator.pid,
       principalSlug: request.ator.sub
     });
+  }
+
+  function anexos(request) {
+    return criarServicoAnexos({ pool, storage: attachmentStorage, principalId: request.ator.pid });
   }
 
   app.get('/health/live', async () => ({ status: 'ok' }));
@@ -164,8 +196,12 @@ async function criarServidor(opcoes = {}) {
   });
   app.patch('/v1/conversations/:id', async (request) =>
     servico(request).atualizarConversa(request.params.id, request.body || {}));
-  app.delete('/v1/conversations/:id', async (request) =>
-    servico(request).excluirConversa(request.params.id));
+  app.delete('/v1/conversations/:id', async (request) => {
+    const chaves = await anexos(request).chavesDaConversa(request.params.id);
+    const resultado = await servico(request).excluirConversa(request.params.id);
+    await anexos(request).finalizarExclusaoConversa(request.params.id, chaves);
+    return resultado;
+  });
   app.get('/v1/conversations/:id/messages', async (request) =>
     servico(request).listarMensagens(request.params.id, {
       cursor: request.query?.cursor, limite: request.query?.limit
@@ -173,14 +209,41 @@ async function criarServidor(opcoes = {}) {
   app.get('/v1/conversations/:id/turns/:requestId', async (request) =>
     servico(request).obterSolicitacao(request.params.id, request.params.requestId));
 
+  app.post('/v1/conversations/:id/attachments', async (request, reply) => {
+    const conversa = await servico(request).obterConversa(request.params.id);
+    const autorizacao = await decisaoPermissao(pool, request.ator.pid,
+      'ia.imagem.processar_local', conversa.department_id);
+    if (!autorizacao.permitida) throw new ErroHub('ACESSO_NEGADO', 'Você não possui permissão para processar imagens.', 403);
+    const arquivo = await request.file();
+    if (!arquivo) throw new ErroHub('ANEXO_AUSENTE', 'Selecione uma imagem para enviar.');
+    const buffer = await arquivo.toBuffer();
+    if (arquivo.file.truncated) throw new ErroHub('ANEXO_GRANDE', 'A imagem excede o limite permitido.');
+    const item = await anexos(request).salvar(request.params.id, buffer);
+    reply.code(201);
+    return { id: item.id, mediaType: item.media_type, bytes: Number(item.bytes),
+      width: item.width, height: item.height, status: item.status, createdAt: item.criado_em,
+      url: `/api/nexus/conversations/${request.params.id}/attachments/${item.id}` };
+  });
+  app.get('/v1/conversations/:id/attachments/:attachmentId', async (request, reply) => {
+    const { item, buffer } = await anexos(request).abrir(request.params.id, request.params.attachmentId);
+    reply.header('Content-Type', item.media_type);
+    reply.header('Cache-Control', 'private, max-age=3600');
+    reply.header('Content-Disposition', 'inline');
+    return reply.send(buffer);
+  });
+  app.delete('/v1/conversations/:id/attachments/:attachmentId', async (request) =>
+    anexos(request).excluir(request.params.id, request.params.attachmentId));
+
   app.post('/v1/conversations/:id/turns', {
     config: { rateLimit: { max: Number(process.env.NEXUS_TURN_RATE_LIMIT_PER_MINUTE || 20), timeWindow: '1 minute' } }
   }, async (request, reply) => {
     const hub = servico(request);
-    const pergunta = String(request.body?.message || '').trim();
+    const attachmentIds = Array.isArray(request.body?.attachmentIds) ? request.body.attachmentIds.map(String) : [];
+    const pergunta = String(request.body?.message || (attachmentIds.length ? 'Analise as imagens anexadas.' : '')).trim();
     if (!pergunta || pergunta.length > 20_000) {
       throw new ErroHub('MENSAGEM_INVALIDA', 'Informe uma mensagem de ate 20.000 caracteres.');
     }
+    const anexosTurno = await anexos(request).resolverParaTurno(request.params.id, attachmentIds);
     const inicio = await hub.iniciarSolicitacao(request.params.id, {
       clientRequestId: request.body?.clientRequestId,
       compositionLevel: request.body?.compositionLevel
@@ -224,11 +287,14 @@ async function criarServidor(opcoes = {}) {
     etapa('interpretando');
     try {
       const composicao = inicio.request.composition_level;
-      const resultado = await executor(pergunta, {
+      const resultado = validarResultadoTurno(await executor(pergunta, {
         assistantMode: 'generalist',
         sessaoMemoria: inicio.conversation.chave_sessao,
         principalSlug: request.ator.sub,
         departamentoSlug: inicio.conversation.department_slug,
+        principalId: request.ator.pid,
+        conversationId: inicio.conversation.id,
+        departamentoId: inicio.conversation.department_id,
         poolNexus: pool,
         memoryBackend: 'postgres',
         authzMode: 'enforce',
@@ -239,13 +305,19 @@ async function criarServidor(opcoes = {}) {
         semanticTier: faixaMinimaDaComposicao(composicao),
         compositionLevel: composicao,
         traceId: inicio.request.trace_id,
-        onTurnStarted: ({ turnId }) => hub.marcarSolicitacao(inicio.request.id, 'running', { turnId }),
+        anexos: anexosTurno,
+        onTurnStarted: async ({ turnId }) => {
+          await hub.marcarSolicitacao(inicio.request.id, 'running', { turnId });
+          await anexos(request).vincularTurno(attachmentIds, turnId);
+        },
         onCheckpoint: (item) => etapa(statusDoCheckpoint(item)),
         onEvento: (texto) => etapa(statusDoEvento(texto))
-      });
+      }));
       etapa('preparando_resposta');
-      await hub.marcarSolicitacao(inicio.request.id, 'success', { turnId: resultado.turnId });
-      await hub.concluirAtividade(request.params.id, pergunta, resultado.turnId, composicao);
+      await Promise.all([
+        hub.marcarSolicitacao(inicio.request.id, 'success', { turnId: resultado.turnId }),
+        hub.concluirAtividade(request.params.id, pergunta, resultado.turnId, composicao)
+      ]);
       if (resultado.memoria?.oferecida) {
         enviar('memory.offer', {
           id: resultado.memoria.candidato.id,
@@ -260,7 +332,7 @@ async function criarServidor(opcoes = {}) {
           role: 'assistant',
           content: resultado.texto,
           provenance: resultado.proveniencia,
-          evidence: resultado.evidencia,
+          evidence: resultado.evidencia || (resultado.fontesWeb?.length ? { sources: resultado.fontesWeb } : null),
           usage: resultado.usageSummary
         }
       });
@@ -311,9 +383,13 @@ async function criarServidor(opcoes = {}) {
       erro_codigo='PROCESS_RESTART',concluido_em=now()
       WHERE status IN ('accepted','running') AND criado_em<now()-interval '30 minutes'`);
     agendador.iniciar();
+    timerLimpezaAnexos = setInterval(() => processarFilaLimpeza({ pool, storage: attachmentStorage })
+      .catch((erro) => app.log.warn({ event: 'attachment_cleanup_error', code: codigoErro(erro) })), 5 * 60 * 1000);
+    timerLimpezaAnexos.unref?.();
   });
   app.addHook('onClose', async () => {
     agendador.parar();
+    if (timerLimpezaAnexos) clearInterval(timerLimpezaAnexos);
     if (!opcoes.pool) await pool.end();
   });
 
@@ -329,4 +405,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { criarServidor, eventoSse, statusDoCheckpoint, statusDoEvento };
+module.exports = {
+  criarServidor, eventoSse, statusDoCheckpoint, statusDoEvento, validarResultadoTurno
+};

@@ -1,12 +1,15 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, UIEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChangeEvent, ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, UIEvent,
+  useEffect, useMemo, useRef, useState
+} from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { MarkdownMessage } from "./markdown-message";
 import { NexusLogo } from "./nexus-logo";
 import {
-  CompositionLevel, Conversation, MemoryOffer, Message, NexusProfile, TurnRequest, nexusFetch
+  Attachment, CompositionLevel, Conversation, MemoryOffer, Message, NexusProfile, TurnRequest, nexusFetch
 } from "@/lib/types";
 
 const COMPOSITIONS: Array<{ value: CompositionLevel; label: string; hint: string }> = [
@@ -43,6 +46,10 @@ function parseSseChunk(buffer: string, onEvent: (name: string, data: unknown) =>
   return remainder;
 }
 
+function visibleMessages(items: Message[]) {
+  return items.filter((item) => item.role === "user" || item.content?.trim());
+}
+
 export function HubShell({ profile, initialConversationId }: {
   profile: NexusProfile; initialConversationId?: string | null;
 }) {
@@ -55,18 +62,23 @@ export function HubShell({ profile, initialConversationId }: {
   const [messagesLoading, setMessagesLoading] = useState(Boolean(initialConversationId));
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [input, setInput] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<Array<{ file: File; previewUrl: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [stage, setStage] = useState("Pronto para ajudar");
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [memoryOffer, setMemoryOffer] = useState<MemoryOffer | null>(null);
+  const [openConversationMenuId, setOpenConversationMenuId] = useState<string | null>(null);
   const [departmentId, setDepartmentId] = useState(profile.setores[0]?.id || "");
   const [composition, setComposition] = useState<CompositionLevel>("medio");
   const messagesAreaRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const skipNextMessageLoadRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sendingRef = useRef(false);
 
   const active = conversations.find((item) => item.id === activeId) || null;
   const selectedDepartment = currentProfile.setores.find((item) => item.id === departmentId);
@@ -101,6 +113,23 @@ export function HubShell({ profile, initialConversationId }: {
   }, [showArchived]);
 
   useEffect(() => {
+    function closeMenus(event: MouseEvent) {
+      if (!(event.target as Element | null)?.closest(".conversation-menu")) {
+        setOpenConversationMenuId(null);
+      }
+    }
+    function closeOnEscape(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setOpenConversationMenuId(null);
+    }
+    document.addEventListener("pointerdown", closeMenus);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeMenus);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
+  useEffect(() => {
     nexusFetch<{ items: string[] }>("suggestions").then((result) => setSuggestions(result.items))
       .catch((cause) => setError(cause.message));
     nexusFetch<NexusProfile>("me").then((fresh) => {
@@ -120,7 +149,7 @@ export function HubShell({ profile, initialConversationId }: {
     }
     setMessagesLoading(true);
     nexusFetch<Message[]>(`conversations/${activeId}/messages`)
-      .then(setMessages).catch((cause) => setError(cause.message))
+      .then((items) => setMessages(visibleMessages(items))).catch((cause) => setError(cause.message))
       .finally(() => setMessagesLoading(false));
   }, [activeId]);
 
@@ -161,6 +190,15 @@ export function HubShell({ profile, initialConversationId }: {
     return () => window.cancelAnimationFrame(frame);
   }, [messages, stage, loading]);
 
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const maxHeight = 160;
+    textarea.style.height = `${Math.min(maxHeight, Math.max(28, textarea.scrollHeight))}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [input]);
+
   const grouped = useMemo(() => {
     const result: Record<string, Conversation[]> = { "Fixados": [], "Hoje": [], "Últimos 7 dias": [], "Anteriores": [] };
     for (const item of conversations) {
@@ -171,9 +209,11 @@ export function HubShell({ profile, initialConversationId }: {
   }, [conversations]);
 
   function newChat(nextDepartment = departmentId) {
+    setOpenConversationMenuId(null);
     setShowArchived(false);
     setActiveId(null); setMessages([]); setMemoryOffer(null); setInput("");
-    setDepartmentId(nextDepartment); setComposition("medio"); setSidebarOpen(false);
+    pendingFiles.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    setPendingFiles([]); setDepartmentId(nextDepartment); setComposition("medio"); setSidebarOpen(false);
     navigateChat("/");
   }
 
@@ -205,10 +245,6 @@ export function HubShell({ profile, initialConversationId }: {
     skipNextMessageLoadRef.current = true;
     setActiveId(created.id);
     setConversations((items) => [created, ...items]);
-    // Atualiza o endereco sem provocar uma navegacao do Next. Uma navegacao
-    // aqui desmontaria o componente no exato momento em que ele abre o SSE,
-    // apagando o loading e a mensagem otimista do primeiro turno.
-    navigateChat(`/chat/${created.id}`, true);
     return created.id;
   }
 
@@ -219,7 +255,11 @@ export function HubShell({ profile, initialConversationId }: {
       );
       if (request.status === "success") {
         const persisted = await nexusFetch<Message[]>(`conversations/${conversationId}/messages`);
-        setMessages(persisted);
+        const visible = visibleMessages(persisted);
+        if (!visible.some((item) => item.role === "assistant" && item.turnId === request.turnId)) {
+          throw new Error("O Nexus concluiu o turno sem produzir uma resposta válida.");
+        }
+        setMessages(visible);
         return true;
       }
       if (request.status === "error" || request.status === "interrupted") {
@@ -230,36 +270,129 @@ export function HubShell({ profile, initialConversationId }: {
     return false;
   }
 
+  function addFiles(files: File[]) {
+    const allowed = new Set(["image/png", "image/jpeg", "image/webp"]);
+    const valid = files.filter((file) => allowed.has(file.type) && file.size <= 10 * 1024 * 1024);
+    if (valid.length !== files.length) setError("Use até quatro imagens PNG, JPEG ou WebP de no máximo 10 MB cada.");
+    setPendingFiles((current) => {
+      const available = Math.max(0, 4 - current.length);
+      return [...current, ...valid.slice(0, available).map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))];
+    });
+  }
+
+  function chooseFiles(event: ChangeEvent<HTMLInputElement>) {
+    addFiles(Array.from(event.target.files || []));
+    event.target.value = "";
+  }
+
+  function pasteFiles(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const imagens = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter((item): item is File => Boolean(item));
+    if (!imagens.length) return;
+    event.preventDefault();
+    addFiles(imagens.map((arquivo, indice) => new File(
+      [arquivo], arquivo.name || `imagem-colada-${Date.now()}-${indice + 1}.png`,
+      { type: arquivo.type || "image/png", lastModified: Date.now() }
+    )));
+  }
+
+  function removePending(index: number) {
+    setPendingFiles((items) => items.filter((item, itemIndex) => {
+      if (itemIndex === index) URL.revokeObjectURL(item.previewUrl);
+      return itemIndex !== index;
+    }));
+  }
+
+  async function uploadFiles(conversationId: string, files: Array<{ file: File; previewUrl: string }>) {
+    const uploaded: Attachment[] = [];
+    try {
+      for (const item of files) {
+        setStage(`Enviando imagem ${uploaded.length + 1} de ${files.length}`);
+        const form = new FormData(); form.append("file", item.file);
+        const response = await fetch(`/api/nexus/conversations/${conversationId}/attachments`, { method: "POST", body: form });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error?.message || "Não foi possível enviar a imagem.");
+        }
+        const attachment = await response.json() as Attachment;
+        uploaded.push({ ...attachment, name: item.file.name, previewUrl: item.previewUrl });
+      }
+      return uploaded;
+    } catch (cause) {
+      await Promise.allSettled(uploaded.map((item) => fetch(item.url, { method: "DELETE" })));
+      throw cause;
+    }
+  }
+
   async function sendMessage(value = input) {
     const text = value.trim();
-    if (!text || loading) return;
+    if ((!text && !pendingFiles.length) || loading || sendingRef.current) return;
+    sendingRef.current = true;
     stickToBottomRef.current = true;
     setShowJumpToBottom(false);
-    setInput(""); setError(null); setLoading(true); setStage("Interpretando sua solicitação");
-    setMessages((items) => [...items, { role: "user", content: text, optimistic: true }]);
+    const prompt = text || "Analise as imagens anexadas.";
+    const files = [...pendingFiles];
+    const optimisticId = `optimistic-${crypto.randomUUID()}`;
+    const localAttachments: Attachment[] = files.map((item, index) => ({
+      id: `${optimisticId}-${index}`, mediaType: item.file.type, bytes: item.file.size,
+      width: 0, height: 0, url: item.previewUrl, name: item.file.name, previewUrl: item.previewUrl
+    }));
+    const createdFromEmpty = !activeId;
+    let conversationId: string | null = activeId;
+    let turnAccepted = false;
+    setInput(""); setError(null); setLoading(true); setStage(files.length ? "Preparando imagens" : "Interpretando sua solicitação");
+    setPendingFiles([]);
+    setMessages((items) => [...items, {
+      id: optimisticId, role: "user", content: prompt, optimistic: true, attachments: localAttachments
+    }]);
     try {
-      const conversationId = await ensureConversation();
+      conversationId = await ensureConversation();
+      // Firma a conversa na URL assim que ela existe, sem aguardar upload,
+      // OCR ou resposta. history.replaceState preserva o componente e o loading.
+      if (createdFromEmpty || window.location.pathname === "/") {
+        navigateChat(`/chat/${conversationId}`, true);
+      }
+      const uploaded = await uploadFiles(conversationId, files);
+      setMessages((items) => items.map((item) => item.id === optimisticId
+        ? { ...item, attachments: uploaded } : item));
       const response = await fetch(`/api/nexus/conversations/${conversationId}/turns`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, compositionLevel: composition,
+        body: JSON.stringify({ message: prompt, attachmentIds: uploaded.map((item) => item.id), compositionLevel: composition,
           clientRequestId: crypto.randomUUID() })
       });
-      if (!response.ok || !response.body) throw new Error("Não foi possível iniciar a resposta.");
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error?.message || "Não foi possível iniciar a resposta.");
+      }
+      if (!response.body) throw new Error("A resposta foi aceita sem um canal de acompanhamento.");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let completed = false;
       let acceptedRequestId: string | null = null;
+      let terminalError: string | null = null;
       const receive = (name: string, raw: unknown) => {
         const data = raw as Record<string, any>;
-        if (name === "turn.accepted" && data.requestId) acceptedRequestId = String(data.requestId);
+        if (name === "turn.accepted" && data.requestId) {
+          acceptedRequestId = String(data.requestId);
+          turnAccepted = true;
+        }
         if (name === "stage.changed") setStage(String(data.label || "Pensando"));
         if (name === "memory.offer") setMemoryOffer(data as MemoryOffer);
         if (name === "turn.failed") {
-          setError(String(data.message || "Não foi possível concluir a resposta.")); completed = true;
+          terminalError = String(data.message || "Não foi possível concluir a resposta.");
+          completed = true;
         }
         if (name === "turn.completed" && data.message) {
-          setMessages((items) => [...items, data.message as Message]); completed = true;
+          const message = data.message as Message;
+          if (!message.content?.trim()) {
+            setError("O Nexus concluiu o turno sem produzir uma resposta válida.");
+          } else {
+            setMessages((items) => [...items, message]);
+          }
+          completed = true;
         }
       };
       while (true) {
@@ -268,12 +401,24 @@ export function HubShell({ profile, initialConversationId }: {
         buffer += decoder.decode(chunk, { stream: true });
         buffer = parseSseChunk(buffer, receive);
       }
+      if (terminalError) throw new Error(terminalError);
       if (!completed && acceptedRequestId) completed = await recoverTurn(conversationId, acceptedRequestId);
-      if (!completed) await nexusFetch<Message[]>(`conversations/${conversationId}/messages`).then(setMessages);
+      if (!completed) await nexusFetch<Message[]>(`conversations/${conversationId}/messages`)
+        .then((items) => setMessages(visibleMessages(items)));
       await refreshConversations();
     } catch (cause) {
+      if (!turnAccepted) {
+        setMessages((items) => items.filter((item) => item.id !== optimisticId));
+        setPendingFiles(files);
+        setInput(text);
+      } else if (conversationId) {
+        await nexusFetch<Message[]>(`conversations/${conversationId}/messages`)
+          .then((items) => setMessages(visibleMessages(items)))
+          .catch(() => undefined);
+      }
       setError(cause instanceof Error ? cause.message : "Falha inesperada.");
     } finally {
+      sendingRef.current = false;
       setLoading(false); setStage("Pronto para ajudar");
     }
   }
@@ -286,6 +431,7 @@ export function HubShell({ profile, initialConversationId }: {
   }
 
   async function renameConversation(item: Conversation) {
+    setOpenConversationMenuId(null);
     const title = window.prompt("Novo título", item.title || "");
     if (!title) return;
     await nexusFetch(`conversations/${item.id}`, { method: "PATCH", body: JSON.stringify({ title }) });
@@ -293,6 +439,7 @@ export function HubShell({ profile, initialConversationId }: {
   }
 
   async function togglePinned(item: Conversation) {
+    setOpenConversationMenuId(null);
     await nexusFetch(`conversations/${item.id}`, {
       method: "PATCH", body: JSON.stringify({ pinned: !item.pinnedAt })
     });
@@ -300,6 +447,7 @@ export function HubShell({ profile, initialConversationId }: {
   }
 
   async function toggleArchived(item: Conversation) {
+    setOpenConversationMenuId(null);
     await nexusFetch(`conversations/${item.id}`, {
       method: "PATCH", body: JSON.stringify({ archived: !item.archivedAt })
     });
@@ -309,6 +457,7 @@ export function HubShell({ profile, initialConversationId }: {
 
   async function deleteConversation(item: Conversation) {
     if (!window.confirm("Excluir esta conversa e sua memória associada?")) return;
+    setOpenConversationMenuId(null);
     await nexusFetch(`conversations/${item.id}`, { method: "DELETE" });
     if (activeId === item.id) newChat();
     refreshConversations();
@@ -341,7 +490,14 @@ export function HubShell({ profile, initialConversationId }: {
             <button className="conversation-link" onClick={() => {
               setActiveId(item.id); setSidebarOpen(false); navigateChat(`/chat/${item.id}`);
             }}><span>{item.title || "Nova conversa"}</span><small>{item.department?.name || item.department?.nome}</small></button>
-            <details className="conversation-menu"><summary aria-label="Opções">•••</summary><div>
+            <details className="conversation-menu" open={openConversationMenuId === item.id}
+              onToggle={(event) => {
+                if (event.currentTarget.open) setOpenConversationMenuId(item.id);
+                else setOpenConversationMenuId((current) => current === item.id ? null : current);
+              }}><summary aria-label="Opções" onClick={(event) => {
+                event.preventDefault();
+                setOpenConversationMenuId((current) => current === item.id ? null : item.id);
+              }}>•••</summary><div>
               <button onClick={() => togglePinned(item)}>{item.pinnedAt ? "Desafixar" : "Fixar"}</button>
               <button onClick={() => renameConversation(item)}>Renomear</button>
               <button onClick={() => toggleArchived(item)}>{item.archivedAt ? "Desarquivar" : "Arquivar"}</button>
@@ -392,9 +548,12 @@ export function HubShell({ profile, initialConversationId }: {
           {messages.map((message, index) => <article className={`message ${message.role}`} key={message.id || index}>
             {message.role === "assistant" && <div className="assistant-mark"><NexusLogo compact /></div>}
             <div className="message-body">
+              {message.attachments?.length ? <div className="message-attachments">{message.attachments.map((item) =>
+                <img key={item.id} src={item.previewUrl || item.url} alt={item.name || "Imagem anexada"} />)}</div> : null}
               {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <p>{message.content}</p>}
               {message.role === "assistant" && message.provenance && <footer>
-                <span className="source-chip">{message.provenance === "dados_nexus" ? "◆ Dados internos Nexus" : "◇ Conhecimento geral"}</span>
+                <span className="source-chip">{{ dados_nexus: "◆ Dados internos Nexus", web: "◇ Fontes web",
+                  arquivo: "▧ Imagem", misto: "✦ Fontes combinadas", conhecimento_geral: "◇ Conhecimento geral" }[message.provenance] || "◇ Conhecimento geral"}</span>
                 {message.traceId && <span title={message.traceId}>Trace {message.traceId.slice(0, 8)}</span>}
               </footer>}
             </div>
@@ -413,10 +572,21 @@ export function HubShell({ profile, initialConversationId }: {
         ↓ Voltar ao final
       </button>}
 
-      <footer className="composer-zone"><form className="composer" onSubmit={(event: FormEvent) => { event.preventDefault(); sendMessage(); }}>
-        <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={keyDown}
+      <footer className="composer-zone">
+        {pendingFiles.length > 0 && <div className="attachment-tray">{pendingFiles.map((item, index) => <figure key={item.previewUrl}>
+          <img src={item.previewUrl} alt={item.file.name} /><button type="button" onClick={() => removePending(index)} aria-label="Remover imagem">×</button>
+          <figcaption>{item.file.name}</figcaption></figure>)}</div>}
+        <form className="composer" onSubmit={(event: FormEvent) => { event.preventDefault(); sendMessage(); }}
+          onDragOver={(event: DragEvent) => event.preventDefault()} onDrop={(event: DragEvent) => {
+            event.preventDefault(); addFiles(Array.from(event.dataTransfer.files));
+          }}>
+        <input ref={fileInputRef} type="file" hidden multiple accept="image/png,image/jpeg,image/webp" onChange={chooseFiles} />
+        <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()}
+          disabled={loading || pendingFiles.length >= 4} aria-label="Anexar imagens">＋</button>
+        <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)}
+          onKeyDown={keyDown} onPaste={pasteFiles}
           placeholder="Pergunte ao Nexus..." rows={1} disabled={loading} aria-label="Mensagem" />
-        <button className="send-button" type="submit" disabled={loading || !input.trim()} aria-label="Enviar">↑</button>
+        <button className="send-button" type="submit" disabled={loading || (!input.trim() && !pendingFiles.length)} aria-label="Enviar">↑</button>
       </form><small>O Nexus pode cometer erros. Respostas corporativas são validadas pelas fontes autorizadas.</small></footer>
     </section>
     {sidebarOpen && <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="Fechar menu" />}

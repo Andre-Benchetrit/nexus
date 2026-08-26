@@ -79,7 +79,31 @@ async function relatorioExecutivo(pool, opcoes = {}) {
     GROUP BY COALESCE(t.semantic_tier_final,'nao_classificada')
     ORDER BY custo_usd DESC NULLS LAST, chamadas DESC
   `, filtro.valores)).rows;
-  return { resumo, porModelo, porAtribuicao, porFinalidade, porFaixa };
+  const valoresServico = [];
+  const condicoesServico = ["u.tipo_chamada='service'"];
+  if (opcoes.de) { valoresServico.push(opcoes.de); condicoesServico.push(`t.criado_em >= $${valoresServico.length}::timestamptz`); }
+  if (opcoes.ate) { valoresServico.push(opcoes.ate); condicoesServico.push(`t.criado_em < $${valoresServico.length}::timestamptz`); }
+  if (opcoes.principal) { valoresServico.push(opcoes.principal); condicoesServico.push(`p.slug=$${valoresServico.length}`); }
+  if (opcoes.setor) { valoresServico.push(opcoes.setor); condicoesServico.push(`d.slug=$${valoresServico.length}`); }
+  if (opcoes.sessao) { valoresServico.push(opcoes.sessao); condicoesServico.push(`c.chave_sessao=$${valoresServico.length}`); }
+  const porServico = (await pool.query(`
+    SELECT u.provider,u.servico,u.modelo,u.metrica,count(*)::int AS registros,
+      sum(u.quantidade) AS quantidade,sum(u.custo_usd) AS custo_usd,sum(u.custo_brl) AS custo_brl,
+      count(*) FILTER (WHERE u.pricing_status='pricing_missing')::int AS sem_preco
+    FROM nexus.usage_line_items u JOIN nexus.ai_turns t ON t.id=u.turn_id
+    LEFT JOIN nexus.principals p ON p.id=t.principal_id
+    LEFT JOIN nexus.departments d ON d.id=t.department_id
+    LEFT JOIN nexus.conversations c ON c.id=t.conversation_id
+    WHERE ${condicoesServico.join(' AND ')}
+    GROUP BY u.provider,u.servico,u.modelo,u.metrica
+    ORDER BY custo_usd DESC NULLS LAST,quantidade DESC
+  `, valoresServico)).rows;
+  const servicosUsd = porServico.reduce((total, item) => total + Number(item.custo_usd || 0), 0);
+  const servicosBrl = porServico.reduce((total, item) => total + Number(item.custo_brl || 0), 0);
+  resumo.chamadas_servico = porServico.reduce((total, item) => total + Number(item.registros || 0), 0);
+  if (servicosUsd) resumo.custo_usd = Number(resumo.custo_usd || 0) + servicosUsd;
+  if (servicosBrl) resumo.custo_brl = Number(resumo.custo_brl || 0) + servicosBrl;
+  return { resumo, porModelo, porServico, porAtribuicao, porFinalidade, porFaixa };
 }
 
 async function relatorioTrace(pool, traceId) {
@@ -112,11 +136,16 @@ async function relatorioTrace(pool, traceId) {
       AND tipo IN (
         'provider_handoff','memory_review_signal','memory_assessment','memory_candidate',
         'semantic_tier_decision','corporate_evidence','synthesis_validation',
-        'tool_arguments_normalized'
+        'tool_arguments_normalized','web_synthesis_validation','web_search_shadow'
       )
     ORDER BY criado_em,id
   `, [traceId])).rows;
-  return { turno, chamadas, eventos };
+  const consumoServicos = (await pool.query(`
+    SELECT call_id,provider,servico,modelo,metrica,quantidade,custo_usd,custo_brl,pricing_status,criado_em
+    FROM nexus.usage_line_items WHERE turn_id=$1 AND tipo_chamada='service'
+    ORDER BY criado_em,id
+  `, [turno.id])).rows;
+  return { turno, chamadas, eventos, consumoServicos };
 }
 
 async function relatorioComparativo(pool, opcoes = {}) {
