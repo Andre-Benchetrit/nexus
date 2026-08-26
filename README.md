@@ -1,270 +1,172 @@
-# Nexus
+# Nexus — Plataforma de Inteligência Governada
 
-Interface web, login e implantacao do piloto: [docs/HUB.md](docs/HUB.md).
+O Nexus é uma plataforma de inteligência governada para operações e serviços. Ele une dados internos, IA generalista, pesquisa web citada e análise local de imagens em uma experiência em que a IA interpreta a pergunta, mas o código conserva a autoridade sobre dados, permissões, tools, custos e evidências.
 
-Referencia completa de comandos: [`docs/COMANDOS.md`](docs/COMANDOS.md).
+A FID é a primeira implantação corporativa do projeto, não uma limitação da arquitetura. Fontes, regras de negócio, identidade visual, setores, permissões, providers e catálogo semântico podem ser adaptados para cada organização ou oferta de serviço.
 
-Indicadores e definicoes de negocio: [`docs/GOLD.md`](docs/GOLD.md).
+O projeto possui duas formas de uso:
 
-Atualizacao escalavel do lake: [`docs/AUTOMACAO.md`](docs/AUTOMACAO.md).
+- **CLI**, para operação, desenvolvimento e validação técnica;
+- **Hub web**, para colaboradores autenticados pela Microsoft, com chats, setores, composição de resposta e painel administrativo.
 
-OneDrive como fonte corporativa: [`docs/ONEDRIVE.md`](docs/ONEDRIVE.md).
+## Visão geral
 
-O Nexus é o hub de entrada do data lake. Ele busca dados em bancos, APIs e arquivos e os guarda de forma padronizada para consumo posterior por análises, APIs e IAs.
+```text
+Fontes corporativas (PostgreSQL, OneDrive e integrações)
+  → Bronze / Silver / Gold em Parquet
+  → DuckDB e fachadas de negócio seguras
+  → roteador híbrido + protocolo de interação
+  → IA corporativa e generalista
+  → API Fastify → Hub Next.js
 
-## Modelo mental
+PostgreSQL operacional separado
+  → identidade, permissões, conversas, memória, auditoria e custos
+```
 
-- **Entidade**: o que será copiado, por exemplo `nota_saida`.
-- **Exportador**: o motor compartilhado que faz conexão, Parquet, validação e logs.
-- **Catálogo**: a lista das entidades disponíveis.
-- **Bronze**: cópia bruta da fonte, sem regra de negócio.
-- **Silver**: dados limpos e ligados em dimensões e fatos com grão declarado.
-- **Gold**: indicadores e análises oficiais, prontos para as tools.
-- **Manifesto**: recibo da execução com horário e total de linhas.
+O PostgreSQL operacional não substitui o lake nem os bancos de origem. Ele guarda o estado transacional do Nexus: usuários, setores, sessões, tarefas interativas, mensagens visíveis, memória governada e telemetria sanitizada. Na implantação FID, `sysemp` é a primeira origem PostgreSQL modelada.
 
-## Comandos
+## O que o Nexus faz hoje
+
+- Consulta vendas, faturamento, pedidos, bloqueios, estoque, reposições, frete, operação e pessoas através de fachadas de negócio.
+- Usa Bronze somente para auditoria, histórico ou divergência; Gold e Silver são liberados apenas quando uma capacidade realmente não existe na fachada adequada.
+- Gera SQL PostgreSQL somente leitura por meio de um catálogo autorizado e valida a consulta com `EXPLAIN` sem executar os dados. O primeiro catálogo disponível cobre `sysemp`; novos destinos podem receber catálogos e compiladores próprios.
+- Mantém tarefas interativas: pergunta somente o que falta, pausa em troca de assunto e retoma com os slots confirmados.
+- Permite conversa generalista e delega dados internos ao Nexus quando são necessários fatos comprovados.
+- Faz fallback entre providers sem repetir tools já concluídas no mesmo turno.
+- Pesquisa a web com fontes citadas e proteção contra vazamento de dados corporativos.
+- Processa imagens localmente para OCR, QR, códigos de barras e metadados seguros; visão externa é opcional e governada.
+- Audita chamadas de IA, tokens, custos, tools, autorização, fallback e proveniência sem gravar prompts, SQL, credenciais ou resultados técnicos brutos.
+
+## Fluxo de uma pergunta
+
+```text
+Pergunta do usuário
+  → política de fonte e autorização
+  → conversa geral, pesquisa web ou consulta corporativa
+  → roteador + plano de capabilities validados
+  → tools e evidências autorizadas
+  → validação factual
+  → resposta com proveniência
+```
+
+Para consultas corporativas, o modelo não escolhe tabelas, camadas ou SQL livremente. Ele recebe somente as capabilities liberadas pelo planejador. Em uma solicitação de SQL, o compilador aceita uma `QuerySpec` estruturada e produz exclusivamente `SELECT` ou `WITH ... SELECT` dentro do schema autorizado.
+
+## Início rápido
+
+### 1. Instale e configure
 
 ```powershell
-# Ver entidades cadastradas
-npm run exportar -- --listar
+npm install
+Copy-Item .env.example .env
+```
 
-# Simular sem conectar ao banco (fim é exclusivo)
-npm run exportar -- nota_saida --inicio 2026-07-01 --fim 2026-07-02 --dry-run
+Preencha no `.env` apenas as integrações que serão usadas. Para o modo completo, a configuração central é `NEXUS_DATABASE_URL`; não mantenha um segundo `.env` em `hub/`.
 
-# Executar a exportação
-npm run exportar -- nota_saida --inicio 2026-07-01 --fim 2026-07-02
+### 2. Prepare o banco operacional
 
-# Testes locais
+```powershell
+npm run nexus:db:health
+npm run nexus:db:migrate
+npm run nexus:db:status
+```
+
+Para importar sessões e conhecimentos existentes de arquivos:
+
+```powershell
+npm run nexus:memory:import
+npm run nexus:memory:verify
+```
+
+### 3. Use o CLI
+
+```powershell
+# Consulta corporativa
+npm run agente:nexus -- --assistant-mode generalist --sessao desenvolvimento "Quais pedidos estão bloqueados por falta de estoque hoje?"
+
+# SQL assistido: o Nexus pergunta somente os campos que faltarem
+npm run agente:nexus -- --interaction-mode v1 --sessao sql "Gere um SQL de produtos ativos com espaço no final do SKU."
+
+# Testes
 npm test
 ```
 
-## Consultar o bronze com DuckDB
+### 4. Execute o Hub localmente
 
-O leitor considera apenas Parquets acompanhados por um `manifest.json` com
-`status: "sucesso"`. Para entidades incrementais, ele disponibiliza duas visões:
-
-- `historico`: todas as versões extraídas;
-- `atual`: somente a versão mais recente de cada chave primária.
+Cadastre primeiro um administrador e configure a App Registration Microsoft Entra conforme o [guia do Hub](docs/HUB.md).
 
 ```powershell
-# Ver entidades que possuem cargas válidas
-npm run consultar -- --listar
-
-# Contar clientes na visão atual (padrão)
-npm run consultar -- cliente --contar
-
-# Contar todas as versões históricas
-npm run consultar -- cliente --contar --visao historico
-
-# Consultar pelas colunas padrão, com limite
-npm run consultar -- nota_saida --limite 10
-
-# Buscar pela chave primária
-npm run consultar -- cliente --id 123
-
-# Selecionar colunas e aplicar filtros de igualdade
-npm run consultar -- nota_saida --colunas id_nota_saida,id_cliente,situacao --filtro situacao=B
-
-# Buscar por data brasileira e ordenar os registros mais recentes
-npm run consultar -- nota_saida --filtro data_pedido=16/07/2026 --ordenar data_pedido --direcao desc --limite 10
-
-# Inspecionar o schema completo
-npm run consultar -- cliente --schema
+npm run nexus:hub:bootstrap-admin -- --email administrador@empresa.com --nome "Administrador Nexus"
+npm run nexus:api
 ```
 
-As colunas e entidades são validadas contra o catálogo e o schema do Parquet;
-valores de filtros são parametrizados. O limite padrão é 50 e o máximo é 500.
-
-## Tools e agente Nexus
-
-A referência completa de operações, filtros e agregações está em
-[`docs/TOOLS_BRONZE.md`](docs/TOOLS_BRONZE.md).
-
-A tool `consultar_bronze` encapsula o leitor DuckDB e oferece quatro operações
-estruturadas: `listar_entidades`, `descrever_entidade`, `contar` e `consultar`.
-Ela não aceita SQL e limita o agente às colunas aprovadas em
-`consulta.colunasAgente` ou `consulta.colunasPadrao` no catálogo. Somente
-entidades com `consulta.habilitadaParaAgente: true` aparecem nas tools; essa
-lista é gerada automaticamente a partir do catálogo. O limite de retorno da
-tool é 100 linhas.
-Os filtros aceitam igualdade e busca textual parcial (`contem`). Também podem
-ser combinados com `todos` (E) ou `qualquer` (OU), permitindo procurar um nome
-em `fantasia` ou `razsocial` sem expor SQL ao modelo.
-Também estão disponíveis `diferente`, `maior_que`, `maior_ou_igual`,
-`menor_que` e `menor_ou_igual`, sempre com valores parametrizados.
-Consultas também aceitam ordenação por uma coluna aprovada. Datas de colunas
-`DATE` podem ser informadas como `DD/MM/AAAA` ou `AAAA-MM-DD`; internamente são
-normalizadas antes da comparação.
-
-`dt_alteracao` é o cursor técnico da extração incremental: ele decide quais
-linhas precisam ser copiadas novamente. Para perguntas de negócio, prefira
-`data_emissao` para notas emitidas e `data_pedido` para pedidos. A data da última
-extração indica quando o lake foi processado, não a maior data existente nos
-registros.
-
-Em `nota_saida`, a extração usa `dt_alteracao` para capturar atualizações e
-`dt_cadastro` para capturar registros novos cujo `dt_alteracao` ainda é nulo.
-`data_pedido` não é cursor de ingestão: ela permanece como data de negócio.
-
-O agente possui adaptadores separados para Anthropic, Gemini, Groq e OpenAI. A
-tool, as regras de acesso e o DuckDB são os mesmos. A composicao inicial usa
-Groq e Claude; Gemini fica preparado, mas bloqueado ate aprovacao de custo e
-politica de dados:
-
-```text
-LLM_PROVIDER=groq
-LLM_FALLBACK_PROVIDER=anthropic
-LLM_REQUEST_TIMEOUT_MS=20000
-
-GROQ_API_KEY=
-GROQ_MODEL=openai/gpt-oss-120b
-
-ANTHROPIC_API_KEY=
-ANTHROPIC_MODEL=claude-sonnet-5
-
-GEMINI_API_KEY=
-GEMINI_MODEL=gemini-3.5-flash-lite
-NEXUS_GEMINI_USAGE_MODE=disabled
-
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.6-luna
-```
-
-Execute usando o provider configurado:
+Em outro terminal:
 
 ```powershell
-npm run agente:nexus -- "Quantas notas de saída estão na situação B?"
+npm run nexus:hub
 ```
 
-Também é possível escolher sem alterar o arquivo `.env`:
+O Hub local abre em `http://localhost:3000`.
+
+## Configurações importantes
+
+As variáveis completas e seus valores de exemplo ficam em [.env.example](.env.example). As principais são:
+
+| Área | Variáveis |
+|---|---|
+| Banco operacional | `NEXUS_DATABASE_URL`, `NEXUS_MEMORY_BACKEND`, `NEXUS_AUTHZ_MODE` |
+| Agente corporativo | `LLM_PROVIDER`, `LLM_MODEL`, `NEXUS_ROUTER_MODE`, `NEXUS_INTERACTION_MODE` |
+| Generalista | `NEXUS_ASSISTANT_MODE`, `NEXUS_GENERALIST_PROVIDER`, `NEXUS_GENERALIST_MODEL` |
+| Fallback e aprendizado | `NEXUS_HANDOFF_MODE`, `NEXUS_MEMORY_AUTOMATION_MODE`, `NEXUS_PLAYBOOK_MODE` |
+| Pesquisa web | `NEXUS_WEB_MODE`, `NEXUS_WEB_PROVIDER`, `TAVILY_API_KEY` |
+| Imagens | `NEXUS_IMAGE_MODE`, `NEXUS_ATTACHMENTS_ROOT`, `NEXUS_VISION_PROVIDER`, `NEXUS_VISION_MODEL` |
+| Hub | `AUTH_SECRET`, `NEXUS_HUB_*`, `NEXUS_API_INTERNAL_URL` |
+
+Para o piloto, o Hub opera com `NEXUS_AUTHZ_MODE=enforce`. O CLI pode permanecer em `audit` enquanto a governança é calibrada.
+
+## Governança e dados
+
+- Cada capability possui uma permissão explícita.
+- Usuários pertencem a um ou mais setores; chats ficam vinculados ao setor de criação.
+- A autorização é avaliada antes de cada tool. Em `audit`, uma negação é registrada como `would_deny`; em `enforce`, ela bloqueia a execução.
+- O lake usa Parquet e manifestos de publicação atômica. O adapter atual é filesystem, preparado para futura troca por Object Storage, BigLake ou BigQuery sem alterar o Hub nem as tools públicas.
+- Dados internos nunca são enviados automaticamente para pesquisa externa. Conteúdo visual sensível também não é enviado a providers de visão.
+
+## Comandos úteis
 
 ```powershell
-npm run agente:nexus -- --provider groq "Quantos clientes temos?"
-npm run agente:nexus -- --provider anthropic --model claude-sonnet-5 "Quantos clientes temos?"
-npm run agente:nexus -- --provider openai "Quantos clientes temos?"
+# Lake
+npm run lake:status
+npm run lake:plano
+npm run lake:atualizar
+
+# Memória e candidaturas governadas
+npm run nexus:memory:candidates -- list --principal auditor
+npm run nexus:memory:candidates -- approve <id> --principal gestor --setor comercial --motivo "Confirmado"
+
+# Custos e rastreabilidade
+npm run nexus:pricing:import
+npm run nexus:usage:report
+npm run nexus:usage:trace -- <trace_id>
+
+# Qualidade do Hub
+npm run nexus:hub:build
+npm test
 ```
 
-Com `LLM_FALLBACK_PROVIDER=anthropic`, erros transitórios do Groq acionam Claude.
-Erros de quota (`429`) mudam imediatamente; indisponibilidade (`503`) e timeout
-têm uma tentativa curta antes da troca. Erros de configuração, autenticação ou
-validação não acionam fallback. Use `--no-fallback` para desativá-lo em uma execução.
-O agente usa a visão atual por padrão, informa a última extração
-quando disponível e nunca executa SQL produzido pelo modelo.
+## Documentação
 
-Para reduzir custo e erros, um roteador local envia somente as tools relevantes
-para cada pergunta. Indicadores, desempenho, operação, frete, estoque, vendas e
-catálogo possuem fachadas compactas; consultas avançadas ainda podem usar os
-perfis Silver ou Bronze:
+- [Arquitetura](docs/ARQUITETURA.md)
+- [Comandos completos](docs/COMANDOS.md)
+- [Hub, Microsoft Entra e Railway](docs/HUB.md)
+- [Governança e memória](docs/GOVERNANCA.md)
+- [IA generalista, providers e custos](docs/IA_GENERALISTA.md)
+- [Memória governada e avaliação](docs/MEMORIA_E_AVALIACAO.md)
+- [Pesquisa web e imagens](docs/WEB_E_IMAGENS.md)
+- [Gold e definições de negócio](docs/GOLD.md)
+- [Automação do lake](docs/AUTOMACAO.md)
+- [OneDrive como fonte corporativa](docs/ONEDRIVE.md)
+- [Roadmap](docs/ROADMAP.md)
 
-```powershell
-npm run agente:nexus -- --perfil desempenho "Qual marca mais faturou hoje?"
-npm run agente:contexto
-```
+## Segurança
 
-O desenho completo esta em [docs/ARQUITETURA.md](docs/ARQUITETURA.md).
-
-### Exemplo do fluxo completo
-
-Ao executar:
-
-```powershell
-npm run agente:nexus -- --provider groq --model openai/gpt-oss-120b "Quantos clientes possuem MMA no nome fantasia ou razão social?"
-```
-
-o fluxo é:
-
-```text
-Terminal
-  → agentes/consultor_nexus.js: envia pergunta, regras e definições das tools ao provider
-  → Groq: escolhe uma ação estruturada, por exemplo contar clientes
-  → tools/consultar_bronze.js: valida operação, entidade, colunas, filtros e limites
-  → duckdb/bronze.js: monta uma consulta interna parametrizada e somente leitura
-  → DuckDB: lê os Parquets do Bronze
-  → tool: devolve o resultado estruturado ao provider
-  → provider: transforma o resultado em uma resposta em português
-```
-
-Para essa pergunta, o Gemini pode pedir conceitualmente:
-
-```json
-{
-  "operacao": "contar",
-  "entidade": "cliente",
-  "visao": "atual",
-  "filtros": [
-    { "campo": "fantasia", "operador": "contem", "valor": "MMA" },
-    { "campo": "razsocial", "operador": "contem", "valor": "MMA" }
-  ],
-  "combinacao_filtros": "qualquer"
-}
-```
-
-Não há um campo para SQL nessa interface. A tool aceita somente operações e
-filtros previstos, e o leitor usa valores parametrizados. Assim, o modelo
-interpreta a intenção, enquanto o código decide o que ele pode consultar.
-
-## Cadastrar outra tabela PostgreSQL
-
-1. Copie `exportadores/postgres/entidades/nota_saida.js`.
-2. Troque `nome`, `schema`, `tabela` e, se desejar, liste as colunas.
-3. Importe a configuração em `exportadores/catalogo.js`.
-
-Exemplo:
-
-```js
-module.exports = {
-  nome: 'clientes',
-  fonte: 'postgres',
-  schema: 'public',
-  tabela: 'clientes',
-  destino: { camada: 'bronze' },
-  extracao: {
-    modo: 'snapshot',
-    colunas: ['id', 'nome', 'updated_at']
-  }
-};
-```
-
-Todo o restante é responsabilidade do exportador genérico.
-
-## Saída
-
-Cada execução cria uma pasta própria:
-
-```text
-lake/bronze/postgres/nota_saida/
-  dt_extracao=2026-07-10/
-    execucao=20260710T143012345Z/
-      dados.parquet
-      manifest.json
-```
-
-O `manifest.json` é o marcador de conclusão da carga. Consumidores ignoram
-qualquer Parquet sem manifesto com `status: "sucesso"`. Antes de gravar o
-manifesto, o exportador lê todas as colunas, conta as linhas e calcula um
-checksum para detectar inclusive textos com codificação inválida.
-
-`nota_saida` exige uma janela de `dt_alteracao` para impedir uma cópia completa acidental e capturar registros novos ou modificados. O início é inclusivo e o fim é exclusivo. Para exportar as alterações de 1º de julho, use `--inicio 2026-07-01 --fim 2026-07-02`.
-
-Uma janela concluída não é exportada novamente. Para um reprocessamento intencional, acrescente `--forcar`.
-
-## Configuração
-
-As variáveis antigas (`HOST`, `PORT`, `DATABASE`, `USER`, `PASSWORD`) continuam funcionando. Para novas instalações, prefira:
-
-```text
-POSTGRES_HOST=
-POSTGRES_PORT=
-POSTGRES_DATABASE=
-POSTGRES_USER=
-POSTGRES_PASSWORD=
-```
-
-O arquivo `.env` não deve ser versionado.
-
-## Próximos passos
-
-O PostgreSQL já alimenta Bronze, Silver e Gold por snapshots e cargas
-incrementais. As próximas fontes, como OneDrive e APIs, entram como novos
-adaptadores sem duplicar o motor existente. O roadmap está em
-[`docs/ROADMAP.md`](docs/ROADMAP.md).
+Não versione `.env`, chaves de providers, URLs de banco, certificados, anexos de usuários ou snapshots corporativos. O Nexus deve usar somente credenciais com o menor privilégio necessário e conexões de dados somente leitura quando estiver consultando fontes de negócio.
