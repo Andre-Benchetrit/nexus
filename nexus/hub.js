@@ -1,6 +1,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { comTransacao } = require('./db');
 const { relatorioExecutivo, relatorioTrace } = require('./relatorios_uso');
+const { criarServicoMemoriaGovernada } = require('./memoria_governada');
 
 const COMPOSICOES = Object.freeze(['baixo', 'medio', 'alto', 'extra_alto']);
 const LIMITE_CONVERSAS = 50;
@@ -237,6 +238,15 @@ function criarServicoHub(opcoes = {}) {
 
   async function perfil() {
     return montarPerfil(pool, ator.principalId);
+  }
+
+  function memoriaGovernadaAdmin() {
+    return criarServicoMemoriaGovernada({
+      pool,
+      principalSlug: ator.principalSlug,
+      sessao: 'hub-admin',
+      modo: 'propose'
+    });
   }
 
   async function listarConversas(filtros = {}) {
@@ -647,12 +657,57 @@ function criarServicoHub(opcoes = {}) {
     return relatorioTrace(pool, traceId);
   }
 
+  async function listarCandidaturasMemoria(filtros = {}) {
+    try {
+      return await memoriaGovernadaAdmin().listar({
+        status: filtros.status || null,
+        tipo: filtros.tipo || null
+      });
+    } catch (erro) {
+      const acesso = erro.codigo === 'ACESSO_NEGADO' || /acesso negado/i.test(erro.message);
+      throw new ErroHub(
+        acesso ? 'ACESSO_NEGADO' : 'MEMORIA_CANDIDATURAS_INVALIDA',
+        erro.message,
+        acesso ? 403 : 400
+      );
+    }
+  }
+
+  async function revisarCandidaturaMemoria(id, dados = {}) {
+    const decisoes = {
+      approve: 'approved',
+      reject: 'rejected',
+      request_changes: 'changes_requested',
+      revoke: 'revoked'
+    };
+    const decisao = decisoes[String(dados.decision || '')];
+    if (!decisao) throw new ErroHub('DECISAO_MEMORIA_INVALIDA', 'Decisao de memoria invalida.');
+    try {
+      return await memoriaGovernadaAdmin().revisar(id, decisao, {
+        motivo: dados.reason,
+        declaracao: dados.statement,
+        gatilhos: dados.triggers,
+        escopo: dados.scope,
+        targetPrincipalId: dados.targetPrincipalId,
+        targetDepartmentId: dados.targetDepartmentId
+      });
+    } catch (erro) {
+      const acesso = erro.codigo === 'ACESSO_NEGADO' || /acesso negado|autoaprovacao/i.test(erro.message);
+      throw new ErroHub(
+        acesso ? 'ACESSO_NEGADO' : 'REVISAO_MEMORIA_INVALIDA',
+        erro.message,
+        acesso ? 403 : 400
+      );
+    }
+  }
+
   return {
     ator, atualizarConversa, atualizarPrincipal, atualizarSetor, cadastrarPrincipal,
     cadastrarSetor, concluirAtividade, criarConversa, excluirConversa, iniciarSolicitacao,
-    listarAuditoria, listarConversas, listarMensagens, listarPapeis, listarPrincipals, listarSetores,
+    listarAuditoria, listarCandidaturasMemoria, listarConversas, listarMensagens,
+    listarPapeis, listarPrincipals, listarSetores,
     marcarSolicitacao, obterConversa, obterSolicitacao, obterTrace, perfil, relatorioCustos,
-    responderOferta, substituirAtribuicoes, validarComposicao
+    responderOferta, revisarCandidaturaMemoria, substituirAtribuicoes, validarComposicao
   };
 }
 

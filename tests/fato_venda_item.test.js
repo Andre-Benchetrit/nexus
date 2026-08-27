@@ -139,6 +139,7 @@ test.before(async () => {
   `);
   await criarBronze('nota_saida', `
     SELECT 500::BIGINT AS id_nota_saida, 900::BIGINT AS id_pedido_vda_importado,
+      NULL::BIGINT AS id_nota_saida_original,
       10 AS id_cliente, 1 AS id_empresa,
       3 AS id_tp_pedido, 19 AS id_nat_operacao, 'PD' AS tipo_documento,
       2 AS id_plataforma, 4 AS id_transportadora, 77 AS id_regra_transporte,
@@ -147,7 +148,8 @@ test.before(async () => {
       'MKT-500' AS marketplace_pedido, 'RJ' AS entrega_uf,
       DATE '2026-07-20' AS entrega_data,
       DATE '2026-07-18' AS entrega_limite, 'T' AS bloqueada,
-      30::DECIMAL(15,4) AS total_nota_fiscal, 'F' AS nf_cancelada,
+      30::DECIMAL(15,4) AS total_nota_fiscal,
+      35::DECIMAL(15,4) AS total_nota_fiscal_liq, 'F' AS nf_cancelada,
       '100' AS nfe_cstat,
       5::DECIMAL(15,4) AS valor_frete,
       4::DECIMAL(15,2) AS valor_frete_custo,

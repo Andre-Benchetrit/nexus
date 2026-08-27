@@ -131,6 +131,49 @@ function erroRespostaVazia(codigo = 'RESPOSTA_VAZIA') {
   return erro;
 }
 
+function ultimasMensagensAntesDaPergunta(historico = [], pergunta = '') {
+  const atual = String(pergunta || '').trim();
+  const anteriores = historico.filter((item) => {
+    const conteudo = String(item?.content || item?.conteudo || '').trim();
+    return conteudo && !(item.role === 'user' && conteudo === atual);
+  });
+  return anteriores.slice(-3).map((item) => ({
+    role: item.role,
+    content: String(item.content || item.conteudo || '').slice(0, 1_500),
+    provenance: item.provenance || item.proveniencia || null
+  }));
+}
+
+function construirObjetivoCorporativo(pergunta, objetivo, historico = []) {
+  const contexto = ultimasMensagensAntesDaPergunta(historico, pergunta);
+  const perguntaAtual = String(pergunta || '').trim();
+  const sugestao = String(objetivo || '').trim();
+  if (!contexto.length && (!sugestao || sugestao === perguntaAtual)) return perguntaAtual;
+  const partes = [];
+  if (contexto.length) {
+    partes.push('Contexto visivel recente:');
+    for (const item of contexto) {
+      partes.push(`${item.role === 'assistant' ? 'Assistente' : 'Usuario'}: ${item.content}`);
+    }
+  }
+  partes.push(`Pergunta atual do usuario: ${perguntaAtual}`);
+  if (sugestao && sugestao !== perguntaAtual) {
+    partes.push(`Objetivo sugerido pelo generalista: ${sugestao}`);
+  }
+  partes.push('A pergunta atual prevalece; use o contexto somente para resolver referencias e periodo.');
+  return partes.join('\n');
+}
+
+function corrigirAlegacaoMemoria(texto, sinalRevisao, ofertaMemoria) {
+  if (!sinalRevisao || ofertaMemoria?.oferecida) return texto;
+  const alegacao = /(?:corre[cç][aã]o|aprendizado|mem[oó]ria)\s+(?:foi\s+)?registrad[ao][^.!?]*(?:[.!?]|$)/giu;
+  if (!alegacao.test(String(texto || ''))) return texto;
+  return String(texto).replace(
+    alegacao,
+    'O sinal foi encaminhado para avaliação interna, mas nenhuma memória foi criada ou aprovada.'
+  );
+}
+
 function exigeEntregaCorporativaDireta(resultado) {
   const ferramentas = resultado.roteamento?.ferramentasExecutadas || [];
   const perfil = resultado.roteamento?.perfilEfetivo || resultado.roteamento?.perfilInicial;
@@ -363,10 +406,14 @@ async function executarAssistente(pergunta, dependencias = {}) {
         traceId: turno.traceId, turnId: turno.id, proveniencia: 'conhecimento_geral',
         memoria: { recusada: true, motivo: memoriaProibida }, usageSummary: resumo || null };
     }
-    const ultimaResposta = [...historico].reverse().find((item) => item.role === 'assistant');
+    const historicoAnterior = ultimasMensagensAntesDaPergunta(historico, pergunta);
+    const ultimaResposta = [...historicoAnterior].reverse().find((item) => item.role === 'assistant');
+    const ultimaPergunta = [...historicoAnterior].reverse().find((item) => item.role === 'user');
     const politica = exigeFonteCorporativa(pergunta, {
       tarefaAtiva,
-      ultimaProveniencia: ultimaResposta?.provenance || ultimaResposta?.proveniencia || null
+      ultimaProveniencia: ultimaResposta?.provenance || null,
+      ultimaPergunta: ultimaPergunta?.content || null,
+      ultimaResposta: ultimaResposta?.content || null
     });
     const decisaoWeb = classificarIntencaoPesquisa(pergunta);
     const sinalWeb = decisaoWeb.modo !== 'nenhuma';
@@ -434,7 +481,12 @@ async function executarAssistente(pergunta, dependencias = {}) {
         tipo: 'memory_review_signal', recurso: sinal.motivo, resultado: 'accepted',
         metadados: { stage: 'generalist_decision' }
       });
-      return JSON.stringify({ aceito: true });
+      return JSON.stringify({
+        aceito: true,
+        modo: memoriaGovernada?.modo || 'observe',
+        memoria_criada: false,
+        efeito: 'sinal_para_avaliacao'
+      });
     }
     const toolRevisao = {
       definicao: definicaoSolicitarRevisaoMemoria,
@@ -632,7 +684,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
         });
         const executarAgente = dependencias.executarAgenteCorporativo ||
           require('./consultor_nexus').executarAgente;
-        const resultado = await executarAgente(objetivo || pergunta, {
+        const objetivoCorporativo = construirObjetivoCorporativo(pergunta, objetivo, historico);
+        const resultado = await executarAgente(objetivoCorporativo, {
           ...dependencias,
           memoria,
           governanca,
@@ -901,6 +954,11 @@ async function executarAssistente(pergunta, dependencias = {}) {
         dependencias.onEvento?.('Revisor de memoria indisponivel; a resposta principal foi preservada.');
       }
     }
+    resultado.texto = corrigirAlegacaoMemoria(
+      resultado.texto,
+      sinalRevisao,
+      ofertaMemoria
+    );
     await auditoria?.registrarMensagem(turno, {
       papel: 'assistant', conteudo: resultado.texto, proveniencia
     });
@@ -939,6 +997,8 @@ module.exports = {
   definicaoPesquisarWeb,
   formatarImagemLocal,
   envelopeCorporativo,
+  construirObjetivoCorporativo,
+  corrigirAlegacaoMemoria,
   possuiTextoResposta,
   exigeEntregaCorporativaDireta,
   executarAssistente,

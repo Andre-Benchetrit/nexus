@@ -205,6 +205,16 @@ select:focus, input:focus, textarea:focus { border-color: rgba(66,255,155,.48); 
 .scope-toggle strong, .scope-toggle small { display: block; }.scope-toggle strong { color: var(--text); font-size: 11px; }.scope-toggle small { color: var(--muted); font-size: 9px; margin-top: 2px; }
 .department-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-top: 16px; }.department-grid article { border-radius: 17px; padding: 18px; display: grid; grid-template-columns: 36px 1fr auto; align-items: center; gap: 10px; box-shadow: none; }
 .department-grid strong, .department-grid small { display: block; }.department-grid small { color: var(--muted); }.department-icon { color: var(--glow); font-size: 24px; }
+.memory-review-list { display: grid; gap: 12px; }
+.memory-review-intro { padding: 18px; border-radius: 17px; display: flex; align-items: center; justify-content: space-between; gap: 18px; box-shadow: none; }
+.memory-review-intro h2, .memory-review-intro p { margin: 0; }.memory-review-intro p { color: var(--muted); font-size: 11px; margin-top: 5px; }
+.memory-review-intro > span { color: var(--glow); border: 1px solid rgba(66,255,155,.22); border-radius: 999px; padding: 6px 10px; font-size: 10px; white-space: nowrap; }
+.memory-review-card { padding: 18px; border-radius: 17px; box-shadow: none; display: grid; gap: 12px; }
+.memory-review-card h3, .memory-review-card p { margin: 0; }.memory-review-card h3 { font-size: 15px; line-height: 1.55; }.memory-review-card p, .memory-review-card small { color: var(--muted); }
+.memory-review-meta { display: flex; flex-wrap: wrap; gap: 7px; }.memory-review-meta span { padding: 5px 8px; border-radius: 8px; color: var(--muted); background: rgba(255,255,255,.035); font-size: 9px; text-transform: uppercase; }
+.memory-review-card textarea { width: 100%; resize: vertical; min-height: 58px; }
+.memory-review-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.empty-admin { padding: 32px; border-radius: 17px; color: var(--muted); text-align: center; box-shadow: none; }
 .filter-field { width: 260px; margin-bottom: 12px; }
 .admin-refresh-progress { height: 32px; margin: -10px 0 14px; display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 11px; }
 .admin-refresh-progress i { width: 12px; height: 12px; border: 2px solid rgba(66,255,155,.18); border-top-color: var(--glow); border-radius: 50%; animation: spin .75s linear infinite; }

@@ -49,6 +49,11 @@ function classificarPorRegras(pergunta) {
   const listagemPedidos = /(?:liste|ultimos?|mais recentes).{0,35}pedidos|pedidos.{0,35}(?:mais recentes|ultimos?)/.test(texto);
   if (listagemPedidos) return 'vendas';
 
+  const rankingPedidosPagos = /pedidos?.{0,15}pagos?/.test(texto) &&
+    /(?:top|ranking|ranque|mais vend|maior receita)/.test(texto) &&
+    /produto|marca|plataforma|transportadora|cliente|grupo|categoria/.test(texto);
+  if (rankingPedidosPagos) return 'vendas';
+
   if (
     /\bfunil\b/.test(texto) ||
     (

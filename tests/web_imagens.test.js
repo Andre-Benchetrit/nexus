@@ -146,6 +146,24 @@ test('conteudo pessoal sensivel bloqueia visao externa', () => {
   assert.equal(precisaInterpretacaoVisual('Descreva o dano nesta foto', { texto: '' }), true);
 });
 
+test('pergunta visual generica nao e desviada por ruido do OCR', () => {
+  assert.equal(precisaInterpretacaoVisual('Que animal é esse?', {
+    texto: '. ; j ; & uh . 2 Fy 28 x &', confiancaOcr: 18, codigos: []
+  }), true);
+  assert.equal(precisaInterpretacaoVisual('O que aparece nesta imagem?', {
+    texto: 'ruído', confiancaOcr: 12, codigos: []
+  }), true);
+});
+
+test('pedido local explicito continua dispensando visao mesmo com imagem', () => {
+  assert.equal(precisaInterpretacaoVisual('Transcreva o texto da imagem', {
+    texto: 'conteúdo', confiancaOcr: 95, codigos: []
+  }), false);
+  assert.equal(precisaInterpretacaoVisual('Leia o EAN', {
+    texto: '', codigos: [{ valor: '7891234567890' }]
+  }), false);
+});
+
 test('storage de anexos grava, abre e exclui somente chaves validas', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-attachments-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -250,4 +268,31 @@ test('visao sem modelo configurado preserva a extracao local', async (t) => {
   assert.equal(chamouModelo, false);
   assert.match(resultado.texto, /resultados locais/);
   assert.match(resultado.texto, /Etiqueta do produto/);
+});
+
+test('pergunta visual generica usa provider de visao mesmo quando OCR produz ruido', async () => {
+  const imagem = await sharp({ create: {
+    width: 20, height: 20, channels: 3, background: 'white'
+  } }).png().toBuffer();
+  let chamadasVisao = 0;
+  let chamadasGeneralista = 0;
+  const resultado = await executarAssistente('Que animal é esse?', {
+    memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), imageMode: 'v1',
+    anexos: [{ item: { id: 'a1' }, buffer: imagem }],
+    ocrWorker: { async recognize() { return { data: { text: '. ; j & uh', confidence: 12 } }; } },
+    detectarCodigo: async () => [],
+    visionProvider: { nome: 'anthropic', modelo: 'modelo-visual', async executar({ mensagens }) {
+      chamadasVisao += 1;
+      assert.equal(mensagens[0].content.some((bloco) => bloco.type === 'image'), true);
+      return { texto: 'É um gato.', provider: 'anthropic', modelo: 'modelo-visual' };
+    } },
+    generalistProvider: { nome: 'mock', modelo: 'texto', async executar() {
+      chamadasGeneralista += 1;
+      return { texto: 'não deveria ser chamado' };
+    } }
+  });
+  assert.equal(chamadasVisao, 1);
+  assert.equal(chamadasGeneralista, 0);
+  assert.equal(resultado.texto, 'É um gato.');
+  assert.equal(resultado.proveniencia, 'arquivo');
 });

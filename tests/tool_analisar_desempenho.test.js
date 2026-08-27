@@ -69,3 +69,25 @@ test('ranqueia marca e calcula margem percentual pelos totais', async () => {
   assert.equal(falso.chamadas[0][1].ordenacao.indice, 1);
   assert.match(resposta.conceito_margem, /nao e lucro liquido/);
 });
+
+test('ranking faturado de produto preserva codigo auxiliar sem confundir com id', async () => {
+  const falso = leitorFalso();
+  falso.leitor.agregar = async (nome, opcoes) => {
+    falso.chamadas.push([nome, opcoes]);
+    return { dados: [{ grupo_1: 18685, grupo_2: 'LAVA E SECA',
+      grupo_3: 'PLS11A-127', calculo_1: 1724020.01 }],
+    ultimaConstrucao: 'agora' };
+  };
+  const resposta = JSON.parse(await executarAnalisarDesempenho({
+    operacao: 'ranquear', agrupar_por: 'produto', metricas: ['faturamento'],
+    ordenar_por: 'faturamento', filtros: [], data_inicial: '2026-08-01',
+    data_final: '2026-08-25', id_empresa: null, limite: 15
+  }, { criarLeitor: () => falso.leitor }));
+  assert.deepEqual(falso.chamadas[0][1].agrupamentos, [
+    { campo: 'id_produto', granularidade: 'valor' },
+    { campo: 'descricao_produto', granularidade: 'valor' },
+    { campo: 'sku', granularidade: 'valor' }
+  ]);
+  assert.equal(resposta.dados[0].id_produto, 18685);
+  assert.equal(resposta.dados[0].sku, 'PLS11A-127');
+});

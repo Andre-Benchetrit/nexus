@@ -195,10 +195,11 @@ async function executarAnalisarDesempenho(argumentos, dependencias = {}) {
     const dimensao = argumentos.operacao === 'ranquear'
       ? argumentos.agrupar_por
       : null;
+    const camposAgrupamento = dimensao === 'produto'
+      ? ['id_produto', 'descricao_produto', 'sku']
+      : dimensao ? [DIMENSOES[dimensao]] : [];
     const resultado = await leitor.agregar('desempenho_produto_diario', {
-      agrupamentos: dimensao
-        ? [{ campo: DIMENSOES[dimensao], granularidade: 'valor' }]
-        : [],
+      agrupamentos: camposAgrupamento.map((campo) => ({ campo, granularidade: 'valor' })),
       calculos: componentes.map((campo) => ({ operacao: 'somar', campo })),
       filtros,
       ordenacao: { tipo: 'calculo', indice: indiceOrdenacao, direcao: 'desc' },
@@ -209,7 +210,12 @@ async function executarAnalisarDesempenho(argumentos, dependencias = {}) {
         (campo, indice) => [campo, Number(linha[`calculo_${indice + 1}`] || 0)]
       ));
       return {
-        ...(dimensao ? { [dimensao]: linha.grupo_1 || 'NAO INFORMADO' } : {}),
+        ...(dimensao === 'produto' ? {
+          id_produto: linha.grupo_1,
+          produto: linha.grupo_2 || 'NAO INFORMADO',
+          descricao_produto: linha.grupo_2 || 'NAO INFORMADO',
+          sku: linha.grupo_3 || null
+        } : dimensao ? { [dimensao]: linha.grupo_1 || 'NAO INFORMADO' } : {}),
         ...Object.fromEntries(solicitadas.map((nome) => {
           const regra = METRICAS[nome];
           const argumentosCalculo = Object.fromEntries(

@@ -31,9 +31,15 @@ Nunca invente explicacoes genericas como demanda, oferta ou eficiencia sem dados
 `,
   indicadores: `
 Use analisar_indicadores: intervalo=resumir; dia=painel; comparacao=comparar; serie=tendencia.
+Para pedidos pagos ou faturamento de uma empresa, preencha id_empresa somente com
+1, 7, 8, 9, 10, 12, 13, 17, 19 ou 20; sem esse recorte, consolide todas.
 Painel recente completo: datas=null e recencia=mais_recente_completo. Inclua rupturas.
 Periodo atual parcial: use recencia=mais_recente_completo para excluir o ultimo dia parcial.
-Faturamento usa emissao e NF-e cStat 100, sem devolucao, cancelamento ou reversa.
+Faturamento total usa o valor financeiro das NF-e validas. Faturamento liquido abate
+somente DV autorizada vinculada a venda e atribui o abatimento a data da venda original,
+nunca a data da devolucao. Em perguntas genericas de faturamento, solicite e apresente
+faturamento_total, valor_devolucoes e faturamento_liquido. Faturamento emitido preserva
+o valor de produtos sem o componente financeiro ampliado.
 Pedidos pagos usam data_pedido e itens de documentos PD.
 Avise quando a cobertura indicar ultima data parcial.
 Ao comparar, informe atual, anterior, diferenca e variacao percentual.
@@ -81,6 +87,8 @@ quantidade_total ja inclui itens sem produto: nao some novamente. Se nao truncad
 Use analisar_desempenho para rankings faturados de produto, marca, classificacao ou plataforma.
 Faturamento usa data de emissao. Margem bruta de produtos e faturamento menos custo do produto;
 nao chame essa metrica de lucro liquido.
+Em ranking por produto, preserve id_produto, descricao_produto, sku e ean retornados pela mesma
+linha. SKU e codigo auxiliar sao o campo sku; nunca renomeie id_produto como SKU.
 Em ranking, ordenar_por deve refletir "mais": mais faturou=faturamento; mais vendeu=quantidade.
 Quando a pergunta limitar marca, produto, grupo, categoria ou plataforma, envie esse filtro.
 Use id_empresa=null quando o usuario nao limitar a empresa.
@@ -104,6 +112,8 @@ Use analisar_vendas: pedido conta cabecalhos; item analisa produtos.
 Lote marketplace_pedido para NFs: localizar_notas; IDs sao textos.
 Mais vendido: ranquear item por produto/marca, quantidade e valor.
 Faturamento usa emissao; venda usa pedido.
+Para uma empresa especifica, use o filtro id_empresa=igual. Empresas permitidas:
+1, 7, 8, 9, 10, 12, 13, 17, 19 e 20. Sem empresa, consolide todas.
 Transportadora: agrupe por transportadora; o mesmo id e consolidado.
 Ultimos: listar pela data, metricas=null. Preenchida: nao_esta_vazio. Totais: resumir.
 `,

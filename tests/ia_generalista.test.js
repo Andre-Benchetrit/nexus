@@ -17,6 +17,8 @@ const {
 } = require('../agentes/capacidades_generalistas');
 const {
   executarAssistente,
+  construirObjetivoCorporativo,
+  corrigirAlegacaoMemoria,
   normalizarHistoricoVisivel,
   possuiTextoResposta,
   resolverModoAssistente
@@ -56,6 +58,38 @@ test('guarda de fonte distingue conversa, web e continuacao corporativa', () => 
   assert.equal(exigeFonteCorporativa('Outros bloqueios também.', {
     ultimaProveniencia: 'dados_nexus'
   }).motivo, 'continuacao_corporativa');
+  assert.equal(exigeFonteCorporativa(
+    'Me dê os top 15 produtos por receita dos pedidos pagos desse período.'
+  ).obrigatoria, true);
+  assert.equal(exigeFonteCorporativa('Gere o mesmo relatório com filtro de período.', {
+    ultimaPergunta: 'Top produtos por receita', ultimaProveniencia: 'dados_nexus'
+  }).motivo, 'continuacao_corporativa');
+  assert.equal(exigeFonteCorporativa('Sim', {
+    ultimaPergunta: 'SKU é código auxiliar?',
+    ultimaResposta: 'Quer que eu reconsulte o Nexus?'
+  }).motivo, 'continuacao_corporativa');
+});
+
+test('objetivo corporativo preserva pergunta atual e contexto que resolve o periodo', () => {
+  const objetivo = construirObjetivoCorporativo(
+    'Faça o mesmo relatório desse período.',
+    'ranking de produtos',
+    [
+      { role: 'user', content: 'Analise de 01/08 a 25/08.' },
+      { role: 'assistant', content: 'Período analisado.' }
+    ]
+  );
+  assert.match(objetivo, /01\/08 a 25\/08/);
+  assert.match(objetivo, /Pergunta atual do usuario: Faça o mesmo relatório desse período/);
+  assert.match(objetivo, /A pergunta atual prevalece/);
+});
+
+test('nao afirma que uma memoria foi registrada quando houve apenas sinal em observe', () => {
+  assert.match(corrigirAlegacaoMemoria(
+    'Correção registrada para avaliação. Quer que eu reconsulte?',
+    { motivo: 'correcao' },
+    { modo: 'observe', oferecida: false }
+  ), /nenhuma memória foi criada ou aprovada/i);
 });
 
 test('normaliza usage sem inventar campos ausentes ou contar cache duas vezes', () => {

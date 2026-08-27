@@ -15,7 +15,10 @@ function resolverModoImagem(valor = process.env.NEXUS_IMAGE_MODE || 'off') {
 function precisaInterpretacaoVisual(pergunta = '', resultadoLocal = {}) {
   if (PEDIDO_VISAO.test(pergunta)) return true;
   if (PEDIDO_LOCAL.test(pergunta)) return false;
-  return !(resultadoLocal.texto || resultadoLocal.codigos?.length);
+  // Com uma imagem anexada, OCR casual não comprova que a intenção do usuário
+  // era textual. Fotografias frequentemente produzem caracteres espúrios; por
+  // isso, toda solicitação que não nomeia uma operação local segura exige visão.
+  return true;
 }
 
 function classificarSensibilidade(texto = '') {

@@ -28,6 +28,9 @@ const ROTULOS_METRICAS = Object.freeze({
   taxa_emissao_pct: 'Taxa de emissão',
   notas_emitidas: 'Notas emitidas',
   faturamento_emitido: 'Faturamento emitido',
+  faturamento_total: 'Faturamento total',
+  valor_devolucoes: 'Valor das devoluções vinculadas',
+  faturamento_liquido: 'Faturamento líquido',
   ticket_medio_faturado: 'Ticket médio faturado',
   prazo_medio_emissao_dias: 'Prazo médio de emissão em dias'
 });
@@ -37,6 +40,9 @@ const METRICAS_MONETARIAS = new Set([
   'valor_pedidos_pagos',
   'ticket_medio_pedido',
   'faturamento_emitido',
+  'faturamento_total',
+  'valor_devolucoes',
+  'faturamento_liquido',
   'ticket_medio_faturado'
 ]);
 const METRICAS_PERCENTUAIS = new Set(['taxa_cancelamento_pct', 'taxa_emissao_pct']);
@@ -108,6 +114,46 @@ function formatarPainelFocado(resultado) {
   return linhas.join('\n');
 }
 
+function escaparCelula(valor) {
+  return String(valor ?? '—').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim() || '—';
+}
+
+function formatarRankingProdutos(resultadosTools = []) {
+  const item = [...resultadosTools].reverse().find((entrada) => {
+    const resultado = entrada.resultado;
+    return ['analisar_vendas', 'analisar_desempenho'].includes(entrada.nome) &&
+      resultado?.agrupado_por === 'produto' && Array.isArray(resultado.dados);
+  });
+  const resultado = item?.resultado;
+  if (!resultado?.dados?.length) return null;
+  const possuiReceita = resultado.dados.some((linha) => (
+    linha.valor_total_vendido != null || linha.faturamento_emitido != null
+  ));
+  const linhas = [
+    possuiReceita ? 'Ranking de produtos por receita' : 'Ranking de produtos',
+    ''
+  ];
+  if (resultado.periodo?.inicio) {
+    linhas.push(
+      `Período: ${dataCurta(resultado.periodo.inicio)} a ${dataCurta(resultado.periodo.fim || resultado.periodo.inicio)}.`,
+      ''
+    );
+  }
+  const possuiEan = resultado.dados.some((linha) => linha.ean != null);
+  linhas.push(`| # | Produto | Código auxiliar (SKU) | ${possuiEan ? 'EAN | ' : ''}Receita | Quantidade |`);
+  linhas.push(`|---:|---|---|${possuiEan ? '---|' : ''}---:|---:|`);
+  resultado.dados.forEach((linha, indice) => {
+    const receita = linha.valor_total_vendido ?? linha.faturamento_emitido;
+    const quantidade = linha.quantidade_vendida ?? linha.quantidade_faturada;
+    linhas.push(`| ${indice + 1} | ${escaparCelula(linha.descricao_produto || linha.produto)} | ` +
+      `${escaparCelula(linha.sku)} | ${possuiEan ? `${escaparCelula(linha.ean)} | ` : ''}` +
+      `${receita == null ? '—' : formatarMetrica('faturamento_total', receita)} | ` +
+      `${quantidade == null ? '—' : formatarMetrica('notas_emitidas', quantidade)} |`);
+  });
+  linhas.push('', 'SKU corresponde ao código auxiliar cadastrado; o identificador interno do produto não é usado como SKU.');
+  return linhas.join('\n');
+}
+
 function aplicarGarantiasResposta(texto, resultadosTools = []) {
   const painelFocado = [...resultadosTools].reverse().find((item) => (
     item.nome === 'analisar_indicadores' &&
@@ -117,7 +163,8 @@ function aplicarGarantiasResposta(texto, resultadosTools = []) {
       item.resultado?.dados_disponiveis === false
     )
   ));
-  let resposta = formatarPainelFocado(painelFocado?.resultado)
+  let resposta = formatarRankingProdutos(resultadosTools)
+    || formatarPainelFocado(painelFocado?.resultado)
     || formatarDatasResposta(texto);
   const ultimoRecebimento = [...resultadosTools].reverse().find((item) => (
     item.nome === 'analisar_reposicoes' &&
@@ -372,6 +419,7 @@ module.exports = {
   extrairIdentificadoresNegocio,
   formatarDatasResposta,
   formatarPainelFocado,
+  formatarRankingProdutos,
   normalizarResultadoTool,
   textoIndicaIndisponibilidade,
   validarSinteseCorporativa

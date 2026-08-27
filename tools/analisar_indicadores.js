@@ -1,84 +1,119 @@
 const { criarLeitorGold } = require('../duckdb/gold');
 const { serializar, validarLista, validarObjeto } = require('./core/validacao');
+const { IDS_EMPRESAS_PERMITIDAS, validarIdEmpresa } = require('./core/empresas');
 
 const METRICAS = Object.freeze({
   pedidos_validos: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { valor: 'pedidos_validos' },
     calcular: ({ valor }) => valor
   },
   pedidos_cancelados: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { valor: 'pedidos_cancelados' },
     calcular: ({ valor }) => valor
   },
   pedidos_pendentes: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { valor: 'pedidos_pendentes' },
     calcular: ({ valor }) => valor
   },
   pedidos_faturados: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { valor: 'pedidos_faturados' },
     calcular: ({ valor }) => valor
   },
   pedidos_devolvidos: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { valor: 'pedidos_devolvidos' },
     calcular: ({ valor }) => valor
   },
   pedidos_status_conflitante: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { valor: 'pedidos_status_conflitante' },
     calcular: ({ valor }) => valor
   },
   valor_pedidos_validos: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { valor: 'valor_pedidos_validos' },
     calcular: ({ valor }) => valor
   },
   valor_pedidos_pagos: {
     objeto: 'kpi_pedidos_pagos_diario',
+    objetoEmpresa: 'kpi_pedidos_pagos_diario_por_empresa',
     componentes: { valor: 'valor_pedidos_pagos' },
     calcular: ({ valor }) => valor
   },
   pedidos_pagos: {
     objeto: 'kpi_pedidos_pagos_diario',
+    objetoEmpresa: 'kpi_pedidos_pagos_diario_por_empresa',
     componentes: { valor: 'pedidos_pagos' },
     calcular: ({ valor }) => valor
   },
   ticket_medio_pedido: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { valor: 'valor_pedidos_validos', quantidade: 'pedidos_validos' },
     calcular: ({ valor, quantidade }) => dividir(valor, quantidade)
   },
   taxa_cancelamento_pct: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { cancelados: 'pedidos_cancelados', recebidos: 'pedidos_recebidos' },
     calcular: ({ cancelados, recebidos }) => dividir(cancelados * 100, recebidos, 4)
   },
   taxa_emissao_pct: {
     objeto: 'kpi_vendas_diario',
+    objetoEmpresa: 'kpi_vendas_diario_por_empresa',
     componentes: { emitidos: 'pedidos_com_nota_emitida', validos: 'pedidos_validos' },
     calcular: ({ emitidos, validos }) => dividir(emitidos * 100, validos, 4)
   },
   notas_emitidas: {
     objeto: 'kpi_faturamento_diario',
+    objetoEmpresa: 'kpi_faturamento_diario_por_empresa',
     componentes: { valor: 'notas_emitidas' },
     calcular: ({ valor }) => valor
   },
   faturamento_emitido: {
     objeto: 'kpi_faturamento_diario',
+    objetoEmpresa: 'kpi_faturamento_diario_por_empresa',
     componentes: { valor: 'faturamento_emitido' },
+    calcular: ({ valor }) => valor
+  },
+  faturamento_total: {
+    objeto: 'kpi_faturamento_diario',
+    objetoEmpresa: 'kpi_faturamento_diario_por_empresa',
+    componentes: { valor: 'faturamento_total' },
+    calcular: ({ valor }) => valor
+  },
+  valor_devolucoes: {
+    objeto: 'kpi_faturamento_diario',
+    objetoEmpresa: 'kpi_faturamento_diario_por_empresa',
+    componentes: { valor: 'valor_devolucoes' },
+    calcular: ({ valor }) => valor
+  },
+  faturamento_liquido: {
+    objeto: 'kpi_faturamento_diario',
+    objetoEmpresa: 'kpi_faturamento_diario_por_empresa',
+    componentes: { valor: 'faturamento_liquido' },
     calcular: ({ valor }) => valor
   },
   ticket_medio_faturado: {
     objeto: 'kpi_faturamento_diario',
+    objetoEmpresa: 'kpi_faturamento_diario_por_empresa',
     componentes: { valor: 'faturamento_emitido', quantidade: 'notas_emitidas' },
     calcular: ({ valor, quantidade }) => dividir(valor, quantidade)
   },
   prazo_medio_emissao_dias: {
     objeto: 'kpi_faturamento_diario',
+    objetoEmpresa: 'kpi_faturamento_diario_por_empresa',
     componentes: {
       prazo: 'soma_prazo_emissao_dias',
       quantidade: 'notas_com_prazo_calculavel'
@@ -90,8 +125,8 @@ const METRICAS = Object.freeze({
 const METRICAS_PADRAO = Object.freeze([
   'pedidos_validos',
   'valor_pedidos_validos',
-  'notas_emitidas',
-  'faturamento_emitido'
+  'faturamento_total',
+  'faturamento_liquido'
 ]);
 
 const definicaoAnalisarIndicadores = {
@@ -137,11 +172,18 @@ const definicaoAnalisarIndicadores = {
         type: ['string', 'null'],
         enum: ['mais_recente', 'mais_recente_completo', null]
       },
+      id_empresa: {
+        description: 'Empresa a analisar; null consolida todas as empresas.',
+        anyOf: [
+          { type: 'integer', enum: IDS_EMPRESAS_PERMITIDAS },
+          { type: 'null' }
+        ]
+      },
       limite: { type: 'integer', minimum: 1, maximum: 31 }
     },
     required: [
       'operacao', 'metricas', 'data_inicial', 'data_final',
-      'recencia', 'limite'
+      'recencia', 'id_empresa', 'limite'
     ],
     additionalProperties: false
   }
@@ -336,12 +378,13 @@ function dividirEmLotes(valores, tamanho) {
   return lotes;
 }
 
-async function calcularPeriodo(leitor, periodo, nomesMetricas) {
+async function calcularPeriodo(leitor, periodo, nomesMetricas, idEmpresa = null) {
   const porObjeto = new Map();
   for (const nome of nomesMetricas) {
     const metrica = METRICAS[nome];
-    if (!porObjeto.has(metrica.objeto)) porObjeto.set(metrica.objeto, new Set());
-    for (const campo of Object.values(metrica.componentes)) porObjeto.get(metrica.objeto).add(campo);
+    const objeto = idEmpresa == null ? metrica.objeto : metrica.objetoEmpresa;
+    if (!porObjeto.has(objeto)) porObjeto.set(objeto, new Set());
+    for (const campo of Object.values(metrica.componentes)) porObjeto.get(objeto).add(campo);
   }
 
   const componentes = {};
@@ -350,7 +393,10 @@ async function calcularPeriodo(leitor, periodo, nomesMetricas) {
     for (const lote of dividirEmLotes(campos, 5)) {
       const resultado = await leitor.agregar(objeto, {
         calculos: lote.map((campo) => ({ operacao: 'somar', campo })),
-        filtros: filtroPeriodo(periodo.inicio, periodo.fim),
+        filtros: {
+          ...filtroPeriodo(periodo.inicio, periodo.fim),
+          ...(idEmpresa == null ? {} : { id_empresa: { operador: 'igual', valor: idEmpresa } })
+        },
         limite: 1
       });
       lote.forEach((campo, indice) => {
@@ -401,6 +447,7 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
     throw new Error('recencia invalida.');
   }
   const limite = argumentos.limite ?? 7;
+  const idEmpresa = validarIdEmpresa(argumentos.id_empresa);
   if (!Number.isInteger(limite) || limite < 1 || limite > 31) {
     throw new Error('limite deve estar entre 1 e 31.');
   }
@@ -420,6 +467,27 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
     const cobertura = await obterCobertura(leitor);
     const periodo = await resolverPeriodo({ ...argumentos, limite }, cobertura);
     const metricas = normalizarMetricas(argumentos.metricas);
+
+    if (idEmpresa != null && argumentos.operacao === 'painel') {
+      if (periodo.indisponivel) {
+        return respostaPainelIndisponivel(periodo, cobertura, 'focado');
+      }
+      if (periodo.inicio !== periodo.fim) {
+        throw new Error('painel aceita somente um dia; use resumir para totalizar um intervalo.');
+      }
+      const valores = await calcularPeriodo(leitor, periodo, metricas, idEmpresa);
+      return serializar({
+        operacao: 'painel',
+        modo: 'por_empresa',
+        id_empresa: idEmpresa,
+        data_solicitada: periodo.data_solicitada,
+        data_analisada: periodo.fim,
+        dados_disponiveis: true,
+        dados_parciais: null,
+        metricas: valores,
+        cobertura
+      });
+    }
 
     if (argumentos.operacao === 'painel') {
       const modo = argumentos.metricas == null ? 'completo' : 'focado';
@@ -457,7 +525,8 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
             'pedidos_status_conflitante', 'valor_pedidos_validos', 'pedidos_pagos',
             'valor_pedidos_pagos', 'ticket_medio_pedido',
             'taxa_cancelamento_pct', 'taxa_emissao_pct', 'notas_emitidas',
-            'faturamento_emitido', 'ticket_medio_faturado',
+            'faturamento_emitido', 'faturamento_total', 'valor_devolucoes',
+            'faturamento_liquido', 'ticket_medio_faturado',
             'prazo_medio_emissao_dias', 'pedidos_validos_7d',
             'faturamento_emitido_7d', 'pedidos_validos_30d',
             'faturamento_emitido_30d', 'variacao_valor_pedidos_dia_pct',
@@ -501,11 +570,15 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
       return serializar({ operacao: 'tendencia', periodo, dados: resultado.dados, cobertura });
     }
 
-    const atual = await calcularPeriodo(leitor, periodo, metricas);
+    if (idEmpresa != null && argumentos.operacao === 'tendencia') {
+      throw new Error('Tendencia por empresa ainda nao esta disponivel; use resumir ou comparar.');
+    }
+    const atual = await calcularPeriodo(leitor, periodo, metricas, idEmpresa);
     if (argumentos.operacao === 'resumir') {
       return serializar({
         operacao: 'resumir',
         periodo: { inicio: periodo.inicio, fim: periodo.fim },
+        id_empresa: idEmpresa,
         metricas: atual,
         ajuste_cobertura: periodo.ajuste_cobertura || null,
         cobertura
@@ -531,11 +604,12 @@ async function executarAnalisarIndicadores(argumentos, dependencias = {}) {
     if (periodoAnterior.inicio < cobertura.inicio) {
       throw new Error(`Periodo anterior fora da cobertura Gold, que inicia em ${cobertura.inicio}.`);
     }
-    const anterior = await calcularPeriodo(leitor, periodoAnterior, metricas);
+    const anterior = await calcularPeriodo(leitor, periodoAnterior, metricas, idEmpresa);
     return serializar({
       operacao: 'comparar',
       periodo_atual: periodo,
       periodo_anterior: periodoAnterior,
+      id_empresa: idEmpresa,
       metricas: compararValores(atual, anterior),
       ajuste_cobertura: periodo.ajuste_cobertura || null,
       cobertura

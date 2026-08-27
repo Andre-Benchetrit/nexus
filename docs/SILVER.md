@@ -101,9 +101,10 @@ uma correcao de negocio nao precisa ser repetida em cada fato.
 
 ### Ligacao entre pedido, nota e devolucao
 
-Pedido, nota fiscal e devolucao sao registros separados na origem. A ligacao
-principal usa `(id_empresa, id_pedido_vda_importado)`, e nao apenas o texto de
-`marketplace_pedido`.
+Pedido, nota fiscal e devolucao sao registros separados na origem. Quando
+preenchido, `id_nota_saida_original` e o vinculo mais preciso da devolucao. A
+ligacao secundaria usa `(id_empresa, id_pedido_vda_importado)`; o texto de
+`marketplace_pedido` normalizado e apenas a ultima contingencia governada.
 
 `fato_pedido` classifica cada pedido como:
 

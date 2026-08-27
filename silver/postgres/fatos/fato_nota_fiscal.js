@@ -17,7 +17,7 @@ module.exports = {
     colunasPadrao: [
       'id_nota_saida', 'id_nr_nf', 'id_pedido_vda_importado',
       'marketplace_pedido', 'data_pedido', 'data_emissao',
-      'cliente', 'plataforma', 'valor_total_venda'
+      'cliente', 'plataforma', 'valor_total_venda', 'valor_total_liquido_venda'
     ],
     colunasAgente: [...fatoVenda.consulta.colunasAgente]
   },

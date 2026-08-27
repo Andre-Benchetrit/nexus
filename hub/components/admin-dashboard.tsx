@@ -16,6 +16,11 @@ type Usage = { resumo: Record<string, string | number | null>;
   porServico: Array<Record<string, string | number | null>>;
   porAtribuicao: Array<Record<string, string | number | null>>;
   porFaixa: Array<Record<string, string | number | null>> };
+type MemoryCandidate = {
+  id: string; tipo: string; categoria: string; declaracao: string;
+  gatilhos: string[]; escopo: string; status: string; confianca?: number | null;
+  justificativa?: string | null; riscos?: string[]; criadoEm?: string;
+};
 
 function money(value: unknown, currency: "USD" | "BRL") {
   if (value == null) return "Não calculado";
@@ -28,6 +33,8 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   const isAdmin = profile.permissoes.includes("governanca.administrar");
   const canAudit = profile.permissoes.includes("auditoria.consultar");
   const canCost = profile.permissoes.some((item) => item.startsWith("custos.consultar"));
+  const canMemory = profile.permissoes.some((item) =>
+    item === "memoria.auditar" || item.startsWith("memoria.revisar") || item === "memoria.administrar");
   const [tab, setTab] = useState(canCost ? "overview" : canAudit ? "audit" : "people");
   const [usage, setUsage] = useState<Usage | null>(null);
   const [people, setPeople] = useState<Principal[]>([]);
@@ -35,6 +42,8 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [audit, setAudit] = useState<Array<Record<string, any>>>([]);
   const [lake, setLake] = useState<Record<string, any> | null>(null);
+  const [memoryCandidates, setMemoryCandidates] = useState<MemoryCandidate[]>([]);
+  const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [selectedSector, setSelectedSector] = useState(profile.setores[0]?.slug || "");
   const [loading, setLoading] = useState(true);
@@ -46,9 +55,10 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
     canCost && ["overview", "Visão executiva"],
     isAdmin && ["people", "Pessoas e acessos"],
     isAdmin && ["departments", "Setores"],
+    canMemory && ["memory", "Aprendizados"],
     canAudit && ["audit", "Auditoria"],
     canAudit && ["lake", "Lake"]
-  ].filter(Boolean) as string[][], [canCost, isAdmin, canAudit]);
+  ].filter(Boolean) as string[][], [canCost, isAdmin, canAudit, canMemory]);
 
   async function load() {
     const sequence = ++loadSequence.current;
@@ -67,6 +77,9 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
       }
       if (tab === "departments") setDepartments(await nexusFetch<Department[]>("admin/departments"));
       if (tab === "audit") setAudit(await nexusFetch("admin/audit"));
+      if (tab === "memory") setMemoryCandidates(await nexusFetch<MemoryCandidate[]>(
+        "admin/memory-candidates?status=pending_review"
+      ));
       if (tab === "lake") setLake(await nexusFetch("admin/lake"));
     } catch (cause) {
       if (sequence === loadSequence.current) {
@@ -128,6 +141,21 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
       await nexusFetch(`admin/principals/${person.id}/assignments`, {
         method: "PUT", body: JSON.stringify({ departmentIds, assignments })
       });
+    });
+  }
+
+  async function reviewMemory(candidate: MemoryCandidate, decision: "approve" | "reject") {
+    const reason = String(reviewReasons[candidate.id] || "").trim();
+    if (!reason) {
+      setError("Informe o motivo da decisão antes de revisar o aprendizado.");
+      return;
+    }
+    await runAction(`memory-${candidate.id}`, async () => {
+      await nexusFetch(`admin/memory-candidates/${candidate.id}/review`, {
+        method: "POST",
+        body: JSON.stringify({ decision, reason })
+      });
+      setReviewReasons((current) => ({ ...current, [candidate.id]: "" }));
     });
   }
 
@@ -214,6 +242,31 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
                 method: "PATCH", body: JSON.stringify({ active: false })
               });
             })}>{pendingAction === `department-${department.id}` ? "Desativando…" : "Desativar"}</button></article>)}</div></>}
+
+      {tab === "memory" && <section className="memory-review-list">
+        <div className="memory-review-intro glass-panel"><div><h2>Aprendizados aguardando revisão</h2>
+          <p>Nenhuma sugestão altera o comportamento do Nexus antes de uma aprovação autorizada.</p></div>
+          <span>{memoryCandidates.length} pendente{memoryCandidates.length === 1 ? "" : "s"}</span></div>
+        {memoryCandidates.map((candidate) => <article className="memory-review-card glass-panel" key={candidate.id}>
+          <div className="memory-review-meta"><span>{candidate.tipo.replaceAll("_", " ")}</span>
+            <span>Escopo: {candidate.escopo}</span>
+            {candidate.confianca != null && <span>Confiança: {Math.round(candidate.confianca * 100)}%</span>}</div>
+          <h3>{candidate.declaracao}</h3>
+          {candidate.justificativa && <p>{candidate.justificativa}</p>}
+          {!!candidate.gatilhos?.length && <small>Gatilhos: {candidate.gatilhos.join(", ")}</small>}
+          <textarea value={reviewReasons[candidate.id] || ""}
+            onChange={(event) => setReviewReasons((current) => ({ ...current, [candidate.id]: event.target.value }))}
+            placeholder="Motivo obrigatório da aprovação ou rejeição" rows={2} />
+          <div className="memory-review-actions">
+            <button className="primary-button" disabled={Boolean(pendingAction)}
+              onClick={() => reviewMemory(candidate, "approve")}>Aprovar</button>
+            <button className="secondary-button" disabled={Boolean(pendingAction)}
+              onClick={() => reviewMemory(candidate, "reject")}>Rejeitar</button>
+          </div>
+        </article>)}
+        {!memoryCandidates.length && !loading && <div className="empty-admin glass-panel">
+          Nenhuma candidatura confirmada aguarda revisão.</div>}
+      </section>}
 
       {tab === "audit" && <DataTable title="Eventos recentes" rows={audit} />}
       {tab === "lake" && lake && <><div className="metric-grid">

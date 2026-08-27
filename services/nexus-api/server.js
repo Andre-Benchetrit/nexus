@@ -370,6 +370,10 @@ async function criarServidor(opcoes = {}) {
   app.get('/v1/admin/usage', async (request) => servico(request).relatorioCustos(request.query || {}));
   app.get('/v1/admin/audit', async (request) => servico(request).listarAuditoria(request.query || {}));
   app.get('/v1/admin/audit/:traceId', async (request) => servico(request).obterTrace(request.params.traceId));
+  app.get('/v1/admin/memory-candidates', async (request) =>
+    servico(request).listarCandidaturasMemoria(request.query || {}));
+  app.post('/v1/admin/memory-candidates/:id/review', async (request) =>
+    servico(request).revisarCandidaturaMemoria(request.params.id, request.body || {}));
   app.get('/v1/admin/lake', async (request) => {
     await servico(request).listarAuditoria({ limite: 1 });
     const health = await lakeStorage.verificarSaude();

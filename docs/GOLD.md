@@ -36,9 +36,23 @@ sua NF sejam contados como dois pedidos.
 
 ## Estados especiais
 
-Uma devolucao e reconhecida quando existe um documento `DV` ligado ao mesmo
-pedido de origem por `(id_empresa, id_pedido_vda_importado)`. Cancelamentos
-fiscais e devolucoes ficam separados de simples cancelamentos comerciais.
+Uma devolucao e reconhecida quando existe um documento `DV` autorizado ligado
+a venda original. O vinculo prioriza `id_nota_saida_original`; na ausencia dele,
+usa `(id_empresa, id_pedido_vda_importado)` com uma unica data de venda e, por
+ultimo, o numero de marketplace normalizado quando tambem houver data unica.
+O abatimento e atribuido a data da venda original, portanto uma devolucao tardia
+reprocessa o periodo vendido em vez de reduzir o faturamento do mes da devolucao.
+Vinculos ambiguos nao sao abatidos silenciosamente.
+
+O KPI fiscal preserva quatro conceitos distintos:
+
+- `faturamento_emitido`: valor de produtos das notas validas;
+- `faturamento_total`: valor financeiro total das notas validas;
+- `valor_devolucoes`: valor financeiro das devolucoes vinculadas;
+- `faturamento_liquido`: total financeiro menos as devolucoes vinculadas.
+
+Cancelamentos fiscais e devolucoes ficam separados de simples cancelamentos
+comerciais.
 
 Ainda existem pedidos cujo PD esta marcado como cancelado, mas que possuem NF
 autorizada sem DV nem cancelamento fiscal localizado. Eles recebem

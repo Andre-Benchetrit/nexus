@@ -72,8 +72,11 @@ const catalogoSilver = {
 };
 const nomesGoldTeste = [
   'kpi_vendas_diario',
+  'kpi_vendas_diario_por_empresa',
   'kpi_faturamento_diario',
+  'kpi_faturamento_diario_por_empresa',
   'kpi_pedidos_pagos_diario',
+  'kpi_pedidos_pagos_diario_por_empresa',
   'risco_ruptura_produto',
   'kpi_estoque_diario',
   'painel_executivo_diario'
@@ -100,14 +103,18 @@ async function criarFatoVendaSilver() {
   try {
     await runDuckDB(con, `COPY (
       SELECT * FROM (VALUES
-        (1, 1, DATE '2026-07-17', NULL::DATE, 'PEDIDO', false, false, 100::DECIMAL(18,2), 10),
-        (2, 2, DATE '2026-07-17', DATE '2026-07-18', 'FATURADO', true, true, 200::DECIMAL(18,2), 11),
-        (3, 0, DATE '2026-07-17', NULL::DATE, 'CANCELADO', false, false, 50::DECIMAL(18,2), 12),
-        (4, 0, DATE '2026-07-17', NULL::DATE, 'ORÇAMENTO', false, false, 30::DECIMAL(18,2), 13),
-        (5, 3, DATE '2026-07-18', DATE '2026-07-18', 'FATURADO', true, true, 300::DECIMAL(18,2), 10)
+        (1, 10, 101::BIGINT, NULL::BIGINT, 'P1', 1, DATE '2026-07-17', NULL::DATE, 'PEDIDO', false, false, false, 100::DECIMAL(18,2), 100::DECIMAL(18,2), 10),
+        (2, 10, 102::BIGINT, NULL::BIGINT, 'P2', 2, DATE '2026-07-17', DATE '2026-07-18', 'FATURADO', true, true, false, 200::DECIMAL(18,2), 220::DECIMAL(18,2), 11),
+        (3, 10, 103::BIGINT, NULL::BIGINT, 'P3', 0, DATE '2026-07-17', NULL::DATE, 'CANCELADO', false, false, false, 50::DECIMAL(18,2), 50::DECIMAL(18,2), 12),
+        (4, 10, 104::BIGINT, NULL::BIGINT, 'P4', 0, DATE '2026-07-17', NULL::DATE, 'ORÇAMENTO', false, false, false, 30::DECIMAL(18,2), 30::DECIMAL(18,2), 13),
+        (5, 10, 105::BIGINT, NULL::BIGINT, 'P5', 3, DATE '2026-07-18', DATE '2026-07-18', 'FATURADO', true, true, false, 300::DECIMAL(18,2), 330::DECIMAL(18,2), 10),
+        (6, 10, 102::BIGINT, 2::BIGINT, 'P2_DV', 4, DATE '2026-07-17', DATE '2026-07-20', 'DEVOLUÇÃO', false, false, true, 50::DECIMAL(18,2), 55::DECIMAL(18,2), 11),
+        (7, 10, 105::BIGINT, NULL::BIGINT, 'P5_DV', 5, DATE '2026-07-18', DATE '2026-07-21', 'DEVOLUÇÃO', false, false, true, 30::DECIMAL(18,2), 33::DECIMAL(18,2), 10)
       ) AS dados(
-        id_nota_saida, id_nr_nf, data_pedido, data_emissao, tipo_pedido,
-        nota_emitida, faturamento_valido, valor_total_venda, id_cliente
+        id_nota_saida, id_empresa, id_pedido_vda_importado, id_nota_saida_original,
+        marketplace_pedido, id_nr_nf, data_pedido, data_emissao, tipo_pedido,
+        nota_emitida, faturamento_valido, devolucao_faturamento,
+        valor_total_venda, valor_total_liquido_venda, id_cliente
       )
     ) TO '${arquivo}' (FORMAT PARQUET)`);
   } finally {
@@ -118,7 +125,7 @@ async function criarFatoVendaSilver() {
     status: 'sucesso',
     inicio: '2026-07-19T12:00:00.000Z',
     fim: '2026-07-19T12:01:00.000Z',
-    totalLinhas: 5,
+    totalLinhas: 7,
     checksum: 'teste',
     arquivo: 'dados.parquet'
   }));
@@ -193,11 +200,12 @@ async function criarFatoNotaFiscalSilver() {
   try {
     await runDuckDB(con, `COPY (
       SELECT * FROM (VALUES
-        (2::BIGINT, 2, DATE '2026-07-17', DATE '2026-07-18', 11, 200::DECIMAL(18,2), true),
-        (5::BIGINT, 3, DATE '2026-07-18', DATE '2026-07-18', 10, 300::DECIMAL(18,2), true)
+        (2::BIGINT, 10, 102::BIGINT, NULL::BIGINT, 'P2', 2, DATE '2026-07-17', DATE '2026-07-18', 11, 200::DECIMAL(18,2), 220::DECIMAL(18,2), true),
+        (5::BIGINT, 10, 105::BIGINT, NULL::BIGINT, 'P5', 3, DATE '2026-07-18', DATE '2026-07-18', 10, 300::DECIMAL(18,2), 330::DECIMAL(18,2), true)
       ) AS dados(
-        id_nota_saida, id_nr_nf, data_pedido, data_emissao, id_cliente,
-        valor_total_venda, faturamento_valido
+        id_nota_saida, id_empresa, id_pedido_vda_importado, id_nota_saida_original,
+        marketplace_pedido, id_nr_nf, data_pedido, data_emissao, id_cliente,
+        valor_total_venda, valor_total_liquido_venda, faturamento_valido
       )
     ) TO '${arquivo}' (FORMAT PARQUET)`);
   } finally {
@@ -372,14 +380,17 @@ test.after(async () => {
 test('constroi objetos Gold na ordem de dependencia', () => {
   assert.deepEqual(resultados.map(({ objeto }) => objeto), [
     'kpi_vendas_diario',
+    'kpi_vendas_diario_por_empresa',
     'kpi_faturamento_diario',
+    'kpi_faturamento_diario_por_empresa',
     'kpi_pedidos_pagos_diario',
+    'kpi_pedidos_pagos_diario_por_empresa',
     'risco_ruptura_produto',
     'kpi_estoque_diario',
     'painel_executivo_diario'
   ]);
   assert.equal(resultados[0].qualidade.chavesDuplicadas, 0);
-  assert.equal(resultados[5].fontesGold.length, 4);
+  assert.equal(resultados[8].fontesGold.length, 4);
 });
 
 test('classifica ruptura atual e cobertura futura de estoque', async () => {
@@ -499,6 +510,30 @@ test('faturamento usa data de emissao e somente notas emitidas', async () => {
     faturamento_emitido: 500,
     ticket_medio_faturado: 250
   });
+});
+
+test('faturamento liquido atribui a devolucao a data da venda original', async () => {
+  const resultado = await leitor.consultar('kpi_faturamento_diario', {
+    filtros: { data_referencia: '2026-07-18' },
+    colunas: [
+      'faturamento_total', 'devolucoes_vinculadas',
+      'valor_devolucoes', 'faturamento_liquido'
+    ],
+    limite: 1
+  });
+  assert.deepEqual(resultado.dados[0], {
+    faturamento_total: 550,
+    devolucoes_vinculadas: 2n,
+    valor_devolucoes: 88,
+    faturamento_liquido: 462
+  });
+
+  const dataDevolucao = await leitor.consultar('kpi_faturamento_diario', {
+    filtros: { data_referencia: '2026-07-20' },
+    colunas: ['faturamento_total', 'valor_devolucoes', 'faturamento_liquido'],
+    limite: 1
+  });
+  assert.equal(dataDevolucao.dados.length, 0);
 });
 
 test('pedidos pagos usam data do pedido e composicao dos itens', async () => {

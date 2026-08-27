@@ -10,6 +10,10 @@ function documentoFiscal(alias = 'n') {
   return `${textoNormalizado(`${alias}.tipo_documento`)} = 'NF'`;
 }
 
+function documentoDevolucao(alias = 'n') {
+  return `${textoNormalizado(`${alias}.tipo_documento`)} = 'DV'`;
+}
+
 function tipoPedidoCancelado(aliasTipoPedido = 'tp') {
   return `starts_with(${textoNormalizado(`${aliasTipoPedido}.tipo_pedido`)}, 'CANCEL')`;
 }
@@ -41,7 +45,17 @@ function pedidoPago(aliasNota = 'n', aliasTipoPedido = 'tp') {
   )`;
 }
 
+function devolucaoFaturamento(aliasNota = 'n') {
+  return `(
+    ${documentoDevolucao(aliasNota)}
+    AND ${aliasNota}.data_emissao IS NOT NULL
+    AND trim(coalesce(${aliasNota}.nfe_cstat, '')) = '100'
+  )`;
+}
+
 module.exports = {
+  devolucaoFaturamento,
+  documentoDevolucao,
   documentoFiscal,
   documentoPedido,
   documentoReverso,

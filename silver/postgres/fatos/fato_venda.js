@@ -1,5 +1,5 @@
 const { citar, texto } = require('../core/util');
-const { faturamentoValido } = require('../core/regras_venda');
+const { devolucaoFaturamento, faturamentoValido } = require('../core/regras_venda');
 
 function obterViews(contextosBronze, contextosSilver) {
   return {
@@ -28,6 +28,7 @@ module.exports = {
   colunas: [
     'id_nota_saida',
     'id_pedido_vda_importado',
+    'id_nota_saida_original',
     'id_nr_nf',
     'serie',
     'id_empresa',
@@ -64,6 +65,7 @@ module.exports = {
     'dt_limite_expedicao',
     'pedido_bloqueado',
     'valor_total_venda',
+    'valor_total_liquido_venda',
     'valor_frete_cobrado',
     'valor_frete_custo',
     'valor_frete_site',
@@ -71,6 +73,7 @@ module.exports = {
     'nota_cancelada',
     'nfe_cstat',
     'faturamento_valido',
+    'devolucao_faturamento',
     'dt_cadastro',
     'dt_alteracao',
     'fonte_sistema',
@@ -84,6 +87,7 @@ module.exports = {
     ],
     colunasAgente: [
       'id_nota_saida', 'id_pedido_vda_importado', 'id_nr_nf', 'serie',
+      'id_nota_saida_original',
       'id_empresa', 'id_cliente',
       'cliente', 'cliente_razao_social', 'cliente_fantasia', 'cliente_cidade',
       'cliente_ativo', 'id_tp_pedido', 'id_nat_operacao', 'tipo_documento',
@@ -95,9 +99,10 @@ module.exports = {
       'data_pedido', 'data_emissao', 'situacao', 'marketplace_pedido',
       'entrega_uf', 'entrega_data', 'dt_limite_expedicao', 'pedido_bloqueado',
       'canal_venda', 'valor_total_venda',
+      'valor_total_liquido_venda',
       'valor_frete_cobrado', 'valor_frete_custo', 'valor_frete_site',
       'nota_emitida', 'nota_cancelada',
-      'nfe_cstat', 'faturamento_valido', 'dt_cadastro',
+      'nfe_cstat', 'faturamento_valido', 'devolucao_faturamento', 'dt_cadastro',
       'dt_alteracao'
     ]
   },
@@ -120,6 +125,7 @@ module.exports = {
       SELECT
         n.id_nota_saida,
         n.id_pedido_vda_importado,
+        n.id_nota_saida_original,
         n.id_nr_nf,
         ${texto('n.serie')} AS serie,
         n.id_empresa,
@@ -156,6 +162,10 @@ module.exports = {
         n.entrega_limite AS dt_limite_expedicao,
         upper(trim(coalesce(n.bloqueada, 'F'))) = 'T' AS pedido_bloqueado,
         CAST(n.total_nota_fiscal AS DECIMAL(18,2)) AS valor_total_venda,
+        CAST(
+          coalesce(n.total_nota_fiscal_liq, n.total_nota_fiscal, 0)
+          AS DECIMAL(18,2)
+        ) AS valor_total_liquido_venda,
         CAST(coalesce(n.valor_frete, 0) AS DECIMAL(18,2)) AS valor_frete_cobrado,
         CAST(coalesce(n.valor_frete_custo, 0) AS DECIMAL(18,2)) AS valor_frete_custo,
         CAST(coalesce(n.valor_frete_site, 0) AS DECIMAL(18,2)) AS valor_frete_site,
@@ -166,6 +176,7 @@ module.exports = {
         ) AS nota_cancelada,
         ${texto('n.nfe_cstat')} AS nfe_cstat,
         ${faturamentoValido('n', 'tp')} AS faturamento_valido,
+        ${devolucaoFaturamento('n')} AS devolucao_faturamento,
         n.dt_cadastro,
         n.dt_alteracao,
         'postgres.sysemp.nota_saida' AS fonte_sistema,

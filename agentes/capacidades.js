@@ -44,7 +44,11 @@ const REGISTRO_CAPACIDADES = Object.freeze({
   analisar_indicadores: capacidade({
     dominio: 'indicadores', intencoes: ['resumir', 'comparar', 'listar'],
     entidades: ['indicador', 'pedido', 'faturamento', 'estoque'],
-    campos: ['pedidos_pagos', 'valor_pedidos_pagos', 'faturamento', 'rupturas', 'data'],
+    campos: [
+      'pedidos_pagos', 'valor_pedidos_pagos', 'faturamento', 'faturamento_emitido',
+      'faturamento_total', 'valor_devolucoes', 'faturamento_liquido',
+      'rupturas', 'data', 'id_empresa'
+    ],
     operacoes: ['resumir', 'painel', 'comparar', 'tendencia'],
     transformacoesPermitidas: ['resumir', 'ordenar', 'destacar', 'comparar_periodos', 'formatar_tabela'],
     derivacoesPermitidas: ['variacao_absoluta', 'variacao_percentual'],
@@ -127,7 +131,10 @@ const REGISTRO_CAPACIDADES = Object.freeze({
   analisar_desempenho: capacidade({
     dominio: 'desempenho', intencoes: ['ranquear', 'listar', 'comparar'],
     entidades: ['produto', 'marca', 'grupo', 'categoria', 'plataforma'],
-    campos: ['faturamento', 'quantidade', 'margem', 'custo'],
+    campos: [
+      'id_produto', 'descricao_produto', 'sku', 'ean',
+      'faturamento', 'quantidade', 'margem', 'custo'
+    ],
     operacoes: ['ranquear'],
     transformacoesPermitidas: ['resumir', 'agrupar', 'ordenar', 'destacar', 'formatar_tabela'],
     derivacoesPermitidas: ['participacao_percentual'],
@@ -156,10 +163,11 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     entidades: ['pedido', 'nota_saida', 'produto', 'marca', 'cliente', 'transportadora'],
     campos: [
       'marketplace_pedido', 'nota_fiscal', 'quantidade', 'valor',
-      'faturamento', 'data_pedido', 'plataforma',
+      'faturamento', 'data_pedido', 'plataforma', 'id_empresa',
       'quantidade_pedidos', 'quantidade_notas_fiscais', 'quantidade_itens',
       'quantidade_vendida', 'valor_total', 'valor_total_pedidos',
-      'valor_total_vendido', 'faturamento_emitido'
+      'valor_total_vendido', 'faturamento_emitido', 'faturamento_total',
+      'valor_devolucoes', 'faturamento_liquido'
     ],
     operacoes: ['resumir', 'listar', 'ranquear', 'localizar_notas'],
     transformacoesPermitidas: [
@@ -314,14 +322,21 @@ function validarPlanoSugerido(decisao) {
   }).toLowerCase();
   const influenciaPorPlataforma = decisao.intencao === 'comparar' &&
     /faturamento/.test(contextoDecisao) && /(marketplace|plataforma|canal)/.test(contextoDecisao);
+  const rankingPedidosPagos = decisao.intencao === 'ranquear' &&
+    /pedidos?.{0,20}pagos?/.test(contextoDecisao) &&
+    /(produto|marca|plataforma|transportadora|cliente|grupo|categoria)/.test(contextoDecisao);
   if (influenciaPorPlataforma) dominios.add('influencias');
-  const aceitas = influenciaPorPlataforma ? ['analisar_influencias'] : [];
+  if (rankingPedidosPagos) dominios.add('vendas');
+  const aceitas = influenciaPorPlataforma
+    ? ['analisar_influencias']
+    : rankingPedidosPagos ? ['analisar_vendas'] : [];
   const rejeitadas = [];
   for (const sugestao of decisao.planoSugerido || []) {
     const nome = sugestao.ferramenta;
     if (influenciaPorPlataforma && ['analisar_indicadores', 'analisar_vendas'].includes(nome)) {
       continue;
     }
+    if (rankingPedidosPagos && nome === 'analisar_desempenho') continue;
     const item = obterCapacidade(nome);
 
     if (!item) {
@@ -367,6 +382,9 @@ function validarPlanoSugerido(decisao) {
     if (influenciaPorPlataforma && dominio === decisao.dominioPrimario && dominio !== 'influencias') {
       continue;
     }
+    if (rankingPedidosPagos && dominio === decisao.dominioPrimario && dominio !== 'vendas') {
+      continue;
+    }
     if (dominio !== decisao.dominioPrimario) continue;
     if (dominio === 'hibrido') continue;
     if (dominio === 'bronze' && decisao.intencao !== 'auditar') continue;
@@ -400,11 +418,12 @@ function validarPlanoSugerido(decisao) {
   const camposAusentes = (decisao.camposSolicitados || [])
     .filter((campo) => !camposDisponiveis.has(campo));
   const dominiosExigidos = new Set([
-    influenciaPorPlataforma ? 'influencias' : decisao.dominioPrimario
+    influenciaPorPlataforma ? 'influencias' : rankingPedidosPagos ? 'vendas' : decisao.dominioPrimario
   ]);
   for (const sugestao of decisao.planoSugerido || []) {
     const dominio = REGISTRO_CAPACIDADES[sugestao.ferramenta]?.dominio;
     if (influenciaPorPlataforma && dominio !== 'influencias') continue;
+    if (rankingPedidosPagos && dominio !== 'vendas') continue;
     if (dominio && dominios.has(dominio)) dominiosExigidos.add(dominio);
   }
   const dominiosSemFerramenta = [...dominiosExigidos].filter((dominio) => (

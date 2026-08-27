@@ -6,9 +6,10 @@ function normalizar(texto) {
 const ENTIDADES_CORPORATIVAS =
   /\b(pedidos?|vendas?|faturamentos?|estoques?|produtos?|notas?(?: fiscais?)?|agendamentos?|reposicoes?|fretes?|clientes?|funcionarios?|colaboradores?|pessoas?|margens?|bloqueios?|rupturas?)\b/;
 const ACAO_OPERACIONAL =
-  /\b(hoje|ontem|este mes|nesse mes|agora|atual|ultimo|ultima|quantos|quanto|quais|listar|liste|mostre|temos|verifique|verificar|consulte|consultar|analise|analisar|acompanhe|acompanhar)\b/;
+  /\b(hoje|ontem|este mes|nesse mes|agora|atual|ultimo|ultima|quantos|quanto|quais|listar|liste|mostre|temos|verifique|verificar|consulte|consultar|analise|analisar|acompanhe|acompanhar|ranking|ranqueie|top|receita|faturou|vendeu|vendidos?)\b/;
 const REFERENCIA_CONTINUIDADE =
-  /\b(esse|essa|esses|essas|deles|delas|mesmos?|mesmas?|novamente|de novo|tambem|outros?|outras?|agora)\b/;
+  /\b(esse|essa|esses|essas|deles|delas|mesmos?|mesmas?|novamente|de novo|tambem|outros?|outras?|agora|periodo|relatorio|filtro|coluna|codigo auxiliar|sku)\b/;
+const RESPOSTA_AFIRMATIVA = /^(sim|pode|claro|isso|correto|confirmo|por favor)[.! ]*$/;
 
 function exigeFonteCorporativa(pergunta, contexto = {}) {
   if (contexto.tarefaAtiva) {
@@ -22,8 +23,18 @@ function exigeFonteCorporativa(pergunta, contexto = {}) {
     ACAO_OPERACIONAL.test(texto) ||
     /\b\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b/.test(texto)
   ) && ENTIDADES_CORPORATIVAS.test(texto);
-  const continuidadeCorporativa = ['dados_nexus', 'misto'].includes(contexto.ultimaProveniencia) &&
-    REFERENCIA_CONTINUIDADE.test(texto) && ENTIDADES_CORPORATIVAS.test(texto);
+  const ultimaPergunta = normalizar(contexto.ultimaPergunta);
+  const ultimaResposta = normalizar(contexto.ultimaResposta);
+  const contextoCorporativo = ['dados_nexus', 'misto'].includes(contexto.ultimaProveniencia) ||
+    ENTIDADES_CORPORATIVAS.test(ultimaPergunta) ||
+    /\b(consultar|reconsultar|reconsulte|consulte) (?:o )?nexus\b/.test(ultimaResposta);
+  const possuiReferencia = REFERENCIA_CONTINUIDADE.test(texto) ||
+    RESPOSTA_AFIRMATIVA.test(texto.trim());
+  const continuidadeCorporativa = contextoCorporativo && possuiReferencia && (
+    ENTIDADES_CORPORATIVAS.test(texto) ||
+    ENTIDADES_CORPORATIVAS.test(ultimaPergunta) ||
+    /\bnexus\b/.test(ultimaResposta)
+  );
   const sqlCorporativo = /\b(sql|query|select)\b/.test(texto) &&
     ENTIDADES_CORPORATIVAS.test(texto);
   if (identificador) return { obrigatoria: true, motivo: 'identificador_corporativo' };

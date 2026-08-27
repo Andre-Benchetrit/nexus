@@ -74,6 +74,26 @@ test('informa data indisponivel sem apresenta-la como analisada', () => {
   assert.doesNotMatch(resposta, /10 pedidos/);
 });
 
+test('ranking de produto usa codigo auxiliar real e nunca renomeia id como SKU', () => {
+  const resposta = aplicarGarantiasResposta('SKU (ID): 18685', [{
+    nome: 'analisar_vendas',
+    resultado: {
+      agrupado_por: 'produto',
+      periodo: { inicio: '2026-08-01', fim: '2026-08-25' },
+      dados: [{
+        id_produto: 18685,
+        descricao_produto: 'LAVA E SECA PHILCO',
+        sku: 'PHPLS11A1',
+        valor_total_vendido: 1724020.01,
+        quantidade_vendida: 735
+      }]
+    }
+  }]);
+  assert.match(resposta, /Código auxiliar \(SKU\)/);
+  assert.match(resposta, /PHPLS11A1/);
+  assert.doesNotMatch(resposta, /SKU \(ID\)/);
+});
+
 test('delega a execução para um provider com contrato comum', async () => {
   let contexto;
   const provider = {

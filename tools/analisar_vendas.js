@@ -7,6 +7,7 @@ const {
   validarLista,
   validarObjeto
 } = require('./core/validacao');
+const { validarIdEmpresa } = require('./core/empresas');
 
 const NIVEIS = Object.freeze(['pedido', 'item']);
 const OPERACOES = Object.freeze(['resumir', 'ranquear', 'listar', 'localizar_notas']);
@@ -18,7 +19,11 @@ const OPERADORES_FILTRO_VENDAS = Object.freeze([
   'nao_esta_vazio'
 ]);
 const DIMENSOES = Object.freeze({
-  produto: { campo: 'descricao_produto', nivel: 'item' },
+  produto: {
+    campos: ['id_produto', 'descricao_produto', 'sku'],
+    campo: 'descricao_produto',
+    nivel: 'item'
+  },
   id_produto: { campo: 'id_produto', nivel: 'item' },
   cod_barras: { campo: 'ean', nivel: 'item' },
   marca: { campo: 'marca', nivel: 'item' },
@@ -33,6 +38,7 @@ const DIMENSOES = Object.freeze({
   uf_entrega: { campo: 'entrega_uf' }
 });
 const CAMPOS_FILTRO = Object.freeze({
+  id_empresa: { campo: 'id_empresa' },
   produto: { campo: 'descricao_produto', nivel: 'item' },
   id_produto: { campo: 'id_produto', nivel: 'item' },
   cod_barras: { campo: 'ean', nivel: 'item' },
@@ -231,6 +237,12 @@ function montarFiltros(argumentos, configuracao) {
     }
     filtros[regra.campo] = filtro;
   }
+  if (Object.hasOwn(filtros, 'id_empresa')) {
+    if (filtros.id_empresa.operador !== 'igual') {
+      throw new Error('O filtro id_empresa aceita somente o operador igual.');
+    }
+    filtros.id_empresa.valor = String(validarIdEmpresa(filtros.id_empresa.valor));
+  }
 
   const dataCampo = argumentos.data_campo === 'emissao'
     ? 'data_emissao'
@@ -276,6 +288,11 @@ function renomearAgregacao(resultado, dimensao, regraDimensao, metricas) {
     if (dimensao === 'transportadora') {
       saida.id_transportadora = linha.grupo_1;
       saida.transportadora = linha.grupo_2;
+    } else if (dimensao === 'produto') {
+      saida.id_produto = linha.grupo_1;
+      saida.produto = linha.grupo_2;
+      saida.descricao_produto = linha.grupo_2;
+      saida.sku = linha.grupo_3;
     } else if (dimensao) {
       saida[dimensao] = linha.grupo_1;
     }
@@ -496,6 +513,10 @@ async function executarAnalisarVendas(argumentos, dependencias = {}) {
     return serializar({
       nivel: argumentos.nivel,
       data_utilizada: dataCampo,
+      periodo: argumentos.data_inicial ? {
+        inicio: argumentos.data_inicial,
+        fim: argumentos.data_final || argumentos.data_inicial
+      } : null,
       agrupado_por: dimensao || null,
       dados: renomearAgregacao(resultado, dimensao, regraDimensao, metricas),
       atualizado_em: resultado.ultimaConstrucao

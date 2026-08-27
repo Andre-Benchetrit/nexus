@@ -70,6 +70,12 @@ test('roteia rankings dimensionais faturados para o Gold de desempenho', () => {
   );
 });
 
+test('roteia ranking de produtos dos pedidos pagos para vendas', () => {
+  assert.equal(classificarPergunta(
+    'Me dê os top 15 produtos por receita dos pedidos pagos desse período.'
+  ), 'vendas');
+});
+
 test('roteia ruptura e cobertura para o perfil de estoque', () => {
   assert.equal(classificarPergunta('Quais produtos estão em ruptura?'), 'estoque');
   assert.equal(

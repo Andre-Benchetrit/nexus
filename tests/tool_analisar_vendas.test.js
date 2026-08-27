@@ -82,6 +82,48 @@ test('traduz ranking de marca para campos de negocio', async () => {
   assert.equal(falso.fechado, true);
 });
 
+test('ranking de produto retorna id, descricao e SKU da mesma chave', async () => {
+  const falso = leitorFalso();
+  falso.leitor.agregar = async (nome, opcoes) => {
+    falso.chamadas.push(['agregar', nome, opcoes]);
+    return { dados: [{
+      grupo_1: 18685, grupo_2: 'LAVA E SECA', grupo_3: 'PLS11A-127',
+      calculo_1: 12, calculo_2: 1724020.01
+    }], ultimaConstrucao: 'agora' };
+  };
+  const saida = JSON.parse(await executarAnalisarVendas(argumentos({
+    agrupar_por: 'produto', ordenar_por: 'valor',
+    data_inicial: '2026-08-01', data_final: '2026-08-25'
+  }), { criarLeitor: () => falso.leitor }));
+
+  assert.deepEqual(falso.chamadas[0][2].agrupamentos, [
+    { campo: 'id_produto', granularidade: 'valor' },
+    { campo: 'descricao_produto', granularidade: 'valor' },
+    { campo: 'sku', granularidade: 'valor' }
+  ]);
+  assert.equal(saida.dados[0].id_produto, 18685);
+  assert.equal(saida.dados[0].sku, 'PLS11A-127');
+  assert.equal(saida.dados[0].descricao_produto, 'LAVA E SECA');
+  assert.deepEqual(saida.periodo, { inicio: '2026-08-01', fim: '2026-08-25' });
+});
+
+test('aceita filtro de empresa somente para empresas governadas', async () => {
+  const falso = leitorFalso();
+  await executarAnalisarVendas(argumentos({
+    filtros: [{ campo: 'id_empresa', operador: 'igual', valor: '10' }]
+  }), { criarLeitor: () => falso.leitor });
+  assert.deepEqual(falso.chamadas[0][2].filtros.id_empresa, {
+    operador: 'igual', valor: '10'
+  });
+
+  await assert.rejects(
+    executarAnalisarVendas(argumentos({
+      filtros: [{ campo: 'id_empresa', operador: 'igual', valor: '11' }]
+    }), { criarLeitor: () => leitorFalso().leitor }),
+    /empresas permitidas/
+  );
+});
+
 test('emissao filtra somente notas emitidas e lista pelas mais recentes', async () => {
   const falso = leitorFalso();
   await executarAnalisarVendas(argumentos({

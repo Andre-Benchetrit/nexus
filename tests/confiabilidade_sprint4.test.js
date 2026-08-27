@@ -134,6 +134,17 @@ test('comparacao de faturamento por marketplace usa uma unica fachada de influen
   assert.deepEqual(plano.capacidadesAusentes, []);
 });
 
+test('ranking de pedidos pagos usa vendas mesmo se o router sugerir desempenho faturado', () => {
+  const plano = validarPlanoSugerido({
+    perguntaAutonoma: 'Top 15 produtos por receita dos pedidos pagos de 01/08 a 25/08.',
+    dominioPrimario: 'desempenho', dominiosSecundarios: [], intencao: 'ranquear',
+    camposSolicitados: ['produto', 'sku', 'valor_total_vendido'], filtros: [],
+    requisitosResposta: [], capacidadesAusentes: [],
+    planoSugerido: [{ ferramenta: 'analisar_desempenho', finalidade: 'ranking faturado' }]
+  });
+  assert.deepEqual(plano.ferramentas, ['analisar_vendas']);
+});
+
 test('resumo simples de vendas reconhece quantidade de pedidos e valor total', () => {
   const decisao = {
     perguntaAutonoma: 'Qual foi o total de vendas hoje?',
