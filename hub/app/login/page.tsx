@@ -3,7 +3,11 @@ import { auth, signIn } from "@/auth";
 import { NexusLogo } from "@/components/nexus-logo";
 
 export default async function LoginPage() {
-  if (await auth()) redirect("/");
+  const session = await auth();
+  if (session?.nexus?.ativo) redirect("/");
+  if (session?.nexusAccessError) {
+    redirect(`/access-denied?reason=${encodeURIComponent(session.nexusAccessError)}`);
+  }
   return <main className="login-page">
     <section className="login-card glass-panel">
       <NexusLogo size="large" />
@@ -13,10 +17,10 @@ export default async function LoginPage() {
       <form action={async () => { "use server"; await signIn("microsoft-entra-id", { redirectTo: "/" }); }}>
         <button className="primary-button login-button" type="submit">
           <span className="microsoft-mark" aria-hidden="true"><i /><i /><i /><i /></span>
-          Entrar com Microsoft
+          Escolher conta Microsoft
         </button>
       </form>
-      <small>Acesso restrito a colaboradores previamente autorizados.</small>
+      <small>Você poderá escolher qual conta Microsoft usar. Acesso restrito a colaboradores previamente autorizados.</small>
     </section>
   </main>;
 }

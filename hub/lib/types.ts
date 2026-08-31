@@ -7,6 +7,8 @@ export type NexusProfile = {
   setores: Department[]; papeisGlobais: string[];
   permissoesGlobais?: string[]; permissoes: string[];
 };
+export type NexusSessionPrincipal = Pick<NexusProfile,
+  "id" | "slug" | "nome" | "email" | "ativo">;
 export type Conversation = {
   id: string; sessionKey: string; title: string | null;
   compositionLevel: CompositionLevel; pinnedAt?: string | null; archivedAt?: string | null;
@@ -16,6 +18,7 @@ export type Message = {
   id?: string; turnId?: string; traceId?: string; role: "user" | "assistant";
   content: string; provenance?: string | null; evidence?: Record<string, unknown> | null;
   createdAt?: string; optimistic?: boolean;
+  sourceMode?: SourceMode;
   attachments?: Attachment[];
 };
 export type Attachment = {
@@ -23,6 +26,7 @@ export type Attachment = {
   url: string; name?: string; previewUrl?: string;
 };
 export type CompositionLevel = "baixo" | "medio" | "alto" | "extra_alto";
+export type SourceMode = "automatico" | "dados" | "documentacao" | "web";
 export type MemoryOffer = { id: string; statement: string; expiresAt?: string };
 export type TurnRequest = {
   id: string; traceId: string; turnId?: string | null;

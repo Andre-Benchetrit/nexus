@@ -15,6 +15,9 @@ const { verificarTokenHub } = require('../../nexus/hub_token');
 const { criarLakeStorage } = require('../../nexus/lake_storage');
 const { criarAttachmentStorage } = require('../../nexus/attachment_storage');
 const { criarServicoAnexos, processarFilaLimpeza } = require('../../nexus/anexos');
+const { criarKnowledgeStorage } = require('../../nexus/knowledge_storage');
+const { criarKnowledgeOneDrivePublisher } = require('../../nexus/knowledge_onedrive_publisher');
+const { criarServicoDocumentacao } = require('../../nexus/documentacao');
 const { executarAssistente } = require('../../agentes/assistente_nexus');
 const { criarAgendadorLake } = require('./scheduler');
 
@@ -29,6 +32,7 @@ function codigoErro(erro) {
 
 function statusDoCheckpoint(item = {}) {
   const tipo = String(item.tipo || '');
+  if (/politica|policy_validation/.test(tipo)) return 'validando_politicas';
   if (/web|pesquisa/.test(tipo)) return 'consultando_web';
   if (/extraindo_texto/.test(tipo)) return 'extraindo_texto';
   if (/ocr|imagem_local|anexo/.test(tipo)) return 'processando_imagem';
@@ -56,6 +60,7 @@ function rotuloStatus(codigo) {
     planejando: 'Planejando a melhor resposta',
     consultando_dados: 'Consultando dados autorizados',
     validando_evidencias: 'Validando as evidências',
+    validando_politicas: 'Validando políticas e orientações',
     preparando_resposta: 'Preparando a resposta',
     consultando_web: 'Pesquisando fontes na internet',
     processando_imagem: 'Processando a imagem com segurança',
@@ -75,13 +80,30 @@ function validarResultadoTurno(resultado) {
   return resultado;
 }
 
+function validarModoFonte(valor) {
+  const modo = String(valor || 'automatico').toLowerCase();
+  if (!['automatico', 'dados', 'documentacao', 'web'].includes(modo)) {
+    throw new ErroHub('MODO_FONTE_INVALIDO', 'Selecione uma funcao valida para a mensagem.', 400);
+  }
+  return modo;
+}
+
 async function criarServidor(opcoes = {}) {
   const logger = opcoes.logger ?? { level: process.env.NEXUS_API_LOG_LEVEL || 'info' };
+  const maxUploadBytes = Math.max(
+    Number(process.env.NEXUS_IMAGE_MAX_BYTES || 10 * 1024 * 1024),
+    Number(process.env.NEXUS_KNOWLEDGE_MAX_BYTES || 50 * 1024 * 1024)
+  );
   const app = Fastify({ logger, trustProxy: true,
-    bodyLimit: Math.max(64 * 1024, Number(process.env.NEXUS_IMAGE_MAX_BYTES || 10 * 1024 * 1024) + 64 * 1024) });
+    bodyLimit: Math.max(64 * 1024, maxUploadBytes + 64 * 1024) });
   const pool = opcoes.pool || criarPoolNexus();
   const lakeStorage = opcoes.lakeStorage || criarLakeStorage();
   const attachmentStorage = opcoes.attachmentStorage || criarAttachmentStorage();
+  const knowledgeStorage = opcoes.knowledgeStorage || criarKnowledgeStorage();
+  const knowledgePublisher = opcoes.knowledgePublisher || (
+    String(process.env.NEXUS_KNOWLEDGE_ONEDRIVE_WRITE_ENABLED || '0') === '1'
+      ? criarKnowledgeOneDrivePublisher() : null
+  );
   const executor = opcoes.executarAssistente || executarAssistente;
   let timerLimpezaAnexos = null;
   const agendador = opcoes.agendador || criarAgendadorLake({
@@ -99,7 +121,7 @@ async function criarServidor(opcoes = {}) {
     keyGenerator: (request) => request.ator?.principalId || request.ip
   });
   await app.register(multipart, {
-    limits: { files: 1, fileSize: Number(process.env.NEXUS_IMAGE_MAX_BYTES || 10 * 1024 * 1024) }
+    limits: { files: 1, fileSize: maxUploadBytes }
   });
 
   app.decorateRequest('ator', null);
@@ -144,6 +166,13 @@ async function criarServidor(opcoes = {}) {
 
   function anexos(request) {
     return criarServicoAnexos({ pool, storage: attachmentStorage, principalId: request.ator.pid });
+  }
+
+  function documentacao(request) {
+    return criarServicoDocumentacao({
+      pool, storage: knowledgeStorage, principalId: request.ator.pid,
+      embeddings: opcoes.knowledgeEmbeddings, publisher: knowledgePublisher
+    });
   }
 
   app.get('/health/live', async () => ({ status: 'ok' }));
@@ -243,6 +272,7 @@ async function criarServidor(opcoes = {}) {
     if (!pergunta || pergunta.length > 20_000) {
       throw new ErroHub('MENSAGEM_INVALIDA', 'Informe uma mensagem de ate 20.000 caracteres.');
     }
+    const sourceMode = validarModoFonte(request.body?.sourceMode);
     const anexosTurno = await anexos(request).resolverParaTurno(request.params.id, attachmentIds);
     const inicio = await hub.iniciarSolicitacao(request.params.id, {
       clientRequestId: request.body?.clientRequestId,
@@ -304,6 +334,7 @@ async function criarServidor(opcoes = {}) {
         semanticEscalationMode: process.env.NEXUS_SEMANTIC_ESCALATION_MODE || 'shadow',
         semanticTier: faixaMinimaDaComposicao(composicao),
         compositionLevel: composicao,
+        sourceMode,
         traceId: inicio.request.trace_id,
         anexos: anexosTurno,
         onTurnStarted: async ({ turnId }) => {
@@ -332,6 +363,7 @@ async function criarServidor(opcoes = {}) {
           role: 'assistant',
           content: resultado.texto,
           provenance: resultado.proveniencia,
+          sourceMode,
           evidence: resultado.evidencia || (resultado.fontesWeb?.length ? { sources: resultado.fontesWeb } : null),
           usage: resultado.usageSummary
         }
@@ -347,6 +379,70 @@ async function criarServidor(opcoes = {}) {
 
   app.post('/v1/memory-offers/:id/respond', async (request) =>
     servico(request).responderOferta(request.body?.conversationId, request.params.id, request.body?.action));
+
+  app.get('/v1/knowledge', async (request) => documentacao(request).listar({
+    departmentId: request.query?.departmentId || null,
+    status: request.query?.status === 'all' ? null : request.query?.status || 'publicado',
+    busca: request.query?.search || '', limite: request.query?.limit
+  }));
+  app.post('/v1/knowledge', async (request, reply) => {
+    const criado = await documentacao(request).criarRascunho(request.body || {});
+    reply.code(201);
+    return criado;
+  });
+  app.get('/v1/knowledge/:id', async (request) => documentacao(request).obter(request.params.id, {
+    departmentId: request.query?.departmentId || null
+  }));
+  app.patch('/v1/knowledge/:id', async (request) =>
+    documentacao(request).atualizarRascunho(request.params.id, request.body || {}));
+  app.post('/v1/knowledge/:id/submit', async (request) =>
+    documentacao(request).enviarParaRevisao(request.params.id, request.body?.departmentId || null));
+  app.post('/v1/knowledge/:id/publish', async (request) =>
+    documentacao(request).publicar(request.params.id, request.body || {}));
+  app.post('/v1/knowledge/:id/request-changes', async (request) =>
+    documentacao(request).solicitarAjustes(request.params.id, request.body || {}));
+  app.post('/v1/knowledge/:id/move', async (request) =>
+    documentacao(request).realocarDocumento(request.params.id, request.body || {}));
+  app.get('/v1/knowledge/:id/download/:format', async (request, reply) => {
+    const formato = String(request.params.format || '').toLowerCase();
+    const buffer = await documentacao(request).abrirPublicado(request.params.id, formato, {
+      departmentId: request.query?.departmentId || null
+    });
+    reply.header('Content-Type', formato === 'docx'
+      ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf');
+    reply.header('Content-Disposition', `attachment; filename="documento.${formato}"`);
+    return reply.send(buffer);
+  });
+  app.get('/v1/knowledge/:id/pages/:page/image', async (request, reply) => {
+    const buffer = await documentacao(request).abrirPaginaVisual(
+      request.params.id, Number(request.params.page), { departmentId: request.query?.departmentId || null }
+    );
+    reply.header('Content-Type', 'image/png');
+    reply.header('Cache-Control', 'private, max-age=3600');
+    return reply.send(buffer);
+  });
+
+  app.post('/v1/admin/knowledge/import', async (request, reply) => {
+    const campos = {};
+    let arquivo = null;
+    for await (const parte of request.parts()) {
+      if (parte.type === 'file') {
+        if (arquivo) throw new ErroHub('IMPORTACAO_INVALIDA', 'Envie somente um documento por requisicao.', 400);
+        arquivo = { buffer: await parte.toBuffer(), nomeArquivo: parte.filename, mediaType: parte.mimetype };
+      } else campos[parte.fieldname] = parte.value;
+    }
+    if (!arquivo) throw new ErroHub('DOCUMENTO_AUSENTE', 'Selecione um documento para importar.', 400);
+    const resultado = await documentacao(request).registrarImportacao({
+      ...arquivo, titulo: campos.titulo, tipo: campos.tipo || 'procedimento',
+      escopo: campos.escopo || 'setor', departmentId: campos.departmentId || null,
+      externalDriveId: campos.externalDriveId || null,
+      externalItemId: campos.externalItemId || null,
+      externalPath: campos.externalPath || null,
+      modificadoEm: campos.modificadoEm || null
+    });
+    reply.code(201);
+    return resultado;
+  });
 
   app.get('/v1/admin/principals', async (request) => servico(request).listarPrincipals());
   app.post('/v1/admin/principals', async (request, reply) => {

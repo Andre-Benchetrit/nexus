@@ -1,9 +1,7 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/auth";
 import { HubShell } from "@/components/hub-shell";
+import { requireNexusProfile } from "@/lib/server-profile";
 
 export default async function HomePage() {
-  const session = await auth();
-  if (!session?.nexus) redirect("/login");
-  return <HubShell profile={session.nexus} />;
+  const profile = await requireNexusProfile();
+  return <HubShell profile={profile} />;
 }

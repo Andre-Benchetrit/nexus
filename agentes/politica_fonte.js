@@ -4,7 +4,7 @@ function normalizar(texto) {
 }
 
 const ENTIDADES_CORPORATIVAS =
-  /\b(pedidos?|vendas?|faturamentos?|estoques?|produtos?|notas?(?: fiscais?)?|agendamentos?|reposicoes?|fretes?|clientes?|funcionarios?|colaboradores?|pessoas?|margens?|bloqueios?|rupturas?)\b/;
+  /\b(pedidos?|vendas?|faturamentos?|estoques?|produtos?|notas?(?: fiscais?)?|agendamentos?|reposicoes?|fretes?|clientes?|funcionarios?|colaboradores?|pessoas?|margens?|bloqueios?|rupturas?|procedimentos?|politicas? internas?|manuais?|processos? internos?)\b/;
 const ACAO_OPERACIONAL =
   /\b(hoje|ontem|este mes|nesse mes|agora|atual|ultimo|ultima|quantos|quanto|quais|listar|liste|mostre|temos|verifique|verificar|consulte|consultar|analise|analisar|acompanhe|acompanhar|ranking|ranqueie|top|receita|faturou|vendeu|vendidos?)\b/;
 const REFERENCIA_CONTINUIDADE =
@@ -37,11 +37,16 @@ function exigeFonteCorporativa(pergunta, contexto = {}) {
   );
   const sqlCorporativo = /\b(sql|query|select)\b/.test(texto) &&
     ENTIDADES_CORPORATIVAS.test(texto);
+  const documentacaoCorporativa = /\b(procedimento|politica interna|manual|processo interno|instrucao de trabalho|passo a passo)\b/.test(texto) ||
+    /\bcomo (?:devo|faco|realizo|executar)\b/.test(texto) && /\b(?:processo|empresa|setor|interno)\b/.test(texto) ||
+    /\b(?:como|onde)\b.{0,60}\b(?:desbloque|liber|cadast|solicit|abr|alter|corrij|resolv|execut|realiz|acess)\w*/.test(texto) &&
+      ENTIDADES_CORPORATIVAS.test(texto);
   if (identificador) return { obrigatoria: true, motivo: 'identificador_corporativo' };
   if (posseCorporativa) return { obrigatoria: true, motivo: 'posse_corporativa' };
   if (fatoOperacional) return { obrigatoria: true, motivo: 'fato_operacional_mutavel' };
   if (continuidadeCorporativa) return { obrigatoria: true, motivo: 'continuacao_corporativa' };
   if (sqlCorporativo) return { obrigatoria: true, motivo: 'sql_corporativo' };
+  if (documentacaoCorporativa) return { obrigatoria: true, motivo: 'documentacao_corporativa' };
   return { obrigatoria: false, motivo: 'decisao_generalista' };
 }
 

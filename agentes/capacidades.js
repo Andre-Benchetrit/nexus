@@ -1,7 +1,7 @@
 const DOMINIOS = Object.freeze([
   'indicadores', 'influencias', 'estoque', 'reposicoes', 'bloqueios_estoque',
   'desempenho', 'frete', 'operacao', 'vendas', 'catalogo', 'pessoas',
-  'produto', 'sql', 'gold', 'silver', 'bronze', 'hibrido'
+  'produto', 'documentacao', 'sql', 'gold', 'silver', 'bronze', 'hibrido'
 ]);
 
 const INTENCOES = Object.freeze([
@@ -188,6 +188,17 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     campos: ['nome', 'status', 'empresa'],
     operacoes: ['resumir', 'listar']
   }),
+  consultar_documentacao: capacidade({
+    dominio: 'documentacao', intencoes: ['listar', 'localizar', 'detalhar', 'explicar', 'resumir'],
+    entidades: ['procedimento', 'politica', 'manual', 'processo', 'setor'],
+    campos: ['documento_id', 'titulo_documento', 'versao_documento', 'pagina_documento', 'trecho', 'links', 'citacao'],
+    operacoes: ['consultar'], mutavel: true,
+    transformacoesPermitidas: ['resumir', 'ordenar', 'destacar', 'formatar_tabela'],
+    derivacoesPermitidas: [],
+    granularidades: ['documento', 'pagina', 'trecho'],
+    volumeMaximoSintese: 12,
+    perfilResposta: 'instrucao_com_citacoes'
+  }),
   resolver_produto: capacidade({
     dominio: 'produto', intencoes: ['localizar', 'detalhar', 'enriquecer'],
     entidades: ['produto', 'sku', 'ean'],
@@ -252,7 +263,8 @@ function dominioCobreSolicitacao(dominio, intencao, campos = []) {
 const CHAVES_REFERENCIA = Object.freeze(new Set([
   'marketplace_pedido', 'marketplace_pedidos', 'id_nota_saida', 'ids_notas_saida',
   'id_produto', 'ids_produtos', 'sku', 'skus', 'ean', 'eans',
-  'nota_fiscal', 'notas_fiscais', 'notas_fiscais_entrada'
+  'nota_fiscal', 'notas_fiscais', 'notas_fiscais_entrada',
+  'documento_id', 'documento_ids'
 ]));
 
 function valoresEscalares(valor) {

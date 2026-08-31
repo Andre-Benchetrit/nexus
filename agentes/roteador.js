@@ -3,6 +3,7 @@ const PERFIS = Object.freeze([
   'bloqueios_estoque',
   'desempenho', 'frete', 'operacao', 'reposicoes',
   'vendas', 'catalogo', 'pessoas', 'produto',
+  'documentacao',
   'sql', 'negocio', 'hibrido', 'gold', 'silver', 'bronze', 'completo'
 ]);
 
@@ -15,6 +16,15 @@ function normalizarTexto(texto) {
 
 function classificarPorRegras(pergunta) {
   const texto = normalizarTexto(pergunta);
+  const orientacaoOperacional = /\b(?:como|onde)\b.{0,60}\b(?:desbloque|liber|cadast|solicit|abr|alter|corrij|resolv|execut|realiz|acess)\w*/.test(texto) &&
+    /\b(?:pedidos?|produtos?|clientes?|notas?|bloqueios?|sistema|erp|processo|empresa|setor)\b/.test(texto);
+  const consultaDocumentalExplicita =
+    /\b(?:consult|verific|confir|busc)\w*.{0,60}\b(?:politica|manual|documentacao|procedimento)\b/.test(texto) ||
+    /\b(?:politica|manual|documentacao|procedimento)\b.{0,60}\b(?:diz|preve|orient|determina|permite|proibe)\w*/.test(texto);
+  const documentacao = (/\b(procedimento|politica interna|manual|instrucao de trabalho|passo a passo|processo interno|como devo|como faco|qual o processo)\b/.test(texto) ||
+    orientacaoOperacional || consultaDocumentalExplicita) &&
+    !/\b(sql|query|select)\b/.test(texto);
+  if (documentacao) return 'documentacao';
   if (/\b(sql|query|select)\b|(?:crie|gere|monte|construa).{0,25}(?:consulta|relatorio)/.test(texto)) return 'sql';
   const auditoria = /\bbronze\b|dado[s]? bruto[s]?|auditori|versoes do registro|alteracoes do registro/.test(texto);
   if (auditoria) return 'bronze';
@@ -120,6 +130,7 @@ function pedeMesmaCobertura(pergunta) {
 function referenciaContextual(pergunta) {
   const texto = normalizarTexto(pergunta);
   return /^(e |agora |tambem |nesse|nessa|nesses|nessas|desses|dessas|deles|delas|pode me passar|passe|repita|inclua|adicione|acrescente)/.test(texto)
+    || /^(?:ta,?\s*)?(?:mas\s+)?(?:onde|qual (?:e |o )?(?:link|portal|site|sistema)|como (?:eu )?acesso|em qual (?:portal|site|sistema))\b/.test(texto)
     || /\b(esses|essas|estes|estas|os mesmos|as mesmas|novamente|resultado anterior|dados anteriores)\b/.test(texto)
     || /\b(?:outros?|outras?)\s+(?:bloqueios?|pedidos?|produtos?|resultados?|registros?)\b/.test(texto)
     || /\btambem\s*[?.!]*$/.test(texto);

@@ -163,9 +163,48 @@ function criarClienteGraph(conexao, opcoes = {}) {
   };
 }
 
+function caminhoRelativoSeguro(caminho) {
+  const partes = String(caminho || '').replace(/\\/g, '/').split('/').filter(Boolean);
+  if (!partes.length || partes.some((parte) => parte === '.' || parte === '..' || /[\x00-\x1f:*?"<>|]/.test(parte))) {
+    throw new Error('Caminho de publicacao invalido.');
+  }
+  return partes.join('/');
+}
+
+function criarClienteGraphEscrita(conexao, opcoes = {}) {
+  const fetchImpl = opcoes.fetchImpl || globalThis.fetch;
+  const obterToken = opcoes.obterToken || obterTokenAplicacao;
+  const raiz = caminhoRelativoSeguro(opcoes.rootPath || process.env.NEXUS_KNOWLEDGE_ONEDRIVE_PUBLISH_ROOT_PATH);
+  if (typeof fetchImpl !== 'function') throw new Error('Cliente HTTP indisponivel.');
+
+  async function enviarArquivo({ driveId = conexao.driveId, caminho, buffer, contentType }) {
+    if (!driveId) throw new Error('Drive de publicacao documental nao configurado.');
+    if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('Arquivo de publicacao vazio.');
+    if (buffer.length > 4 * 1024 * 1024) {
+      throw new Error('Arquivo excede 4 MB; sessao de upload documental ainda nao esta habilitada.');
+    }
+    const relativo = caminhoRelativoSeguro(caminho);
+    const destino = `${raiz}/${relativo}`;
+    const token = await obterToken(conexao.credenciais, { fetchImpl, agoraMs: opcoes.agoraMs });
+    const url = validarUrlGraph(`/drives/${encodeURIComponent(driveId)}/root:/${codificarCaminho(destino)}:/content`);
+    const resposta = await fetchImpl(url, {
+      method: 'PUT', body: buffer,
+      headers: { authorization: `Bearer ${token}`, 'content-type': contentType || 'application/octet-stream' }
+    });
+    const corpo = await resposta.json().catch(() => ({}));
+    if (!resposta.ok) throw new Error(mensagemErroGraph(resposta, corpo));
+    return { id: corpo.id, name: corpo.name, webUrl: corpo.webUrl,
+      lastModifiedDateTime: corpo.lastModifiedDateTime };
+  }
+
+  return Object.freeze({ enviarArquivo, rootPath: raiz });
+}
+
 module.exports = {
   BASE_GRAPH,
   codificarCaminho,
   criarClienteGraph,
+  criarClienteGraphEscrita,
+  caminhoRelativoSeguro,
   validarUrlGraph
 };

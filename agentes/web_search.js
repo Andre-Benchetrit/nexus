@@ -3,6 +3,8 @@ const catalogoEntidadesWeb = require('../config/web-entities.json');
 
 const CONSULTA_SENSIVEL = /(?:postgres(?:ql)?:\/\/|api[_ -]?key|senha|password|secret|bearer\s+[a-z0-9._-]+|\b(?:select|insert|update|delete)\s+.+\bfrom\b|\b\d{7,}\b|@[a-z0-9.-]+\.[a-z]{2,})/i;
 const PEDIDO_EXPLICITO = /\b(pesquis(?:e|ar)|busque? (?:na|a )?internet|procure? (?:na|a )?web|fontes? (?:na|da )?internet|consulte? (?:a|na) web)\b/i;
+const PEDIDO_PUBLICO_IMPLICITO = /\b(?:ultim(?:a|as|o|os)\s+not[ií]cias?|not[ií]cias?\s+(?:recentes?\s+)?(?:de|da|do|sobre)|cota[cç][aã]o\s+(?:atual\s+)?(?:de|do|da)|pre[cç]o\s+atual\s+(?:de|do|da)|vers[aã]o\s+atual\s+(?:de|do|da)|mudan[cç]as?\s+mais\s+recentes?\s+(?:de|do|da|em)|lan[cç]amentos?\s+mais\s+recentes?\s+(?:de|do|da))\b/i;
+const CONTINUACAO_WEB = /\b(?:mais fontes|outras fontes|continue (?:a|essa) pesquisa|aprofunde (?:a|essa) pesquisa|pesquise novamente|busque novamente|procure novamente|tente (?:pesquisar|buscar) novamente|sobre (?:isso|esse assunto)|e quanto a|e sobre)\b/i;
 const INFORMACAO_INSTAVEL = /\b(hoje|agora|atual|atualmente|recente|ultim[oa]s?|noticia|preco|cotacao|legislacao|lei|regulamento|versao|lancamento|agenda|previsao|presidente|ceo)\b/i;
 const TERMOS_GENERICOS = new Set([
   'a', 'as', 'algo', 'alguma', 'coisa', 'com', 'como', 'da', 'das', 'de', 'do', 'dos',
@@ -41,26 +43,31 @@ function sugerirConsultaPesquisa(pergunta = '') {
     .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function classificarIntencaoPesquisa(pergunta = '') {
+function classificarIntencaoPesquisa(pergunta = '', contexto = {}) {
   const texto = normalizarIntencao(pergunta);
   const explicita = PEDIDO_EXPLICITO.test(texto);
+  const publicaImplicita = PEDIDO_PUBLICO_IMPLICITO.test(texto);
+  const continuacao = contexto.ultimaProveniencia === 'web' && CONTINUACAO_WEB.test(texto);
   const instavel = INFORMACAO_INSTAVEL.test(texto);
-  if (!explicita && !instavel) {
-    return { modo: 'nenhuma', explicita: false, instavel: false, assunto: null };
+  if (!explicita && !publicaImplicita && !continuacao) {
+    return { modo: 'nenhuma', explicita: false, publicaImplicita: false,
+      continuacao: false, instavel, assunto: null };
   }
   const assunto = extrairAssuntoPesquisa(pergunta);
   if (!assunto) {
-    return { modo: 'esclarecer', explicita, instavel, assunto: null };
+    return { modo: 'esclarecer', explicita, publicaImplicita, continuacao,
+      instavel, assunto: null };
   }
   return {
-    modo: explicita ? 'delegada' : 'obrigatoria',
-    explicita, instavel, assunto,
-    consultaSugerida: explicita ? sugerirConsultaPesquisa(pergunta) : String(pergunta).trim()
+    modo: 'delegada',
+    explicita, publicaImplicita, continuacao, instavel, assunto,
+    consultaSugerida: explicita || continuacao
+      ? sugerirConsultaPesquisa(pergunta) : String(pergunta).trim()
   };
 }
 
-function precisaPesquisaWeb(pergunta = '') {
-  return classificarIntencaoPesquisa(pergunta).modo !== 'nenhuma';
+function precisaPesquisaWeb(pergunta = '', contexto = {}) {
+  return classificarIntencaoPesquisa(pergunta, contexto).modo !== 'nenhuma';
 }
 
 function pedidoExplicitoPesquisaWeb(pergunta = '') {

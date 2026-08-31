@@ -7,7 +7,7 @@ A FID é a primeira implantação corporativa do projeto, não uma limitação d
 O projeto possui duas formas de uso:
 
 - **CLI**, para operação, desenvolvimento e validação técnica;
-- **Hub web**, para colaboradores autenticados pela Microsoft, com chats, setores, composição de resposta e painel administrativo.
+- **Hub web**, para colaboradores autenticados pela Microsoft, com chats, setores, composição de resposta, seleção explícita de fonte e painel administrativo.
 
 ## Visão geral
 
@@ -35,6 +35,7 @@ O PostgreSQL operacional não substitui o lake nem os bancos de origem. Ele guar
 - Faz fallback entre providers sem repetir tools já concluídas no mesmo turno.
 - Pesquisa a web com fontes citadas e proteção contra vazamento de dados corporativos.
 - Processa imagens localmente para OCR, QR, códigos de barras e metadados seguros; visão externa é opcional e governada.
+- Consulta procedimentos, políticas e manuais versionados, sempre limitados ao setor ativo e com citação de documento, versão e página.
 - Audita chamadas de IA, tokens, custos, tools, autorização, fallback e proveniência sem gravar prompts, SQL, credenciais ou resultados técnicos brutos.
 
 ## Fluxo de uma pergunta
@@ -107,6 +108,8 @@ npm run nexus:hub
 
 O Hub local abre em `http://localhost:3000`.
 
+Em cada mensagem, o usuário pode manter **Automático** ou escolher diretamente **Consultar dados**, **Verificar documentação** ou **Pesquisar na web**. A escolha limita a fonte daquele turno; permissões e guardas contra vazamento continuam sendo aplicadas pelo servidor.
+
 ## Configurações importantes
 
 As variáveis completas e seus valores de exemplo ficam em [.env.example](.env.example). As principais são:
@@ -119,6 +122,7 @@ As variáveis completas e seus valores de exemplo ficam em [.env.example](.env.e
 | Fallback e aprendizado | `NEXUS_HANDOFF_MODE`, `NEXUS_MEMORY_AUTOMATION_MODE`, `NEXUS_PLAYBOOK_MODE` |
 | Pesquisa web | `NEXUS_WEB_MODE`, `NEXUS_WEB_PROVIDER`, `TAVILY_API_KEY` |
 | Imagens | `NEXUS_IMAGE_MODE`, `NEXUS_ATTACHMENTS_ROOT`, `NEXUS_VISION_PROVIDER`, `NEXUS_VISION_MODEL` |
+| Base de conhecimento | `NEXUS_KNOWLEDGE_MODE`, `NEXUS_KNOWLEDGE_ROOT`, `NEXUS_KNOWLEDGE_EMBEDDING_MODE`, `NEXUS_KNOWLEDGE_VISION_MODEL` |
 | Hub | `AUTH_SECRET`, `NEXUS_HUB_*`, `NEXUS_API_INTERNAL_URL` |
 
 Para o piloto, o Hub opera com `NEXUS_AUTHZ_MODE=enforce`. O CLI pode permanecer em `audit` enquanto a governança é calibrada.
@@ -148,6 +152,11 @@ npm run nexus:pricing:import
 npm run nexus:usage:report
 npm run nexus:usage:trace -- <trace_id>
 
+# Procedimentos, políticas e manuais
+npm run nexus:knowledge:status
+npm run nexus:knowledge:sync
+npm run nexus:knowledge:import-local -- "C:\caminho\para\PROCEDIMENTOS"
+
 # Qualidade do Hub
 npm run nexus:hub:build
 npm test
@@ -162,6 +171,7 @@ npm test
 - [IA generalista, providers e custos](docs/IA_GENERALISTA.md)
 - [Memória governada e avaliação](docs/MEMORIA_E_AVALIACAO.md)
 - [Pesquisa web e imagens](docs/WEB_E_IMAGENS.md)
+- [Base de conhecimento documental](docs/CONHECIMENTO.md)
 - [Gold e definições de negócio](docs/GOLD.md)
 - [Automação do lake](docs/AUTOMACAO.md)
 - [OneDrive como fonte corporativa](docs/ONEDRIVE.md)

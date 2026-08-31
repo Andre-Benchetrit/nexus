@@ -14,7 +14,7 @@ const {
   classificarSensibilidade, precisaInterpretacaoVisual, processarImagemLocal, sanitizarImagem
 } = require('../agentes/image_processing');
 const { criarFileSystemAttachmentStorage } = require('../nexus/attachment_storage');
-const { executarAssistente } = require('../agentes/assistente_nexus');
+const { executarAssistente, resolverModoFonte } = require('../agentes/assistente_nexus');
 
 function memoriaFalsa() { return { obterTarefaAtiva: async () => null, listarPreferencias: async () => [], sessao: 'web-imagem' }; }
 function governancaFalsa() {
@@ -23,9 +23,12 @@ function governancaFalsa() {
     async concluirTool() {} };
 }
 
-test('politica web reconhece pedido e atualidade sem pesquisar texto estavel', () => {
+test('politica web exige intencao de pesquisa e nao usa atualidade isolada', () => {
   assert.equal(precisaPesquisaWeb('Pesquise as novidades do PostgreSQL'), true);
   assert.equal(precisaPesquisaWeb('Qual é a versão atual do PostgreSQL?'), true);
+  assert.equal(precisaPesquisaWeb('Tente gravar novamente agora.'), false);
+  assert.equal(precisaPesquisaWeb('Faça isso hoje, por favor.'), false);
+  assert.equal(precisaPesquisaWeb('Pode tentar novamente agora?'), false);
   assert.equal(precisaPesquisaWeb('Revise este texto e deixe mais curto'), false);
   assert.equal(classificarIntencaoPesquisa(
     'Olá Nexus, como está? Pode pesquisar algo para mim?'
@@ -33,6 +36,103 @@ test('politica web reconhece pedido e atualidade sem pesquisar texto estavel', (
   assert.equal(classificarIntencaoPesquisa(
     'Pesquise as últimas notícias da FID'
   ).modo, 'delegada');
+  assert.equal(classificarIntencaoPesquisa('Mais fontes sobre esse assunto', {
+    ultimaProveniencia: 'web'
+  }).modo, 'delegada');
+  assert.equal(classificarIntencaoPesquisa('Tente novamente agora', {
+    ultimaProveniencia: 'conhecimento_geral'
+  }).modo, 'nenhuma');
+});
+
+test('modo de fonte explicito e validado antes da execucao', () => {
+  assert.equal(resolverModoFonte(), 'automatico');
+  assert.equal(resolverModoFonte('documentacao'), 'documentacao');
+  assert.throws(() => resolverModoFonte('qualquer'), (erro) => {
+    assert.equal(erro.codigo, 'MODO_FONTE_INVALIDO');
+    return true;
+  });
+});
+
+test('modo web selecionado oferece pesquisa mesmo sem palavras gatilho', async () => {
+  let buscas = 0;
+  const resultado = await executarAssistente('Quero entender melhor o PostgreSQL 18', {
+    sourceMode: 'web', memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: governancaFalsa(), webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar() { buscas += 1; return {
+      status: 'complete', provider: 'tavily', profundidade: 'basic', creditos: 1,
+      atualizadoEm: new Date().toISOString(), fontes: [{ id: 'fonte-1', titulo: 'PostgreSQL 18',
+        url: 'https://www.postgresql.org/docs/18/', dominio: 'www.postgresql.org', trecho: 'Documentacao oficial.' }]
+    }; } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
+      const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
+      assert.ok(pesquisar);
+      await pesquisar.executar({ query: 'PostgreSQL 18', searchDepth: 'basic' });
+      return { texto: 'Veja a [documentação oficial](https://www.postgresql.org/docs/18/).',
+        provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.equal(buscas, 1);
+  assert.equal(resultado.proveniencia, 'web');
+  assert.equal(resultado.politicaFonte.modoSelecionado, 'web');
+});
+
+test('modo documentacao força o perfil documental sem depender da frase', async () => {
+  let perfilRecebido = null;
+  const resultado = await executarAssistente('Onde encontro essa orientação?', {
+    sourceMode: 'documentacao', memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: governancaFalsa(),
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar() {
+      throw new Error('nao deveria sintetizar uma resposta pronta');
+    } },
+    executarAgenteCorporativo: async (_pergunta, dependencias) => {
+      perfilRecebido = dependencias.perfilTools;
+      return { texto: 'Abra o manual operacional publicado.', roteamento: {
+        perfilInicial: 'documentacao', perfilEfetivo: 'documentacao',
+        ferramentasExecutadas: ['consultar_documentacao'], respostaPronta: true
+      } };
+    }
+  });
+  assert.equal(perfilRecebido, 'documentacao');
+  assert.equal(resultado.texto, 'Abra o manual operacional publicado.');
+  assert.equal(resultado.politicaFonte.modoSelecionado, 'documentacao');
+});
+
+test('modo dados impede pesquisa web e força uma consulta corporativa', async () => {
+  let consultas = 0;
+  let buscas = 0;
+  const resultado = await executarAssistente('Explique o cenário selecionado', {
+    sourceMode: 'dados', memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: governancaFalsa(), webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar() { buscas += 1; return { status: 'empty', fontes: [] }; } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar() {
+      throw new Error('nao deveria sintetizar uma resposta pronta');
+    } },
+    executarAgenteCorporativo: async () => {
+      consultas += 1;
+      return { texto: 'Resultado confirmado nos dados.', roteamento: {
+        perfilInicial: 'indicadores', perfilEfetivo: 'indicadores',
+        ferramentasExecutadas: ['analisar_indicadores'], respostaPronta: true
+      } };
+    }
+  });
+  assert.equal(consultas, 1);
+  assert.equal(buscas, 0);
+  assert.equal(resultado.politicaFonte.modoSelecionado, 'dados');
+});
+
+test('assistente nao oferece pesquisa por causa da palavra agora', async () => {
+  let buscas = 0;
+  const resultado = await executarAssistente('Tente gravar novamente agora.', {
+    memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar() { buscas += 1;
+      return { status: 'empty', fontes: [] }; } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
+      assert.equal(tools.some((item) => item.definicao.name === 'pesquisar_web'), false);
+      return { texto: 'Certo, vou tentar novamente.', provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.equal(buscas, 0);
+  assert.equal(resultado.proveniencia, 'conhecimento_geral');
 });
 
 test('catalogo publico expande FID e rejeita fontes sem correspondencia da entidade', async () => {
@@ -224,8 +324,11 @@ test('pesquisa web nao expoe consultar_nexus ao modelo de sintese', async () => 
         url: 'https://example.com/fid', dominio: 'example.com', trecho: 'Notícia pública.' }]
     }; } },
     generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools, stage }) {
-      assert.equal(stage, 'web_synthesis');
+      assert.equal(stage, 'generalist_response');
       assert.equal(tools.some((item) => item.definicao.name === 'consultar_nexus'), false);
+      const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
+      assert.ok(pesquisar);
+      await pesquisar.executar({ query: 'últimas notícias da FID', searchDepth: 'basic' });
       return { texto: '[Notícia da FID](https://example.com/fid)', provider: 'mock', modelo: 'mock' };
     } },
     executarAgenteCorporativo: async () => { consultasCorporativas += 1; }

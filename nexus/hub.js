@@ -372,6 +372,9 @@ function criarServicoHub(opcoes = {}) {
     const linhas = (await pool.query(`
       SELECT m.id,m.turn_id,m.trace_id,m.papel,m.conteudo,m.proveniencia,m.criado_em,
         t.status AS turn_status,
+        (SELECT ae.metadados->>'source_mode' FROM nexus.audit_events ae
+          WHERE ae.turn_id=m.turn_id AND ae.tipo='source_policy_decision'
+          ORDER BY ae.criado_em DESC,ae.id DESC LIMIT 1) AS source_mode,
         CASE WHEN m.papel='user' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object(
           'id',a.id,'mediaType',a.media_type,'bytes',a.bytes,'width',a.width,'height',a.height,
           'url','/api/nexus/conversations/' || a.conversation_id || '/attachments/' || a.id
@@ -384,7 +387,8 @@ function criarServicoHub(opcoes = {}) {
     `, [conversationId, filtros.cursor || null, limite])).rows.reverse();
     return linhas.map((linha) => ({ id: linha.id, turnId: linha.turn_id, traceId: linha.trace_id,
       role: linha.papel, content: linha.conteudo, provenance: linha.proveniencia,
-      attachments: linha.attachments || [], turnStatus: linha.turn_status, createdAt: linha.criado_em }));
+      sourceMode: linha.source_mode || 'automatico', attachments: linha.attachments || [],
+      turnStatus: linha.turn_status, createdAt: linha.criado_em }));
   }
 
   async function iniciarSolicitacao(conversationId, dados) {

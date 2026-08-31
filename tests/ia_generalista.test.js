@@ -92,6 +92,20 @@ test('nao afirma que uma memoria foi registrada quando houve apenas sinal em obs
   ), /nenhuma memória foi criada ou aprovada/i);
 });
 
+test('nao afirma que sinal foi enviado ou aceito sem candidatura governada', () => {
+  for (const alegacao of [
+    'Pronto — o sinal foi enviado para avaliação governada, mas nada foi memorizado ainda.',
+    'O pedido foi aceito para avaliação e entrará no painel administrativo.'
+  ]) {
+    const corrigido = corrigirAlegacaoMemoria(alegacao, { motivo: 'regra_estavel' }, {
+      modo: 'propose', oferecida: false
+    });
+    assert.match(corrigido, /não gerou uma candidatura disponível para aprovação/i);
+    assert.match(corrigido, /nada foi enviado ao painel administrativo/i);
+    assert.doesNotMatch(corrigido, /foi enviado para avaliação|aceito para avaliação/i);
+  }
+});
+
 test('normaliza usage sem inventar campos ausentes ou contar cache duas vezes', () => {
   assert.deepEqual(normalizarUsageAnthropic({
     input_tokens: 100, output_tokens: 20,
@@ -190,11 +204,11 @@ test('provider Anthropic e selecionavel e exige modelo', async (t) => {
 test('assistente responde conversa geral sem executar agente corporativo', async () => {
   let corporativo = false;
   const resultado = await executarAssistente('Explique EBITDA', {
-    memoria: memoriaFalsa(), auditoriaIA: false,
+    memoria: memoriaFalsa(), auditoriaIA: false, knowledgeMode: 'v1',
     generalistProvider: {
       nome: 'mock', modelo: 'mock',
       async executar({ tools }) {
-        assert.equal(tools.length, 0);
+        assert.deepEqual(tools.map((item) => item.definicao.name), ['consultar_documentacao']);
         return { texto: 'EBITDA e um indicador.', provider: 'mock', modelo: 'mock' };
       }
     },
@@ -202,6 +216,41 @@ test('assistente responde conversa geral sem executar agente corporativo', async
   });
   assert.equal(resultado.proveniencia, 'conhecimento_geral');
   assert.equal(corporativo, false);
+});
+
+test('generalista valida politica dinamicamente sem passar pelo roteador corporativo', async () => {
+  let corporativo = false;
+  let consultaRecebida = null;
+  const resultado = await executarAssistente('Vou solicitar a senha dele pelo WhatsApp.', {
+    memoria: memoriaFalsa(), auditoriaIA: false, knowledgeMode: 'v1',
+    executarConsultarDocumentacaoTool: async (argumentos) => {
+      consultaRecebida = argumentos;
+      return { status: 'sucesso', resultados: [{
+        titulo: 'Responsabilidade e uso de ativos', versao: 1, pagina: 3,
+        trecho: 'Credenciais são pessoais e intransferíveis.',
+        citacao: 'Responsabilidade e uso de ativos - versao 1, pagina 3'
+      }] };
+    },
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar({ tools, instrucoes }) {
+        assert.match(instrucoes, /compartilhar senha ou acesso/);
+        const tool = tools.find((item) => item.definicao.name === 'consultar_documentacao');
+        assert.ok(tool);
+        const evidencia = JSON.parse(await tool.executar({
+          consulta: 'compartilhamento de senha pelo WhatsApp', limite: 4,
+          analisar_visual: false
+        }));
+        assert.equal(evidencia.status, 'sucesso');
+        return { texto: 'Isso pode contrariar a política: credenciais são pessoais. Responsabilidade e uso de ativos - versao 1, pagina 3.', provider: 'mock', modelo: 'mock' };
+      }
+    },
+    executarAgenteCorporativo: async () => { corporativo = true; }
+  });
+  assert.equal(corporativo, false);
+  assert.equal(consultaRecebida.consulta, 'compartilhamento de senha pelo WhatsApp');
+  assert.equal(resultado.documentacaoConsultada, true);
+  assert.equal(resultado.proveniencia, 'dados_nexus');
 });
 
 test('guarda corporativa consulta o agente existente antes da resposta final', async () => {

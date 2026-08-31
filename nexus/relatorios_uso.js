@@ -135,8 +135,9 @@ async function relatorioTrace(pool, traceId) {
     FROM nexus.audit_events WHERE trace_id=$1
       AND tipo IN (
         'provider_handoff','memory_review_signal','memory_assessment','memory_candidate',
-        'semantic_tier_decision','corporate_evidence','synthesis_validation',
-        'tool_arguments_normalized','web_synthesis_validation','web_search_shadow'
+         'semantic_tier_decision','corporate_evidence','synthesis_validation',
+         'tool_arguments_normalized','web_synthesis_validation','web_search_shadow',
+         'document_retrieval_retry','document_retrieval_failure'
       )
     ORDER BY criado_em,id
   `, [traceId])).rows;

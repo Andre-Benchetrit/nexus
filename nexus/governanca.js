@@ -6,6 +6,7 @@ const PERMISSOES_ESPECIAIS = Object.freeze({
   pesquisar_web: 'ia.web.pesquisar',
   processar_imagem_local: 'ia.imagem.processar_local',
   interpretar_imagem: 'ia.imagem.interpretar',
+  consultar_documentacao: 'documentacao.consultar',
   consultar_nexus: 'ia.nexus.consultar',
   solicitar_revisao_memoria: 'memoria.candidatar',
   construir_sql: 'sql.gerar',

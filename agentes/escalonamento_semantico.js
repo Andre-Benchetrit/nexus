@@ -50,6 +50,10 @@ const POLITICAS_DOMINIO = Object.freeze({
   pessoas: Object.freeze({
     basicas: ['listar', 'resumir', 'detalhar'],
     assistidas: ['comparar', 'explicar']
+  }),
+  documentacao: Object.freeze({
+    basicas: ['listar', 'localizar', 'detalhar', 'resumir'],
+    assistidas: ['explicar', 'comparar']
   })
 });
 

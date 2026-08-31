@@ -14,6 +14,14 @@ function aplicarPoliticaArgumentos(nome, argumentos, contexto = {}) {
       normalizados.marketplace_pedidos = [...pedidos];
     }
   }
+  if (nome === 'consultar_documentacao' && !normalizados.documento_id) {
+    const documentos = contexto.referenciasAnteriores?.documento_id || [];
+    const pergunta = String(contexto.pergunta || contexto.decisao?.perguntaAutonoma || '');
+    const continuacaoDocumental = /\b(onde|link|acess|portal|site|sistema|painel|documento|procedimento|manual|isso|esse|essa)\b/i.test(pergunta);
+    if (documentos.length === 1 && continuacaoDocumental) {
+      normalizados.documento_id = documentos[0];
+    }
+  }
   const temporal = contexto.temporal;
   if (nome === 'analisar_influencias' && temporal?.tipo === 'comparacao_periodos') {
     normalizados.data_inicial = temporal.inicio;

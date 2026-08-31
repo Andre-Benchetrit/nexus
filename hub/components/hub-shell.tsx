@@ -9,7 +9,7 @@ import { signOut } from "next-auth/react";
 import { MarkdownMessage } from "./markdown-message";
 import { NexusLogo } from "./nexus-logo";
 import {
-  Attachment, CompositionLevel, Conversation, MemoryOffer, Message, NexusProfile, TurnRequest, nexusFetch
+  Attachment, CompositionLevel, Conversation, MemoryOffer, Message, NexusProfile, SourceMode, TurnRequest, nexusFetch
 } from "@/lib/types";
 
 const COMPOSITIONS: Array<{ value: CompositionLevel; label: string; hint: string }> = [
@@ -18,7 +18,22 @@ const COMPOSITIONS: Array<{ value: CompositionLevel; label: string; hint: string
   { value: "alto", label: "Alto", hint: "Análise aprofundada" },
   { value: "extra_alto", label: "Extra-alto", hint: "Máxima profundidade" }
 ];
+const SOURCE_MODES: Array<{ value: SourceMode; label: string; hint: string }> = [
+  { value: "automatico", label: "Automático", hint: "O Nexus escolhe a fonte" },
+  { value: "dados", label: "Consultar dados", hint: "Indicadores e registros internos" },
+  { value: "documentacao", label: "Verificar documentação", hint: "Procedimentos, políticas e manuais" },
+  { value: "web", label: "Pesquisar na web", hint: "Fontes públicas citadas" }
+];
+const SOURCE_MODE_ICONS: Record<SourceMode, string> = {
+  automatico: "✦", dados: "◆", documentacao: "▤", web: "◇"
+};
 const NEW_CHAT_TURN_KEY = "__new_chat__";
+type PendingFile = { file: File; previewUrl: string };
+type SendMessageOptions = {
+  sourceMode?: SourceMode;
+  files?: PendingFile[];
+  preserveComposer?: boolean;
+};
 
 function groupLabel(date?: string) {
   if (!date) return "Anteriores";
@@ -55,7 +70,7 @@ export function HubShell({ profile, initialConversationId }: {
   profile: NexusProfile; initialConversationId?: string | null;
 }) {
   const router = useRouter();
-  const [currentProfile, setCurrentProfile] = useState(profile);
+  const [currentProfile] = useState(profile);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoaded, setConversationsLoaded] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(initialConversationId || null);
@@ -63,7 +78,7 @@ export function HubShell({ profile, initialConversationId }: {
   const [messagesLoading, setMessagesLoading] = useState(Boolean(initialConversationId));
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [input, setInput] = useState("");
-  const [pendingFiles, setPendingFiles] = useState<Array<{ file: File; previewUrl: string }>>([]);
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [turnProgress, setTurnProgress] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -72,6 +87,9 @@ export function HubShell({ profile, initialConversationId }: {
   const [openConversationMenuId, setOpenConversationMenuId] = useState<string | null>(null);
   const [departmentId, setDepartmentId] = useState(profile.setores[0]?.id || "");
   const [composition, setComposition] = useState<CompositionLevel>("medio");
+  const [sourceMode, setSourceMode] = useState<SourceMode>("automatico");
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null);
   const messagesAreaRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
@@ -91,7 +109,9 @@ export function HubShell({ profile, initialConversationId }: {
     ...(selectedDepartment?.permissoes || [])
   ]);
   const canAdmin = currentProfile.permissoes.some((code) =>
-    ["governanca.administrar", "auditoria.consultar", "custos.consultar.setor", "custos.consultar.global"].includes(code)
+    ["governanca.administrar", "auditoria.consultar", "custos.consultar.setor", "custos.consultar.global",
+      "documentacao.criar.setor", "documentacao.editar.setor", "documentacao.publicar.setor",
+      "documentacao.administrar.global", "documentacao.auditar"].includes(code)
   );
   const canHigh = activePermissions.has("ia.composicao.alta") ||
     activePermissions.has("ia.composicao.extra_alta");
@@ -147,9 +167,15 @@ export function HubShell({ profile, initialConversationId }: {
       if (!(event.target as Element | null)?.closest(".conversation-menu")) {
         setOpenConversationMenuId(null);
       }
+      if (!(event.target as Element | null)?.closest(".composer-actions")) {
+        setComposerMenuOpen(false);
+      }
     }
     function closeOnEscape(event: globalThis.KeyboardEvent) {
-      if (event.key === "Escape") setOpenConversationMenuId(null);
+      if (event.key === "Escape") {
+        setOpenConversationMenuId(null);
+        setComposerMenuOpen(false);
+      }
     }
     document.addEventListener("pointerdown", closeMenus);
     document.addEventListener("keydown", closeOnEscape);
@@ -162,10 +188,6 @@ export function HubShell({ profile, initialConversationId }: {
   useEffect(() => {
     nexusFetch<{ items: string[] }>("suggestions").then((result) => setSuggestions(result.items))
       .catch((cause) => setError(cause.message));
-    nexusFetch<NexusProfile>("me").then((fresh) => {
-      setCurrentProfile(fresh);
-      setDepartmentId((current) => current || fresh.setores[0]?.id || "");
-    }).catch((cause) => setError(cause.message));
   }, []);
 
   useEffect(() => {
@@ -248,6 +270,7 @@ export function HubShell({ profile, initialConversationId }: {
     selectConversation(null); setMessages([]); setMemoryOffer(null); setInput("");
     pendingFiles.forEach((item) => URL.revokeObjectURL(item.previewUrl));
     setPendingFiles([]); setDepartmentId(nextDepartment); setComposition("medio"); setSidebarOpen(false);
+    setSourceMode("automatico"); setComposerMenuOpen(false);
     navigateChat("/");
   }
 
@@ -339,7 +362,7 @@ export function HubShell({ profile, initialConversationId }: {
     }));
   }
 
-  async function uploadFiles(conversationId: string, files: Array<{ file: File; previewUrl: string }>, onStage: (label: string) => void) {
+  async function uploadFiles(conversationId: string, files: PendingFile[], onStage: (label: string) => void) {
     const uploaded: Attachment[] = [];
     try {
       for (const item of files) {
@@ -360,28 +383,32 @@ export function HubShell({ profile, initialConversationId }: {
     }
   }
 
-  async function sendMessage(value = input) {
+  async function sendMessage(value = input, options: SendMessageOptions = {}) {
     const text = value.trim();
     const initialTurnKey = activeId || NEW_CHAT_TURN_KEY;
-    if ((!text && !pendingFiles.length) || turnProgressRef.current[initialTurnKey]) return;
+    const files = options.files ? [...options.files] : [...pendingFiles];
+    if ((!text && !files.length) || turnProgressRef.current[initialTurnKey]) return;
     stickToBottomRef.current = true;
     setShowJumpToBottom(false);
     const prompt = text || "Analise as imagens anexadas.";
-    const files = [...pendingFiles];
     const optimisticId = `optimistic-${crypto.randomUUID()}`;
     const localAttachments: Attachment[] = files.map((item, index) => ({
       id: `${optimisticId}-${index}`, mediaType: item.file.type, bytes: item.file.size,
       width: 0, height: 0, url: item.previewUrl, name: item.file.name, previewUrl: item.previewUrl
     }));
     const createdFromEmpty = !activeId;
+    const turnSourceMode = options.sourceMode || sourceMode;
     let conversationId: string | null = activeId;
     let turnKey = initialTurnKey;
     let turnAccepted = false;
-    setInput(""); setError(null);
+    if (!options.preserveComposer) {
+      setInput(""); setPendingFiles([]); setSourceMode("automatico");
+    }
+    setError(null); setComposerMenuOpen(false);
     setTurnStage(turnKey, files.length ? "Preparando imagens" : "Interpretando sua solicitação");
-    setPendingFiles([]);
     setMessages((items) => [...items, {
-      id: optimisticId, role: "user", content: prompt, optimistic: true, attachments: localAttachments
+      id: optimisticId, role: "user", content: prompt, optimistic: true,
+      sourceMode: turnSourceMode, attachments: localAttachments
     }]);
     try {
       conversationId = await ensureConversation();
@@ -402,6 +429,7 @@ export function HubShell({ profile, initialConversationId }: {
       const response = await fetch(`/api/nexus/conversations/${conversationId}/turns`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ message: prompt, attachmentIds: uploaded.map((item) => item.id), compositionLevel: composition,
+          sourceMode: turnSourceMode,
           clientRequestId: crypto.randomUUID() })
       });
       if (!response.ok) {
@@ -453,8 +481,11 @@ export function HubShell({ profile, initialConversationId }: {
     } catch (cause) {
       if (!turnAccepted && activeIdRef.current === conversationId) {
         setMessages((items) => items.filter((item) => item.id !== optimisticId));
-        setPendingFiles(files);
-        setInput(text);
+        if (!options.preserveComposer) {
+          setPendingFiles(files);
+          setInput(text);
+          setSourceMode(turnSourceMode);
+        }
       } else if (conversationId && activeIdRef.current === conversationId) {
         await nexusFetch<Message[]>(`conversations/${conversationId}/messages`)
           .then((items) => setMessages(visibleMessages(items)))
@@ -465,6 +496,39 @@ export function HubShell({ profile, initialConversationId }: {
       }
     } finally {
       clearTurnStage(turnKey);
+    }
+  }
+
+  async function retryAssistantMessage(message: Message, index: number) {
+    if (activeLoading) return;
+    const original = [...messages.slice(0, index)].reverse().find((item) => item.role === "user");
+    if (!original) return;
+    const retryId = message.id || message.traceId || `assistant-${index}`;
+    setRetryingMessageId(retryId);
+    setError(null);
+    try {
+      const files: PendingFile[] = [];
+      for (const [attachmentIndex, attachment] of (original.attachments || []).entries()) {
+        const response = await fetch(attachment.url, { cache: "no-store" });
+        if (!response.ok) throw new Error("Não foi possível recuperar uma imagem da mensagem original.");
+        const blob = await response.blob();
+        const mediaType = attachment.mediaType || blob.type || "image/png";
+        const extension = mediaType === "image/jpeg" ? "jpg" : mediaType === "image/webp" ? "webp" : "png";
+        const file = new File([blob], attachment.name || `imagem-repetida-${attachmentIndex + 1}.${extension}`, {
+          type: mediaType,
+          lastModified: Date.now()
+        });
+        files.push({ file, previewUrl: URL.createObjectURL(file) });
+      }
+      await sendMessage(original.content, {
+        sourceMode: message.sourceMode || original.sourceMode || "automatico",
+        files,
+        preserveComposer: true
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível tentar novamente.");
+    } finally {
+      setRetryingMessageId(null);
     }
   }
 
@@ -596,10 +660,18 @@ export function HubShell({ profile, initialConversationId }: {
               {message.attachments?.length ? <div className="message-attachments">{message.attachments.map((item) =>
                 <img key={item.id} src={item.previewUrl || item.url} alt={item.name || "Imagem anexada"} />)}</div> : null}
               {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <p>{message.content}</p>}
-              {message.role === "assistant" && message.provenance && <footer>
-                <span className="source-chip">{{ dados_nexus: "◆ Dados internos Nexus", web: "◇ Fontes web",
-                  arquivo: "▧ Imagem", misto: "✦ Fontes combinadas", conhecimento_geral: "◇ Conhecimento geral" }[message.provenance] || "◇ Conhecimento geral"}</span>
-                {message.traceId && <span title={message.traceId}>Trace {message.traceId.slice(0, 8)}</span>}
+              {message.role === "assistant" && <footer className="message-footer">
+                <div className="message-meta">
+                  {message.provenance && <span className="source-chip">{{ dados_nexus: "◆ Dados internos Nexus", web: "◇ Fontes web",
+                    arquivo: "▧ Imagem", misto: "✦ Fontes combinadas", conhecimento_geral: "◇ Conhecimento geral" }[message.provenance] || "◇ Conhecimento geral"}</span>}
+                  {message.traceId && <span title={message.traceId}>Trace {message.traceId.slice(0, 8)}</span>}
+                </div>
+                <button type="button" className="message-retry-button"
+                  disabled={activeLoading || retryingMessageId === (message.id || message.traceId || `assistant-${index}`)}
+                  onClick={() => retryAssistantMessage(message, index)}
+                  aria-label="Tentar responder novamente" title="Tentar responder novamente">
+                  {retryingMessageId === (message.id || message.traceId || `assistant-${index}`) ? "…" : "↻"}
+                </button>
               </footer>}
             </div>
           </article>)}
@@ -626,8 +698,33 @@ export function HubShell({ profile, initialConversationId }: {
             event.preventDefault(); addFiles(Array.from(event.dataTransfer.files));
           }}>
         <input ref={fileInputRef} type="file" hidden multiple accept="image/png,image/jpeg,image/webp" onChange={chooseFiles} />
-        <button className="attach-button" type="button" onClick={() => fileInputRef.current?.click()}
-          disabled={activeLoading || pendingFiles.length >= 4} aria-label="Anexar imagens">＋</button>
+        <details className={`composer-actions ${sourceMode !== "automatico" ? "mode-selected" : ""}`}
+          open={composerMenuOpen} onToggle={(event) => setComposerMenuOpen(event.currentTarget.open)}>
+          <summary className="attach-button" aria-label={`Mais opções. Função atual: ${SOURCE_MODES.find((item) => item.value === sourceMode)?.label}`}
+            aria-disabled={activeLoading} onClick={(event) => {
+              if (activeLoading) event.preventDefault();
+            }}>＋</summary>
+          <div className="composer-actions-menu">
+            <button type="button" onClick={() => {
+              setComposerMenuOpen(false); fileInputRef.current?.click();
+            }} disabled={pendingFiles.length >= 4}>
+              <span className="action-icon">▧</span><span><strong>Anexar imagem</strong><small>PNG, JPEG ou WebP</small></span>
+            </button>
+            <p>Função</p>
+            {SOURCE_MODES.map((item) => <button type="button" key={item.value}
+              className={sourceMode === item.value ? "active" : ""} onClick={() => {
+                setSourceMode(item.value); setComposerMenuOpen(false);
+              }}>
+              <span className="action-icon">{SOURCE_MODE_ICONS[item.value]}</span>
+              <span><strong>{item.label}</strong><small>{item.hint}</small></span>
+              {sourceMode === item.value && <i aria-hidden="true">✓</i>}
+            </button>)}
+          </div>
+        </details>
+        {sourceMode !== "automatico" && <button type="button" className="source-mode-indicator"
+          title={SOURCE_MODES.find((item) => item.value === sourceMode)?.label}
+          aria-label={`Função selecionada: ${SOURCE_MODES.find((item) => item.value === sourceMode)?.label}`}
+          onClick={() => setComposerMenuOpen(true)}>{SOURCE_MODE_ICONS[sourceMode]}</button>}
         <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)}
           onKeyDown={keyDown} onPaste={pasteFiles}
           placeholder="Pergunte ao Nexus..." rows={1} disabled={activeLoading} aria-label="Mensagem" />

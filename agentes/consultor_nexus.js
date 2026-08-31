@@ -94,6 +94,12 @@ function assinaturaEstavel(valor) {
   );
 }
 
+function respostaIndisponibilidadeDocumental() {
+  return 'Não consegui consultar a base documental neste momento. ' +
+    'Isso é uma indisponibilidade técnica e não significa que o procedimento não exista. ' +
+    'Tente novamente em instantes.';
+}
+
 function contextoPermiteBronze(pergunta, justificativa) {
   const texto = `${pergunta} ${justificativa}`
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -394,6 +400,20 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
   let perfilEfetivo = usarDecisaoSemantica
     ? [perfilInicial, ...decisaoRota.dominiosSecundarios].join('+')
     : perfilInicial;
+  if (dependencias.sourceMode === 'dados' && perfilInicial === 'documentacao') {
+    const textoResposta = 'Esta pergunta parece pedir uma orientação de procedimento, mas este turno está no modo Consultar dados. Selecione Verificar documentação ou Automático para eu consultar procedimentos, políticas e manuais autorizados.';
+    dependencias.onEvento?.('Modo Consultar dados bloqueou o acesso cruzado a documentacao.');
+    return {
+      texto: textoResposta,
+      provider: 'nexus', modelo: null, rodadas: 0,
+      interacao: { status: 'precisa_esclarecimento', motivo: 'modo_fonte_incompativel' },
+      roteamento: {
+        perfilInicial, perfilEfetivo, origem: roteamento.origem,
+        ferramentasExecutadas: [], respostaPronta: true,
+        decisao: decisaoRota, esclarecimento: true
+      }
+    };
+  }
   const roteamentoAutomatico = !dependencias.tools &&
     (dependencias.perfilTools || 'automatico') === 'automatico';
   let ferramentas;
@@ -935,7 +955,9 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
   }, 'final');
   const intencaoFinal = decisaoRota?.intencao || 'listar';
   const transformacoesFinais = faixaFinalAvaliada.transformacoes || [];
-  const exigeSintese = (
+  const falhaDocumental = (perfilInicial === 'documentacao' || perfilEfetivo === 'documentacao') &&
+    evidenciaFactual.status === 'error';
+  const exigeSintese = !falhaDocumental && (
     ['comparar', 'explicar', 'diagnosticar', 'auditar'].includes(intencaoFinal) ||
     evidenciaFactual.status === 'partial' ||
     resultadosTools.length > 1 ||
@@ -943,8 +965,10 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       'comparar_periodos', 'calcular_derivacao', 'explicar_variacao', 'combinar_evidencias'
     ].includes(item))
   );
-  const respostaPronta = ['complete', 'empty'].includes(evidenciaFactual.status) &&
-    sustentacaoFactual.status !== 'revisao_necessaria' && !exigeSintese;
+  const respostaPronta = falhaDocumental || (
+    ['complete', 'empty'].includes(evidenciaFactual.status) &&
+    sustentacaoFactual.status !== 'revisao_necessaria' && !exigeSintese
+  );
   if (dependencias.auditoriaIA && dependencias.turnoIA) {
     await dependencias.auditoriaIA.registrarEvento?.(dependencias.turnoIA, {
       tipo: 'corporate_evidence',
@@ -959,7 +983,9 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
   }
   const resultadoFormatado = {
     ...resultado,
-    texto: aplicarGarantiasResposta(resultado.texto, resultadosTools),
+    texto: falhaDocumental
+      ? respostaIndisponibilidadeDocumental()
+      : aplicarGarantiasResposta(resultado.texto, resultadosTools),
     roteamento: {
       perfilInicial,
       perfilEfetivo,
@@ -1290,6 +1316,7 @@ module.exports = {
   configurarTerminalUtf8,
   executarAgente,
   lerArgumentos,
+  respostaIndisponibilidadeDocumental,
   INSTRUCOES,
   MAX_RODADAS_GENERICAS,
   MAX_RODADAS_NEGOCIO,

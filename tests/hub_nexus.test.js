@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   faixaMinimaDaComposicao, normalizarComposicao, resolverIdentidadeMicrosoft,
@@ -44,6 +46,31 @@ test('API recusa concluir turno com mensagem vazia', () => {
     () => validarResultadoTurno({ texto: '   ' }),
     (erro) => erro.codigo === 'RESPOSTA_VAZIA' && erro.status === 502
   );
+});
+
+test('sessao do Hub usa principal minimo sem resolver perfil em cada API', () => {
+  const authSource = fs.readFileSync(path.join(__dirname, '..', 'hub', 'auth.ts'), 'utf8');
+  const sessionCallback = authSource.match(/async session\(\{ session, token \}\) \{([\s\S]*?)\n    \},\n    authorized/)?.[1] || '';
+  assert.match(sessionCallback, /session\.nexus = principal/);
+  assert.doesNotMatch(sessionCallback, /resolveNexusProfile|fetch\(/);
+  assert.match(authSource, /token\.sub = nexusSubject\(principal\)/);
+  assert.match(authSource, /\^nexus:/);
+  const loader = fs.readFileSync(path.join(__dirname, '..', 'hub', 'lib', 'server-profile.ts'), 'utf8');
+  assert.match(loader, /\/v1\/me/);
+  const bff = fs.readFileSync(path.join(__dirname, '..', 'hub', 'app', 'api', 'nexus',
+    '[...path]', 'route.ts'), 'utf8');
+  assert.match(bff, /pid: session\.nexus\.id/);
+});
+
+test('mensagens do Hub preservam o modo de fonte e permitem nova tentativa', () => {
+  const shell = fs.readFileSync(path.join(__dirname, '..', 'hub', 'components', 'hub-shell.tsx'), 'utf8');
+  const hubSource = fs.readFileSync(path.join(__dirname, '..', 'nexus', 'hub.js'), 'utf8');
+  const apiSource = fs.readFileSync(path.join(__dirname, '..', 'services', 'nexus-api', 'server.js'), 'utf8');
+  assert.match(shell, /async function retryAssistantMessage/);
+  assert.match(shell, /className="message-retry-button"/);
+  assert.match(shell, /sourceMode: message\.sourceMode \|\| original\.sourceMode \|\| "automatico"/);
+  assert.match(hubSource, /sourceMode: linha\.source_mode \|\| 'automatico'/);
+  assert.match(apiSource, /provenance: resultado\.proveniencia,[\s\S]*sourceMode,/);
 });
 
 function criarPoolIdentidade({ cadastrado = true } = {}) {
