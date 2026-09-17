@@ -50,8 +50,10 @@ async function listarArquivos(diretorio, nomeArquivo) {
   return arquivos;
 }
 
-async function descobrirExecucoesSilver(raizLake, objeto, camada = 'silver') {
-  return criarLakeStorage({ raizLake }).listarVersoes(camada, objeto.nome);
+async function descobrirExecucoesSilver(raizOuStorage, objeto, camada = 'silver') {
+  const storage = raizOuStorage?.listarVersoes
+    ? raizOuStorage : criarLakeStorage({ raizLake: raizOuStorage });
+  return storage.listarVersoes(camada, objeto.nome);
 }
 
 function criarLeitorSilver(opcoes = {}) {
@@ -61,6 +63,11 @@ function criarLeitorSilver(opcoes = {}) {
   const camada = opcoes.camada || 'silver';
   const rotuloCamada = camada.charAt(0).toUpperCase() + camada.slice(1);
   const con = opcoes.conexao || criarConexaoDuckDB();
+  let storagePreparado = null;
+  const prepararStorage = () => {
+    storagePreparado ||= Promise.resolve().then(() => storage.prepararConexaoDuckDB(con));
+    return storagePreparado;
+  };
   const preparados = new Map();
   let fechado = false;
 
@@ -73,6 +80,7 @@ function criarLeitorSilver(opcoes = {}) {
   async function prepararObjeto(nome) {
     if (fechado) throw new Error(`O leitor ${rotuloCamada} ja foi fechado.`);
     if (preparados.has(nome)) return preparados.get(nome);
+    await prepararStorage();
     const objeto = objetoPorNome(nome);
     const execucoes = await storage.listarVersoes(camada, objeto.nome);
     if (!execucoes.length) throw new Error(`Nenhuma execucao ${rotuloCamada} valida encontrada para ${nome}.`);
@@ -223,9 +231,10 @@ function criarLeitorSilver(opcoes = {}) {
   }
 
   async function listarObjetos() {
+    await prepararStorage();
     const resultado = [];
     for (const objeto of Object.values(catalogo)) {
-      const execucoes = await descobrirExecucoesSilver(raizLake, objeto, camada);
+      const execucoes = await descobrirExecucoesSilver(storage, objeto, camada);
       resultado.push({
         objeto: objeto.nome,
         disponivel: execucoes.length > 0,

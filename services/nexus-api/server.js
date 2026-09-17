@@ -24,7 +24,6 @@ const { criarKnowledgeStorage } = require('../../nexus/knowledge_storage');
 const { criarKnowledgeOneDrivePublisher } = require('../../nexus/knowledge_onedrive_publisher');
 const { criarServicoDocumentacao } = require('../../nexus/documentacao');
 const { executarAssistente } = require('../../agentes/assistente_nexus');
-const { criarAgendadorLake } = require('./scheduler');
 
 function eventoSse(nome, dados) {
   return `event: ${nome}\ndata: ${JSON.stringify(dados)}\n\n`;
@@ -141,10 +140,9 @@ async function criarServidor(opcoes = {}) {
   let timerLimpezaAnexos = null;
   let timerLimpezaArtefatos = null;
   let timerLimpezaDatasets = null;
-  const agendador = opcoes.agendador || criarAgendadorLake({
-    pool, storage: lakeStorage,
-    onEvento: ({ tipo }) => app.log.info({ event: 'lake_update_progress', kind: tipo })
-  });
+  // Compatibilidade apenas para testes/integracoes antigas. A API nao cria nem
+  // executa o scheduler: em producao, somente nexus-lake-worker atualiza o lake.
+  const agendador = opcoes.agendador || null;
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
@@ -641,14 +639,24 @@ async function criarServidor(opcoes = {}) {
     const health = await lakeStorage.verificarSaude();
     const eventos = (await pool.query(`SELECT resultado,metadados,criado_em FROM nexus.audit_events
       WHERE tipo='lake_scheduler' ORDER BY criado_em DESC LIMIT 10`)).rows;
-    return { health, schedulerEnabled: agendador.habilitado, events: eventos };
+    const ultimaExecucao = (await pool.query(`SELECT id,mode,status,scheduled_type,started_at,
+      finished_at,duration_ms,failure_count,blocked_count,error_code
+      FROM nexus.lake_pipeline_runs ORDER BY started_at DESC,id DESC LIMIT 1`)).rows[0] || null;
+    const etapas = ultimaExecucao ? (await pool.query(`SELECT layer,object_key,source_key,action,
+      status,started_at,finished_at,duration_ms,row_count,checksum,blocked_by,error_code
+      FROM nexus.lake_pipeline_stages WHERE run_id=$1
+      ORDER BY started_at NULLS FIRST,layer,object_key`, [ultimaExecucao.id])).rows : [];
+    const workerEnabled = String(process.env.NEXUS_LAKE_WORKER_ENABLED || '0') === '1';
+    return { health, backend: lakeStorage.tipo, workerEnabled,
+      schedulerEnabled: workerEnabled, executor: 'worker',
+      latestRun: ultimaExecucao ? { ...ultimaExecucao, stages: etapas } : null, events: eventos };
   });
 
   app.addHook('onReady', async () => {
     await pool.query(`UPDATE nexus.hub_turn_requests SET status='interrupted',
       erro_codigo='PROCESS_RESTART',concluido_em=now()
       WHERE status IN ('accepted','running') AND criado_em<now()-interval '30 minutes'`);
-    agendador.iniciar();
+    agendador?.iniciar?.();
     timerLimpezaAnexos = setInterval(() => processarFilaLimpeza({ pool, storage: attachmentStorage })
       .catch((erro) => app.log.warn({ event: 'attachment_cleanup_error', code: codigoErro(erro) })), 5 * 60 * 1000);
     timerLimpezaAnexos.unref?.();
@@ -662,10 +670,11 @@ async function criarServidor(opcoes = {}) {
     }
   });
   app.addHook('onClose', async () => {
-    agendador.parar();
+    agendador?.parar?.();
     if (timerLimpezaAnexos) clearInterval(timerLimpezaAnexos);
     if (timerLimpezaArtefatos) clearInterval(timerLimpezaArtefatos);
     if (timerLimpezaDatasets) clearInterval(timerLimpezaDatasets);
+    if (!opcoes.lakeStorage) await lakeStorage.fechar?.();
     if (!opcoes.pool) await pool.end();
   });
 

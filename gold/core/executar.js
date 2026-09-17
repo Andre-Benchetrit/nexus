@@ -11,6 +11,9 @@ const { criarLeitorSilver } = require('../../duckdb/silver');
 const { criarLeitorGold } = require('../../duckdb/gold');
 const { criarCaminhosGold, caminhoParaDuckDB } = require('./caminhos');
 const { validarArquivoGold } = require('./qualidade');
+const {
+  criarWorkspaceLake, limparWorkspaceLake, prefixoRelativoWorkspace
+} = require('../../nexus/lake_workspace');
 
 function normalizarValores(linha = {}) {
   return Object.fromEntries(Object.entries(linha).map(([chave, valor]) => [
@@ -22,10 +25,9 @@ function normalizarValores(linha = {}) {
 function resumirFontes(contextos, raizLake, campoNome) {
   return [...contextos.entries()].map(([nome, contexto]) => ({
     [campoNome]: nome,
-    execucaoUtilizada: path.relative(
-      raizLake,
-      contexto.execucoes.at(-1).caminhoManifesto
-    ).replace(/\\/g, '/'),
+    execucaoUtilizada: String(contexto.execucoes.at(-1).caminhoManifesto).startsWith('s3://')
+      ? contexto.execucoes.at(-1).caminhoManifesto
+      : path.relative(raizLake, contexto.execucoes.at(-1).caminhoManifesto).replace(/\\/g, '/'),
     fim: contexto.execucoes.at(-1).manifesto.fim || null,
     totalLinhas: Number(contexto.execucoes.at(-1).manifesto.totalLinhas || 0),
     checksum: contexto.execucoes.at(-1).manifesto.checksum || null
@@ -42,20 +44,23 @@ async function removerSeExistir(caminho) {
 
 async function construirGold(objeto, opcoes = {}) {
   const inicio = opcoes.agora || new Date();
+  const workspace = await criarWorkspaceLake(opcoes, `gold-${objeto.nome}`);
   const caminhos = criarCaminhosGold(objeto, {
     agora: inicio,
-    raizLake: opcoes.raizLake
+    raizLake: workspace.raiz
   });
   await fs.mkdir(caminhos.diretorio, { recursive: true });
 
   const con = criarConexaoDuckDB();
   const leitorSilver = criarLeitorSilver({
-    raizLake: caminhos.raizLake,
+    raizLake: opcoes.raizLake,
+    lakeStorage: workspace.storage,
     catalogo: opcoes.catalogoSilver,
     conexao: con
   });
   const leitorGold = criarLeitorGold({
-    raizLake: caminhos.raizLake,
+    raizLake: opcoes.raizLake,
+    lakeStorage: workspace.storage,
     catalogo: opcoes.catalogoGold,
     conexao: con
   });
@@ -103,6 +108,7 @@ async function construirGold(objeto, opcoes = {}) {
 
   if (erroProcessamento) {
     await removerSeExistir(caminhos.parquet);
+    await limparWorkspaceLake(workspace);
     throw erroProcessamento;
   }
 
@@ -129,12 +135,26 @@ async function construirGold(objeto, opcoes = {}) {
       fontesSilver,
       fontesGold
     };
-    await fs.writeFile(caminhos.manifesto, JSON.stringify(manifesto, null, 2));
-    return { ...manifesto, caminhos };
+    if (workspace.storage.tipo === 'filesystem') {
+      await fs.writeFile(caminhos.manifesto, JSON.stringify(manifesto, null, 2));
+      return { ...manifesto, caminhos };
+    }
+    const publicado = await workspace.storage.publicarSnapshot({
+      camada: 'gold', objeto: objeto.nome, manifesto,
+      arquivoOrigem: caminhos.parquet,
+      prefixoRelativo: prefixoRelativoWorkspace(workspace, caminhos.diretorio)
+    });
+    return { ...publicado.manifesto, caminhos: {
+      ...caminhos, diretorio: publicado.caminho,
+      parquet: `${publicado.caminho}/dados.parquet`,
+      manifesto: publicado.caminhoManifesto
+    } };
   } catch (erro) {
     await removerSeExistir(caminhos.parquet);
     await removerSeExistir(caminhos.manifesto);
     throw erro;
+  } finally {
+    await limparWorkspaceLake(workspace);
   }
 }
 

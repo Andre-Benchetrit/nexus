@@ -12,6 +12,9 @@ const { criarLeitorSilver } = require('../../duckdb/silver');
 const { criarCaminhosSilver, caminhoParaDuckDB } = require('./caminhos');
 const { prepararFontesBronze } = require('./fontes_bronze');
 const { validarArquivoSilver } = require('./qualidade');
+const {
+  criarWorkspaceLake, limparWorkspaceLake, prefixoRelativoWorkspace
+} = require('../../nexus/lake_workspace');
 
 function citar(nome) {
   return `"${nome.replace(/"/g, '""')}"`;
@@ -29,7 +32,8 @@ function resumirFontes(contextos, raizLake) {
     entidade: nome,
     execucoesConsideradas: contexto.execucoes.length,
     manifestos: contexto.execucoes.map(({ manifesto, caminhoManifesto }) => ({
-      caminho: path.relative(raizLake, caminhoManifesto).replace(/\\/g, '/'),
+      caminho: String(caminhoManifesto).startsWith('s3://')
+        ? caminhoManifesto : path.relative(raizLake, caminhoManifesto).replace(/\\/g, '/'),
       fim: manifesto.fim || null,
       totalLinhas: Number(manifesto.totalLinhas || 0),
       checksum: manifesto.checksum || null
@@ -40,10 +44,9 @@ function resumirFontes(contextos, raizLake) {
 function resumirFontesSilver(contextos, raizLake) {
   return [...contextos.entries()].map(([nome, contexto]) => ({
     objeto: nome,
-    execucaoUtilizada: path.relative(
-      raizLake,
-      contexto.execucoes.at(-1).caminhoManifesto
-    ).replace(/\\/g, '/'),
+    execucaoUtilizada: String(contexto.execucoes.at(-1).caminhoManifesto).startsWith('s3://')
+      ? contexto.execucoes.at(-1).caminhoManifesto
+      : path.relative(raizLake, contexto.execucoes.at(-1).caminhoManifesto).replace(/\\/g, '/'),
     fim: contexto.execucoes.at(-1).manifesto.fim || null,
     totalLinhas: Number(contexto.execucoes.at(-1).manifesto.totalLinhas || 0),
     checksum: contexto.execucoes.at(-1).manifesto.checksum || null
@@ -74,20 +77,23 @@ async function operacaoArquivoComRetentativas(operacao, tentativas = 10) {
 
 async function construirSilver(objeto, opcoes = {}) {
   const inicio = opcoes.agora || new Date();
+  const workspace = await criarWorkspaceLake(opcoes, `silver-${objeto.nome}`);
   const caminhos = criarCaminhosSilver(objeto, {
     agora: inicio,
-    raizLake: opcoes.raizLake
+    raizLake: workspace.raiz
   });
   await fs.mkdir(caminhos.diretorio, { recursive: true });
 
   const con = criarConexaoDuckDB();
   const leitorBronze = criarLeitorBronze({
-    raizLake: caminhos.raizLake,
+    raizLake: opcoes.raizLake,
+    lakeStorage: workspace.storage,
     catalogo: opcoes.catalogoBronze,
     conexao: con
   });
   const leitorSilver = criarLeitorSilver({
-    raizLake: caminhos.raizLake,
+    raizLake: opcoes.raizLake,
+    lakeStorage: workspace.storage,
     catalogo: opcoes.catalogoSilver,
     conexao: con
   });
@@ -153,6 +159,7 @@ async function construirSilver(objeto, opcoes = {}) {
 
   if (erroProcessamento) {
     await removerSeExistir(caminhos.parquet);
+    await limparWorkspaceLake(workspace);
     throw erroProcessamento;
   }
 
@@ -181,13 +188,27 @@ async function construirSilver(objeto, opcoes = {}) {
       fontesBronze,
       fontesSilver
     };
-    await fs.writeFile(caminhos.manifesto, JSON.stringify(manifesto, null, 2));
-    return { ...manifesto, caminhos };
+    if (workspace.storage.tipo === 'filesystem') {
+      await fs.writeFile(caminhos.manifesto, JSON.stringify(manifesto, null, 2));
+      return { ...manifesto, caminhos };
+    }
+    const publicado = await workspace.storage.publicarSnapshot({
+      camada: 'silver', objeto: objeto.nome, manifesto,
+      arquivoOrigem: caminhos.parquet,
+      prefixoRelativo: prefixoRelativoWorkspace(workspace, caminhos.diretorio)
+    });
+    return { ...publicado.manifesto, caminhos: {
+      ...caminhos, diretorio: publicado.caminho,
+      parquet: `${publicado.caminho}/dados.parquet`,
+      manifesto: publicado.caminhoManifesto
+    } };
   } catch (erro) {
     await removerSeExistir(caminhos.parquetTemporario);
     await removerSeExistir(caminhos.parquet);
     await removerSeExistir(caminhos.manifesto);
     throw erro;
+  } finally {
+    await limparWorkspaceLake(workspace);
   }
 }
 
