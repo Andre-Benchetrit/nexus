@@ -293,13 +293,57 @@ function criarServicoAuditoriaIA(opcoes = {}) {
     });
   }
 
-  async function registrarMensagem(turno, { papel, conteudo, proveniencia = null }) {
+  async function registrarMensagem(turno, { papel, conteudo, proveniencia = null, metadados = {} }) {
     if (!['user', 'assistant'].includes(papel)) throw new Error('Papel de mensagem invalido.');
-    await pool.query(`
-      INSERT INTO nexus.conversation_messages
-        (conversation_id, turn_id, trace_id, papel, conteudo, proveniencia)
-      VALUES ($1,$2,$3,$4,$5,$6)
-    `, [turno.conversationId, turno.id, turno.traceId, papel, String(conteudo), proveniencia]);
+    const retrySolicitado = papel === 'assistant' ? metadados?.retryRootMessageId || null : null;
+    const metadadosPersistidos = { ...(metadados || {}) };
+    delete metadadosPersistidos.retryRootMessageId;
+    if (!retrySolicitado) {
+      return (await pool.query(`
+        INSERT INTO nexus.conversation_messages
+          (conversation_id, turn_id, trace_id, papel, conteudo, proveniencia,metadata)
+        VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)
+        RETURNING id,retry_root_message_id,variant_index,variant_active
+      `, [turno.conversationId, turno.id, turno.traceId, papel, String(conteudo), proveniencia,
+        JSON.stringify(metadadosPersistidos)])).rows[0];
+    }
+    return comTransacao(pool, async (cliente) => {
+      const origem = (await cliente.query(`SELECT id,COALESCE(retry_root_message_id,id) AS raiz
+        FROM nexus.conversation_messages
+        WHERE id=$1 AND conversation_id=$2 AND papel='assistant' FOR UPDATE`,
+      [retrySolicitado, turno.conversationId])).rows[0];
+      if (!origem) throw new Error('Resposta original da nova tentativa nao encontrada.');
+      const proximoIndice = Number((await cliente.query(`SELECT COALESCE(MAX(variant_index),0)+1 AS indice
+        FROM nexus.conversation_messages
+        WHERE conversation_id=$1 AND papel='assistant'
+          AND (id=$2 OR retry_root_message_id=$2)`,
+      [turno.conversationId, origem.raiz])).rows[0]?.indice || 2);
+      await cliente.query(`UPDATE nexus.conversation_messages SET variant_active=false
+        WHERE conversation_id=$1 AND papel='assistant'
+          AND (id=$2 OR retry_root_message_id=$2)`, [turno.conversationId, origem.raiz]);
+      const mensagem = (await cliente.query(`INSERT INTO nexus.conversation_messages
+        (conversation_id,turn_id,trace_id,papel,conteudo,proveniencia,metadata,
+         retry_root_message_id,variant_index,variant_active)
+        VALUES ($1,$2,$3,'assistant',$4,$5,$6::jsonb,$7,$8,true)
+        RETURNING id,retry_root_message_id,variant_index,variant_active`,
+      [turno.conversationId, turno.id, turno.traceId, String(conteudo), proveniencia,
+        JSON.stringify(metadadosPersistidos), origem.raiz, proximoIndice])).rows[0];
+      // A analise do retry e criada antes da resposta. Somente depois que a
+      // variante existe ela passa a ser a ramificacao ativa para os follow-ups.
+      await cliente.query(`WITH mensagem_origem AS (
+          SELECT u.id FROM nexus.conversation_messages raiz
+          JOIN nexus.conversation_messages u
+            ON u.turn_id=raiz.turn_id AND u.papel='user'
+          WHERE raiz.id=$2 AND raiz.conversation_id=$1
+          ORDER BY u.criado_em,u.id LIMIT 1
+        )
+        UPDATE nexus.conversation_attachment_analyses caa
+        SET active=(caa.turn_id=$3)
+        WHERE caa.conversation_id=$1
+          AND caa.message_id IN (SELECT id FROM mensagem_origem)`,
+      [turno.conversationId, origem.raiz, turno.id]);
+      return mensagem;
+    });
   }
 
   async function registrarEvento(turno, { tipo, recurso = null, resultado = null, metadados = {} }) {
@@ -348,15 +392,20 @@ function criarServicoAuditoriaIA(opcoes = {}) {
     });
   }
 
-  async function listarMensagens(limite = Number(process.env.NEXUS_GENERALIST_HISTORY_MESSAGES || 20)) {
+  async function listarMensagens(limite = Number(process.env.NEXUS_GENERALIST_HISTORY_MESSAGES || 20), opcoes = {}) {
     const base = await contexto();
     const linhas = (await pool.query(`
       SELECT m.papel, m.conteudo, m.proveniencia, m.criado_em
       FROM nexus.conversation_messages m
       JOIN nexus.ai_turns t ON t.id=m.turn_id AND t.status='sucesso'
+      LEFT JOIN nexus.conversation_messages raiz ON raiz.id=m.retry_root_message_id
       WHERE m.conversation_id=$1
-      ORDER BY m.criado_em DESC, m.id DESC LIMIT $2
-    `, [base.conversationId, limite])).rows.reverse();
+        AND (m.papel='user' OR m.variant_active=true)
+        AND ($3::uuid IS NULL OR m.papel<>'assistant'
+          OR COALESCE(m.retry_root_message_id,m.id)<>$3)
+      ORDER BY COALESCE(raiz.criado_em,m.criado_em) DESC,
+        CASE WHEN m.papel='assistant' THEN 1 ELSE 0 END DESC,m.id DESC LIMIT $2
+    `, [base.conversationId, limite, opcoes.excludeResponseRootId || null])).rows.reverse();
     return linhas.map((item) => ({
       role: item.papel, content: item.conteudo, provenance: item.proveniencia,
       createdAt: item.criado_em

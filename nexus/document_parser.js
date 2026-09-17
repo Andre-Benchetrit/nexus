@@ -23,6 +23,77 @@ function detectarTipo(nomeArquivo, mediaType) {
   return { extensao, mediaType: esperado };
 }
 
+function numeroFinito(valor, padrao = 0) {
+  const numero = Number(valor);
+  return Number.isFinite(numero) ? numero : padrao;
+}
+
+function estruturarItensPdf(itens = []) {
+  const posicionados = itens.map((item, indice) => ({
+    indice,
+    texto: limparTexto(item?.str || ''),
+    x: numeroFinito(item?.transform?.[4]),
+    y: numeroFinito(item?.transform?.[5]),
+    largura: Math.max(0, numeroFinito(item?.width)),
+    altura: Math.max(1, Math.abs(numeroFinito(item?.height, item?.transform?.[3] || 10)))
+  })).filter((item) => item.texto);
+  posicionados.sort((a, b) => Math.abs(b.y - a.y) > 1 ? b.y - a.y : a.x - b.x);
+
+  const linhas = [];
+  for (const item of posicionados) {
+    const tolerancia = Math.max(2, Math.min(6, item.altura * 0.4));
+    let linha = linhas.find((candidata) => Math.abs(candidata.y - item.y) <= tolerancia);
+    if (!linha) {
+      linha = { y: item.y, itens: [] };
+      linhas.push(linha);
+    }
+    linha.itens.push(item);
+  }
+  linhas.sort((a, b) => b.y - a.y);
+
+  const blocos = linhas.map((linha, indice) => {
+    linha.itens.sort((a, b) => a.x - b.x);
+    const celulas = [];
+    for (const item of linha.itens) {
+      const anterior = celulas.at(-1);
+      const fimAnterior = anterior ? anterior.fim : null;
+      const limiteSeparacao = Math.max(14, item.altura * 1.5);
+      if (!anterior || item.x - fimAnterior > limiteSeparacao) {
+        celulas.push({ texto: item.texto, x: Math.round(item.x * 100) / 100,
+          fim: item.x + item.largura });
+      } else {
+        anterior.texto = `${anterior.texto} ${item.texto}`.trim();
+        anterior.fim = Math.max(anterior.fim, item.x + item.largura);
+      }
+    }
+    return {
+      indice: indice + 1,
+      tipo: 'linha',
+      texto: celulas.map((celula) => celula.texto).join(' '),
+      y: Math.round(linha.y * 100) / 100,
+      celulas: celulas.map(({ texto, x }) => ({ texto, x }))
+    };
+  });
+
+  const tabelas = [];
+  let grupo = [];
+  const encerrarGrupo = () => {
+    if (grupo.length >= 2) tabelas.push({ indice: tabelas.length + 1,
+      deteccao: 'estrutural_heuristica',
+      blocos: grupo.map((bloco) => bloco.indice),
+      linhas: grupo.map((bloco) => bloco.celulas.map((celula) => celula.texto)) });
+    grupo = [];
+  };
+  for (const bloco of blocos) {
+    if (bloco.celulas.length < 2) { encerrarGrupo(); continue; }
+    const anterior = grupo.at(-1);
+    if (anterior && Math.abs(anterior.celulas.length - bloco.celulas.length) > 1) encerrarGrupo();
+    grupo.push(bloco);
+  }
+  encerrarGrupo();
+  return { blocos, tabelas };
+}
+
 async function extrairPdf(buffer) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const carregamento = pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true });
@@ -33,12 +104,14 @@ async function extrairPdf(buffer) {
     const [conteudo, operadores] = await Promise.all([
       pagina.getTextContent(), pagina.getOperatorList().catch(() => null)
     ]);
-    const texto = limparTexto((conteudo.items || []).map((item) => item.str || '').join(' '));
+    const estrutura = estruturarItensPdf(conteudo.items || []);
+    const texto = limparTexto(estrutura.blocos.map((bloco) => bloco.texto).join('\n'));
     const possuiImagem = Boolean(operadores?.fnArray?.some((fn) => [
       pdfjs.OPS.paintImageXObject, pdfjs.OPS.paintInlineImageXObject,
       pdfjs.OPS.paintImageMaskXObject, pdfjs.OPS.paintSolidColorImageMask
     ].includes(fn)));
-    paginas.push({ numero, texto, possuiImagem, metadados: {} });
+    paginas.push({ numero, texto, possuiImagem, blocos: estrutura.blocos,
+      tabelas: estrutura.tabelas, metadados: {} });
     pagina.cleanup();
   }
   await carregamento.destroy();
@@ -165,5 +238,5 @@ function dividirEmChunks(paginas, opcoes = {}) {
   return chunks.filter((item) => item.conteudo);
 }
 
-module.exports = { TIPOS_SUPORTADOS, detectarTipo, dividirEmChunks, extrairDocumento,
-  limparTexto, renderizarPaginaPdf, renderizarVisualDocx };
+module.exports = { TIPOS_SUPORTADOS, detectarTipo, dividirEmChunks, estruturarItensPdf,
+  extrairDocumento, extrairDocx, extrairPdf, limparTexto, renderizarPaginaPdf, renderizarVisualDocx };

@@ -7,6 +7,8 @@ const { dividirEmChunks, extrairDocumento, renderizarPaginaPdf,
 const { gerarDocx, gerarPdf, normalizarConteudo } = require('./document_builder');
 const { criarKnowledgeStorage } = require('./knowledge_storage');
 
+const LIMIAR_SEMANTICO_BUSCA = 0.80;
+
 function slugificar(valor) {
   return String(valor || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 110);
@@ -458,6 +460,43 @@ function criarServicoDocumentacao(opcoes = {}) {
     });
   }
 
+  async function removerRascunhoSincronizado(documentId, { motivo = 'origem_ausente' } = {}) {
+    const atual = (await pool.query(`SELECT id,origem,status,department_id,current_published_version_id
+      FROM nexus.knowledge_documents WHERE id=$1`, [documentId])).rows[0];
+    if (!atual) return { documentId, removido: false, motivo: 'nao_encontrado', arquivos: [] };
+    await autorizar(atual.department_id ? 'documentacao.importar' : 'documentacao.administrar.global',
+      atual.department_id || null);
+    const resultado = await comTransacao(pool, async (cliente) => {
+      const documento = (await cliente.query(`SELECT id,origem,status,current_published_version_id
+        FROM nexus.knowledge_documents WHERE id=$1 FOR UPDATE`, [documentId])).rows[0];
+      if (!documento) return { documentId, removido: false, motivo: 'nao_encontrado', arquivos: [] };
+      const protegido = documento.origem !== 'onedrive' || documento.current_published_version_id ||
+        !['rascunho', 'em_revisao'].includes(documento.status);
+      if (protegido) return { documentId, removido: false, motivo: 'documento_protegido', arquivos: [] };
+      const chaves = (await cliente.query(`SELECT source_storage_key,docx_storage_key,pdf_storage_key
+        FROM nexus.knowledge_document_versions WHERE document_id=$1`, [documentId])).rows
+        .flatMap((versao) => [versao.source_storage_key, versao.docx_storage_key, versao.pdf_storage_key]);
+      const paginas = (await cliente.query(`SELECT p.image_storage_key FROM nexus.knowledge_document_pages p
+        JOIN nexus.knowledge_document_versions v ON v.id=p.version_id
+        WHERE v.document_id=$1 AND p.image_storage_key IS NOT NULL`, [documentId])).rows;
+      chaves.push(...paginas.map((pagina) => pagina.image_storage_key));
+      await cliente.query('DELETE FROM nexus.knowledge_documents WHERE id=$1', [documentId]);
+      await auditar(cliente, 'documentacao_origem_removida', documentId, 'sucesso', {
+        motivo, estado_anterior: documento.status
+      });
+      return { documentId, removido: true, motivo, arquivos: [...new Set(chaves.filter(Boolean))] };
+    });
+    if (!resultado.removido) return resultado;
+    const falhas = [];
+    for (const chave of resultado.arquivos) {
+      try { await storage.excluir(chave); } catch (erro) {
+        falhas.push({ chave, codigo: String(erro.code || erro.name || 'STORAGE_ERROR') });
+      }
+    }
+    return { ...resultado, arquivosRemovidos: resultado.arquivos.length - falhas.length,
+      falhasArquivos: falhas };
+  }
+
   async function buscar({ consulta, documentId = null, departmentId = null, limite = 8 } = {}) {
     const setor = departmentId ? await resolverSetor(departmentId) : null;
     await autorizar('documentacao.consultar', setor?.id || null);
@@ -473,7 +512,7 @@ function criarServicoDocumentacao(opcoes = {}) {
       try { vetor = serializarVetor(await embeddings.gerar(termo, 'query')); } catch (_) { vetor = null; }
     }
     const linhas = (await pool.query(`SELECT d.id AS document_id,d.titulo,d.tipo,d.escopo,dep.nome AS setor,
-        v.numero AS versao,p.numero AS pagina,p.possui_imagem,c.conteudo,
+        v.numero AS versao,v.source_filename,v.source_media_type,p.numero AS pagina,p.possui_imagem,c.conteudo,
         ts_rank_cd(c.search_vector,websearch_to_tsquery('portuguese',$2)) AS text_rank,
         CASE WHEN $3::vector IS NULL OR c.embedding IS NULL THEN NULL
           ELSE 1-(c.embedding <=> $3::vector) END AS semantic_rank
@@ -485,14 +524,16 @@ function criarServicoDocumentacao(opcoes = {}) {
       WHERE (d.escopo='global' OR d.department_id=$1)
         AND (($5::uuid IS NOT NULL AND d.id=$5)
           OR ($5::uuid IS NULL AND (c.search_vector @@ websearch_to_tsquery('portuguese',$2)
-            OR similarity(d.titulo,$2)>0.12 OR ($3::vector IS NOT NULL AND c.embedding IS NOT NULL))))
+            OR similarity(d.titulo,$2)>0.12 OR ($3::vector IS NOT NULL AND c.embedding IS NOT NULL
+              AND 1-(c.embedding <=> $3::vector)>=$6))))
       ORDER BY (CASE WHEN d.tipo='politica' AND d.escopo='global' THEN 0.15
         WHEN d.tipo='politica' THEN 0.08 WHEN d.tipo='manual' THEN 0.03 ELSE 0 END
         + CASE WHEN $5::uuid IS NOT NULL AND c.conteudo ~* '(https?://|link|acesso|portal|site|sistema|painel)' THEN 1.2 ELSE 0 END
         + ts_rank_cd(c.search_vector,websearch_to_tsquery('portuguese',$2))*1.8
-        + similarity(d.titulo,$2)*0.7
+        + similarity(d.titulo,$2)*3.0
         + COALESCE(1-(c.embedding <=> $3::vector),0)) DESC
-      LIMIT $4`, [setor?.id || null, termo, vetor, maximo, documentoSelecionado])).rows;
+      LIMIT $4`, [setor?.id || null, termo, vetor, maximo, documentoSelecionado,
+      LIMIAR_SEMANTICO_BUSCA])).rows;
     return {
       status: linhas.length ? 'sucesso' : 'vazio',
       consulta: termo,
@@ -502,6 +543,9 @@ function criarServicoDocumentacao(opcoes = {}) {
         tipo: linha.tipo,
         setor: linha.setor,
         versao: linha.versao,
+        formato: linha.source_media_type === 'application/pdf' ? 'pdf'
+          : linha.source_media_type?.includes('wordprocessingml') ? 'docx'
+            : linha.source_media_type?.includes('spreadsheetml') ? 'xlsx' : null,
         pagina: linha.pagina,
         pagina_visual_disponivel: Boolean(linha.possui_imagem),
         trecho: linha.conteudo,
@@ -537,6 +581,28 @@ function criarServicoDocumentacao(opcoes = {}) {
     return storage.abrir(versao.storage_key);
   }
 
+  async function abrirFontePublicada(documentId, { departmentId = null } = {}) {
+    const documento = await obterDocumentoAutorizado(documentId, { departmentId });
+    await autorizar('documentacao.fonte.baixar', documento.department_id || departmentId);
+    if (!documento.current_published_version_id || documento.status !== 'publicado') {
+      throw new ErroHub('FONTE_NAO_PUBLICADA', 'Somente a fonte da versão publicada pode ser baixada.', 404);
+    }
+    const versao = (await pool.query(`SELECT numero,status,source_filename,source_media_type,
+        source_storage_key FROM nexus.knowledge_document_versions WHERE id=$1 AND status='publicado'`,
+    [documento.current_published_version_id])).rows[0];
+    if (!versao?.source_storage_key) throw new ErroHub('FONTE_INDISPONIVEL', 'A fonte aprovada não está armazenada.', 404);
+    const permitidos = new Set(['application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
+    if (!permitidos.has(versao.source_media_type)) throw new ErroHub('FONTE_FORMATO_BLOQUEADO', 'O formato da fonte não pode ser entregue.', 415);
+    const buffer = await storage.abrir(versao.source_storage_key);
+    await auditar(pool, 'documentacao_fonte_baixada', documentId, 'sucesso', {
+      versao: versao.numero, department_id: documento.department_id, bytes: buffer.length
+    });
+    return { buffer, fileName: versao.source_filename || `documento-${documento.slug}`,
+      mediaType: versao.source_media_type, version: versao.numero, title: documento.titulo };
+  }
+
   async function abrirPaginaVisual(documentId, numero, { departmentId = null } = {}) {
     const documento = await obterDocumentoAutorizado(documentId, { departmentId });
     await autorizar('documentacao.visual.consultar', documento.department_id || departmentId);
@@ -567,9 +633,10 @@ function criarServicoDocumentacao(opcoes = {}) {
     return renderizada;
   }
 
-  return { abrirPaginaVisual, abrirPublicado, atualizarRascunho, buscar, criarRascunho, enviarParaRevisao,
-    listar, obter, publicar, realocarDocumento, registrarImportacao, solicitarAjustes, storage };
+  return { abrirFontePublicada, abrirPaginaVisual, abrirPublicado, atualizarRascunho, buscar, criarRascunho, enviarParaRevisao,
+    listar, obter, publicar, realocarDocumento, registrarImportacao, removerRascunhoSincronizado,
+    solicitarAjustes, storage };
 }
 
-module.exports = { checksum, criarServicoDocumentacao, slugificar, textoEstruturadoParaBusca,
-  validarTipo };
+module.exports = { checksum, criarServicoDocumentacao, LIMIAR_SEMANTICO_BUSCA, slugificar,
+  textoEstruturadoParaBusca, validarTipo };

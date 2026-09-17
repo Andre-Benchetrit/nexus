@@ -1,12 +1,24 @@
 const { obterCapacidade } = require('../agentes/capacidades');
 
 const MODOS_AUTORIZACAO = Object.freeze(['off', 'audit', 'enforce']);
+const PERMISSOES_DOMINIO_DATASET = Object.freeze({
+  catalogo: 'catalogo.consultar',
+  estoque: 'estoque.consultar',
+  vendas: 'vendas.consultar'
+});
 const PERMISSOES_ESPECIAIS = Object.freeze({
   ia_conversar: 'ia.conversar',
   pesquisar_web: 'ia.web.pesquisar',
   processar_imagem_local: 'ia.imagem.processar_local',
   interpretar_imagem: 'ia.imagem.interpretar',
   consultar_documentacao: 'documentacao.consultar',
+  baixar_fonte_documentacao: 'documentacao.fonte.baixar',
+  analisar_arquivo: 'ia.arquivo.analisar',
+  consultar_evidencia_anexo: 'ia.arquivo.analisar',
+  processar_arquivo_local: 'ia.arquivo.processar_local',
+  gerar_arquivo: 'ia.arquivo.gerar',
+  exportar_resultado: 'ia.arquivo.gerar',
+  consultar_conjunto_nexus: 'ia.nexus.consultar',
   consultar_nexus: 'ia.nexus.consultar',
   solicitar_revisao_memoria: 'memoria.candidatar',
   construir_sql: 'sql.gerar',
@@ -41,6 +53,19 @@ function permissaoDaFerramenta(nome) {
   if (PERMISSOES_ESPECIAIS[nome]) return PERMISSOES_ESPECIAIS[nome];
   const capacidade = obterCapacidade(nome);
   return capacidade ? `${capacidade.dominio}.consultar` : 'produto.consultar';
+}
+
+function permissaoDoDominioDataset(dominio) {
+  return PERMISSOES_DOMINIO_DATASET[String(dominio || '').trim().toLowerCase()] || null;
+}
+
+function permissoesDaFerramenta(nome, argumentos = {}) {
+  const permissoes = [permissaoDaFerramenta(nome)];
+  if (nome === 'consultar_conjunto_nexus') {
+    const permissaoDominio = permissaoDoDominioDataset(argumentos.dominio);
+    if (permissaoDominio) permissoes.push(permissaoDominio);
+  }
+  return [...new Set(permissoes)];
 }
 
 function codigoErro(erro) {
@@ -91,8 +116,8 @@ function criarServicoGovernanca(opcoes) {
   return { principal, conversationId: conversa.id };
   }
 
-  async function avaliar(nome, departamentoSlug = null) {
-    const permissao = permissaoDaFerramenta(nome);
+  async function avaliar(nome, departamentoSlug = null, permissaoForcada = null) {
+    const permissao = permissaoForcada || permissaoDaFerramenta(nome);
     const { principal, conversationId } = await contexto();
     let override = null;
     let papel = null;
@@ -132,7 +157,11 @@ function criarServicoGovernanca(opcoes) {
     const decisao = modo === 'off' ? 'off' : permitida ? 'allow' :
       modo === 'audit' ? 'would_deny' : 'deny';
     const camada = ['ia_conversar', 'consultar_nexus', 'solicitar_revisao_memoria',
-      'pesquisar_web', 'processar_imagem_local', 'interpretar_imagem'].includes(nome)
+      'pesquisar_web', 'processar_imagem_local', 'interpretar_imagem',
+      'analisar_arquivo', 'processar_arquivo_local', 'gerar_arquivo',
+      'consultar_evidencia_anexo',
+      'exportar_resultado', 'consultar_conjunto_nexus',
+      'baixar_fonte_documentacao'].includes(nome)
       ? 'generalista' : obterCapacidade(nome)?.camada || 'negocio';
     const registro = (await pool.query(`
       INSERT INTO nexus.authorization_decisions
@@ -147,10 +176,15 @@ function criarServicoGovernanca(opcoes) {
   }
 
   async function iniciarTool(nome, argumentos = {}, metadados = {}) {
-    const decisao = await avaliar(nome, metadados.departamentoSlug);
-    if (!decisao.permitida) {
+    const decisoes = [];
+    for (const permissao of permissoesDaFerramenta(nome, argumentos)) {
+      const decisao = await avaliar(nome, metadados.departamentoSlug, permissao);
+      if (decisao.permitida) {
+        decisoes.push(decisao);
+        continue;
+      }
       await pool.query(`
-      INSERT INTO nexus.tool_executions
+        INSERT INTO nexus.tool_executions
           (authorization_decision_id, principal_id, conversation_id, tool_name,
            permission_code, camada, provider, modelo, status, argument_keys, concluida_em,
            trace_id, turn_id, call_id, parent_call_id, stage, purpose)
@@ -162,41 +196,50 @@ function criarServicoGovernanca(opcoes) {
         metadados.stage || null, metadados.purpose || null]);
       throw new ErroAutorizacao(decisao.permissao);
     }
-    const execucao = (await pool.query(`
-      INSERT INTO nexus.tool_executions
-        (authorization_decision_id, principal_id, conversation_id, tool_name,
-         permission_code, camada, provider, modelo, status, argument_keys,
-         trace_id, turn_id, call_id, parent_call_id, stage, purpose)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'iniciada',$9::jsonb,$10,$11,$12,$13,$14,$15)
-      RETURNING id
-    `, [decisao.id, decisao.principalId, decisao.conversationId, nome,
-      decisao.permissao, decisao.camada, metadados.provider || null, metadados.modelo || null,
-      JSON.stringify(chavesArgumentosSeguras(argumentos)), metadados.traceId || null,
-      metadados.turnId || null, metadados.callId || null, metadados.parentCallId || null,
-      metadados.stage || null, metadados.purpose || null])).rows[0];
-    return { decisao, execucaoId: execucao.id, callId: metadados.callId || execucao.id };
+    const contextos = [];
+    for (const decisao of decisoes) {
+      const execucao = (await pool.query(`
+        INSERT INTO nexus.tool_executions
+          (authorization_decision_id, principal_id, conversation_id, tool_name,
+           permission_code, camada, provider, modelo, status, argument_keys,
+           trace_id, turn_id, call_id, parent_call_id, stage, purpose)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'iniciada',$9::jsonb,$10,$11,$12,$13,$14,$15)
+        RETURNING id
+      `, [decisao.id, decisao.principalId, decisao.conversationId, nome,
+        decisao.permissao, decisao.camada, metadados.provider || null, metadados.modelo || null,
+        JSON.stringify(chavesArgumentosSeguras(argumentos)), metadados.traceId || null,
+        metadados.turnId || null, metadados.callId || null, metadados.parentCallId || null,
+        metadados.stage || null, metadados.purpose || null])).rows[0];
+      contextos.push({ decisao, execucaoId: execucao.id,
+        callId: metadados.callId || execucao.id });
+    }
+    const [principal, ...adicionais] = contextos;
+    return adicionais.length ? { ...principal, autorizacoesAdicionais: adicionais } : principal;
   }
 
   async function concluirTool(contextoExecucao, { sucesso, duracaoMs, erro } = {}) {
     if (!contextoExecucao?.execucaoId) return;
-    await pool.query(`
-      UPDATE nexus.tool_executions
-      SET status = $2, duracao_ms = $3, erro_codigo = $4, concluida_em = now()
-      WHERE id = $1
-    `, [contextoExecucao.execucaoId, sucesso ? 'sucesso' : 'erro',
-      Math.max(0, Math.round(duracaoMs || 0)), codigoErro(erro)]);
-    await pool.query(`
-      INSERT INTO nexus.audit_events
-        (principal_id, conversation_id, tipo, recurso, resultado, metadados)
-      VALUES ($1,$2,'tool_execucao',$3,$4,$5::jsonb)
-    `, [contextoExecucao.decisao.principalId, contextoExecucao.decisao.conversationId,
-      contextoExecucao.decisao.ferramenta, sucesso ? 'sucesso' : 'erro',
-      JSON.stringify({
-        permissao: contextoExecucao.decisao.permissao,
-        camada: contextoExecucao.decisao.camada,
-        duracao_ms: Math.max(0, Math.round(duracaoMs || 0)),
-        erro_codigo: codigoErro(erro)
-      })]);
+    const contextos = [contextoExecucao, ...(contextoExecucao.autorizacoesAdicionais || [])];
+    for (const contextoAtual of contextos) {
+      await pool.query(`
+        UPDATE nexus.tool_executions
+        SET status = $2, duracao_ms = $3, erro_codigo = $4, concluida_em = now()
+        WHERE id = $1
+      `, [contextoAtual.execucaoId, sucesso ? 'sucesso' : 'erro',
+        Math.max(0, Math.round(duracaoMs || 0)), codigoErro(erro)]);
+      await pool.query(`
+        INSERT INTO nexus.audit_events
+          (principal_id, conversation_id, tipo, recurso, resultado, metadados)
+        VALUES ($1,$2,'tool_execucao',$3,$4,$5::jsonb)
+      `, [contextoAtual.decisao.principalId, contextoAtual.decisao.conversationId,
+        contextoAtual.decisao.ferramenta, sucesso ? 'sucesso' : 'erro',
+        JSON.stringify({
+          permissao: contextoAtual.decisao.permissao,
+          camada: contextoAtual.decisao.camada,
+          duracao_ms: Math.max(0, Math.round(duracaoMs || 0)),
+          erro_codigo: codigoErro(erro)
+        })]);
+    }
   }
 
   async function criarSetor({ slug, nome }) {
@@ -286,9 +329,12 @@ function criarServicoGovernanca(opcoes) {
 module.exports = {
   ErroAutorizacao,
   MODOS_AUTORIZACAO,
+  PERMISSOES_DOMINIO_DATASET,
   chavesArgumentosSeguras,
   criarServicoGovernanca,
   permissaoDaFerramenta,
+  permissaoDoDominioDataset,
+  permissoesDaFerramenta,
   resolverDecisaoAutorizacao,
   resolverModoAutorizacao
 };

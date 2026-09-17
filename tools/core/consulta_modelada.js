@@ -153,7 +153,7 @@ function criarCamadaModelada({
           anyOf: [
             {
               type: 'array',
-              maxItems: 3,
+              maxItems: 7,
               items: {
                 type: 'object',
                 properties: {
@@ -212,8 +212,8 @@ function criarCamadaModelada({
     const { permitidas } = obterPolitica(argumentos.objeto);
     const agrupamentos = argumentos.agrupamentos || [];
     const calculos = argumentos.calculos;
-    if (!Array.isArray(agrupamentos) || agrupamentos.length > 3) {
-      throw new Error('agrupamentos deve ter no maximo 3 itens.');
+    if (!Array.isArray(agrupamentos) || agrupamentos.length > 7) {
+      throw new Error('agrupamentos deve ter no maximo 7 itens.');
     }
     if (!Array.isArray(calculos) || calculos.length < 1 || calculos.length > 5) {
       throw new Error('calculos deve ter entre 1 e 5 itens.');

@@ -270,8 +270,11 @@ test('storage de anexos grava, abre e exclui somente chaves validas', async (t) 
   const storage = criarFileSystemAttachmentStorage({ root });
   const salvo = await storage.salvarSanitizado({ buffer: Buffer.from('imagem'), extensao: 'png' });
   assert.equal((await storage.abrir(salvo.chave)).toString(), 'imagem');
+  const legado = await storage.salvar({ buffer: Buffer.from('xls'), extensao: 'xls' });
+  assert.equal((await storage.abrir(legado.chave)).toString(), 'xls');
   await assert.rejects(storage.abrir('../segredo.png'), /inválida/);
   assert.equal(await storage.excluir(salvo.chave), true);
+  assert.equal(await storage.excluir(legado.chave), true);
 });
 
 test('assistente delega pesquisa explícita ao modelo e preserva proveniencia web citada', async () => {

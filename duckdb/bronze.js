@@ -507,8 +507,8 @@ function criarLeitorBronze(opcoes = {}) {
     const limite = normalizarLimite(opcoesConsulta.limite || 50);
     const agrupamentos = opcoesConsulta.agrupamentos || [];
     const calculos = opcoesConsulta.calculos || [];
-    if (!Array.isArray(agrupamentos) || agrupamentos.length > 3) {
-      throw new Error('agrupamentos deve ter no máximo 3 itens.');
+    if (!Array.isArray(agrupamentos) || agrupamentos.length > 7) {
+      throw new Error('agrupamentos deve ter no máximo 7 itens.');
     }
     if (!Array.isArray(calculos) || calculos.length < 1 || calculos.length > 5) {
       throw new Error('calculos deve ter entre 1 e 5 itens.');

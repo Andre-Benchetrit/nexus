@@ -1,4 +1,8 @@
 const FUSO_NEGOCIO = 'America/Sao_Paulo';
+const MESES = Object.freeze({
+  janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6,
+  julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12
+});
 
 function obterDataReferencia(agora = new Date()) {
   const partes = new Intl.DateTimeFormat('pt-BR', {
@@ -34,6 +38,30 @@ function dataBrasileiraParaIso(valor) {
   return data.toISOString().slice(0, 10) === iso ? iso : null;
 }
 
+function extrairMesNomeado(normalizado, dataReferencia) {
+  const nomes = Object.keys(MESES).join('|');
+  const encontrado = new RegExp(
+    `\\b(${nomes})\\b(?:\\s*(?:de|/|-)\\s*((?:19|20)\\d{2}))?`
+  ).exec(normalizado);
+  if (!encontrado) return null;
+  const mes = MESES[encontrado[1]];
+  const anoReferencia = Number(String(dataReferencia).slice(0, 4));
+  const mesReferencia = Number(String(dataReferencia).slice(5, 7));
+  const anoExplicito = encontrado[2] ? Number(encontrado[2]) : null;
+  const ano = anoExplicito || (mes <= mesReferencia ? anoReferencia : anoReferencia - 1);
+  const mesTexto = String(mes).padStart(2, '0');
+  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  const mesmoMesAtual = ano === anoReferencia && mes === mesReferencia;
+  return {
+    tipo: 'periodo_explicito',
+    origem: anoExplicito ? 'mes_nomeado_com_ano' : 'mes_nomeado_mais_recente',
+    inicio: `${ano}-${mesTexto}-01`,
+    fim: mesmoMesAtual
+      ? dataReferencia
+      : `${ano}-${mesTexto}-${String(ultimoDia).padStart(2, '0')}`
+  };
+}
+
 function extrairContextoTemporal(pergunta, dataReferencia) {
   const texto = String(pergunta || '');
   const normalizado = texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -56,6 +84,8 @@ function extrairContextoTemporal(pergunta, dataReferencia) {
       periodoAnterior: { inicio: inicioAnterior, fim: fimAnterior }
     };
   }
+  const mesNomeado = extrairMesNomeado(normalizado, dataReferencia);
+  if (mesNomeado) return mesNomeado;
   const relativos = [
     /\banteontem\b/i.test(texto),
     /\bontem\b/i.test(texto),
@@ -103,6 +133,7 @@ function extrairContextoTemporal(pergunta, dataReferencia) {
 module.exports = {
   FUSO_NEGOCIO,
   completarAnoEmDatas,
+  extrairMesNomeado,
   extrairContextoTemporal,
   obterDataReferencia
 };

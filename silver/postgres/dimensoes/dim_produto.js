@@ -25,6 +25,10 @@ module.exports = {
     'descricao_produto',
     'sku',
     'ean',
+    'peso_liquido',
+    'altura',
+    'largura',
+    'comprimento',
     'codigo_fabricante',
     'composicao_estoque',
     'custo_produto_atual',
@@ -69,6 +73,10 @@ module.exports = {
       'descricao_produto',
       'sku',
       'ean',
+      'peso_liquido',
+      'altura',
+      'largura',
+      'comprimento',
       'codigo_fabricante',
       'composicao_estoque',
       'custo_produto_atual',
@@ -96,9 +104,15 @@ module.exports = {
 
   construirSql(contextosBronze, contextosSilver) {
     const views = obterViews(contextosBronze, contextosSilver);
+    const produto = contextosBronze.get('produto');
     const inativo = flagBooleano('p.inativo');
     const disponivel = flagBooleano('p.disponivel');
     const enviaSite = flagBooleano('p.envia_site');
+    // Mantem a construcao compativel com snapshots Bronze produzidos antes
+    // da inclusao dos atributos logisticos no contrato de produto.
+    const textoOpcional = (coluna) => produto.colunas?.has(coluna)
+      ? texto(`p.${coluna}`)
+      : 'CAST(NULL AS VARCHAR)';
 
     return `
       SELECT
@@ -106,6 +120,10 @@ module.exports = {
         ${texto('p.descricao')} AS descricao_produto,
         ${texto('p.codigo_auxiliar')} AS sku,
         ${texto('p.cod_barra')} AS ean,
+        ${textoOpcional('peso_liquido')} AS peso_liquido,
+        ${textoOpcional('altura')} AS altura,
+        ${textoOpcional('largura')} AS largura,
+        ${textoOpcional('comprimento')} AS comprimento,
         ${texto('p.cod_fabrica')} AS codigo_fabricante,
         p.composicao_estoque,
         CAST(coalesce(p.custo, 0) AS DECIMAL(18,4)) AS custo_produto_atual,

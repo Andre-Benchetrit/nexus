@@ -8,7 +8,7 @@ const { Document, ImageRun, Packer, Paragraph } = require('docx');
 
 const { obterCapacidade, extrairReferenciasResultado } = require('../agentes/capacidades');
 const { classificarPergunta, referenciaContextual } = require('../agentes/roteador');
-const { aplicarPoliticaArgumentos } = require('../agentes/politicas_tools');
+const { aplicarPoliticaArgumentos, consultaDocumentalAncorada } = require('../agentes/politicas_tools');
 const { exigeFonteCorporativa } = require('../agentes/politica_fonte');
 const { permissaoDaFerramenta } = require('../nexus/governanca');
 const { criarFileSystemKnowledgeStorage } = require('../nexus/knowledge_storage');
@@ -17,7 +17,7 @@ const { gerarDocx, gerarPdf, normalizarConteudo } = require('../nexus/document_b
 const { extrairDocumento, renderizarPaginaPdf, renderizarVisualDocx } = require('../nexus/document_parser');
 const { baixarItemComRetry, classificarPasta, lerFontesOneDrive,
   listarArquivosFontesGraph, reconciliarOrigensDuplicadas,
-  registrarImportacaoComRetry } = require('../nexus/documentacao_onedrive');
+  registrarImportacaoComRetry, removerDocumentosAusentes } = require('../nexus/documentacao_onedrive');
 const { textoEstruturadoParaBusca } = require('../nexus/documentacao');
 const { executarAgente, respostaIndisponibilidadeDocumental } = require('../agentes/consultor_nexus');
 const { executarConsultarDocumentacao, interpretarPaginas } = require('../tools/consultar_documentacao');
@@ -129,6 +129,31 @@ test('fontes Graph exatas recebem classificacao governada e pastas continuam aut
     { tipo: 'politica', escopo: 'global', setorSlug: null });
 });
 
+test('sincronizacao remove somente rascunhos ausentes de pastas lidas com sucesso', async () => {
+  const removidos = [];
+  const resultado = await removerDocumentosAusentes({
+    driveId: 'drive',
+    fontes: [
+      { key: 'procedimentos', rootItemId: 'pasta' },
+      { key: 'politica', itemId: 'politica', caminho: 'POLITICAS/Politica.pdf' }
+    ],
+    estados: [{ key: 'procedimentos', status: 'concluido' }, { key: 'politica', status: 'erro' }],
+    arquivos: [{ sourceKey: 'procedimentos', caminho: 'PROCEDIMENTOS RH/Atual.pdf',
+      item: { id: 'atual' } }],
+    pool: { async query() { return { rows: [
+      { id: 'mantido', external_item_id: 'atual', external_path: 'PROCEDIMENTOS RH/Atual.pdf' },
+      { id: 'ausente', external_item_id: 'removido', external_path: 'PROCEDIMENTOS RH/Antigo.pdf' },
+      { id: 'outro-setor', external_item_id: 'outro', external_path: 'PROCEDIMENTOS FINANCEIRO/Antigo.pdf' },
+      { id: 'fonte-exata', external_item_id: 'politica', external_path: 'POLITICAS/Politica.pdf' }
+    ] }; } },
+    servico: { async removerRascunhoSincronizado(id) {
+      removidos.push(id); return { documentId: id, removido: true, falhasArquivos: [] };
+    } }
+  });
+  assert.deepEqual(removidos, ['ausente']);
+  assert.deepEqual(resultado, { candidatos: 1, removidos: 1, protegidos: 0, falhas: [] });
+});
+
 test('reconciliacao de origem preserva o destino administrativo publicado', async () => {
   const caminho = 'PROCEDIMENTOS TECNOLOGIA/Manual.pdf';
   const resultado = await reconciliarOrigensDuplicadas({ principalId: 'principal', dryRun: true,
@@ -226,6 +251,22 @@ test('tool documental injeta o setor do servidor e preserva citacoes', async () 
   assert.equal(resultado.resultados[0].citacao, 'Fechamento - versao 2, pagina 4');
 });
 
+test('cartao da fonte publicada preserva o setor para revalidar o download', async () => {
+  const departmentId = '33333333-3333-4333-8333-333333333333';
+  const resultado = await executarConsultarDocumentacao({
+    consulta: 'Quero baixar o documento original', limite: 4, analisar_visual: false
+  }, {
+    knowledgeMode: 'v1', departamentoId: departmentId,
+    servicoDocumentacao: { async buscar() { return { status: 'sucesso', resultados: [{
+      documento_id: '11111111-1111-4111-8111-111111111111', titulo: 'Manual aprovado',
+      versao: 3, formato: 'pdf', trecho: 'Conteúdo autorizado.'
+    }] }; } }
+  });
+  assert.equal(resultado.fontes_download.length, 1);
+  assert.equal(resultado.fontes_download[0].url,
+    `/v1/knowledge/11111111-1111-4111-8111-111111111111/download/source?departmentId=${departmentId}`);
+});
+
 test('tool documental repete uma falha tecnica e preserva o resultado recuperado', async () => {
   let tentativas = 0;
   const eventos = [];
@@ -314,6 +355,29 @@ test('continuacao documental preserva o documento e encaminha a busca de acesso'
       return { status: 'sucesso', resultados: [] }; } }
   });
   assert.equal(recebido.documentId, documentoId);
+});
+
+test('nova busca documental nao fica presa ao documento irrelevante anterior', () => {
+  const documentoAnterior = '11111111-1111-4111-8111-111111111111';
+  const argumentos = aplicarPoliticaArgumentos('consultar_documentacao', {
+    consulta: 'reutilizar busca anterior', documento_id: documentoAnterior,
+    limite: 8, analisar_visual: false
+  }, {
+    perguntaAtual: 'Busque por manual de marca',
+    referenciasAnteriores: { documento_id: [documentoAnterior] }
+  });
+  assert.equal(argumentos.documento_id, undefined);
+  assert.equal(argumentos.consulta, 'Busque por manual de marca');
+});
+
+test('expansao de marca exige intencao explicita e ignora cor ou logo isolados', () => {
+  assert.match(consultaDocumentalAncorada(
+    'Preciso fazer um banner da FID seguindo o padrão da marca.'
+  ), /manual de marca; identidade visual/i);
+  assert.match(consultaDocumentalAncorada('Quero o manual de marca da FID.'),
+    /Termos de recuperação/i);
+  assert.equal(consultaDocumentalAncorada('Qual cor combina com azul?'), null);
+  assert.equal(consultaDocumentalAncorada('Pode aumentar esse logo?'), null);
 });
 
 test('renderiza imagens incorporadas no Word e envia somente paginas autorizadas para visao', async () => {

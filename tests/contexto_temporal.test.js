@@ -34,6 +34,30 @@ test('completa somente datas brasileiras que nao possuem ano', () => {
   );
 });
 
+test('resolve mes por extenso sem permitir que o modelo invente o ano', () => {
+  assert.deepEqual(
+    extrairContextoTemporal('Quais produtos mais venderam no mês de julho?', '2026-09-03'),
+    {
+      tipo: 'periodo_explicito', origem: 'mes_nomeado_mais_recente',
+      inicio: '2026-07-01', fim: '2026-07-31'
+    }
+  );
+  assert.deepEqual(
+    extrairContextoTemporal('Vendas de dezembro', '2026-09-03'),
+    {
+      tipo: 'periodo_explicito', origem: 'mes_nomeado_mais_recente',
+      inicio: '2025-12-01', fim: '2025-12-31'
+    }
+  );
+  assert.deepEqual(
+    extrairContextoTemporal('Vendas de setembro de 2026', '2026-09-03'),
+    {
+      tipo: 'periodo_explicito', origem: 'mes_nomeado_com_ano',
+      inicio: '2026-09-01', fim: '2026-09-03'
+    }
+  );
+});
+
 test('converte timestamps tecnicos para Sao Paulo sem alterar datas comerciais', () => {
   assert.equal(
     converterInstanteParaFuso('2026-08-03T12:32:29.487Z'),

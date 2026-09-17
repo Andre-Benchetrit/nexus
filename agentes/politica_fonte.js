@@ -10,6 +10,7 @@ const ACAO_OPERACIONAL =
 const REFERENCIA_CONTINUIDADE =
   /\b(esse|essa|esses|essas|deles|delas|mesmos?|mesmas?|novamente|de novo|tambem|outros?|outras?|agora|periodo|relatorio|filtro|coluna|codigo auxiliar|sku)\b/;
 const RESPOSTA_AFIRMATIVA = /^(sim|pode|claro|isso|correto|confirmo|por favor)[.! ]*$/;
+const AJUSTE_TEMPORAL_CURTO = /^(?:(?:e\s+)?(?:de fato|na verdade|correto|corretamente|quis dizer|corrigindo)\s+)?(?:o\s+ano\s+)?(?:19|20)\d{2}[.! ]*$/;
 
 function exigeFonteCorporativa(pergunta, contexto = {}) {
   if (contexto.tarefaAtiva) {
@@ -29,7 +30,8 @@ function exigeFonteCorporativa(pergunta, contexto = {}) {
     ENTIDADES_CORPORATIVAS.test(ultimaPergunta) ||
     /\b(consultar|reconsultar|reconsulte|consulte) (?:o )?nexus\b/.test(ultimaResposta);
   const possuiReferencia = REFERENCIA_CONTINUIDADE.test(texto) ||
-    RESPOSTA_AFIRMATIVA.test(texto.trim());
+    RESPOSTA_AFIRMATIVA.test(texto.trim()) ||
+    AJUSTE_TEMPORAL_CURTO.test(texto.trim());
   const continuidadeCorporativa = contextoCorporativo && possuiReferencia && (
     ENTIDADES_CORPORATIVAS.test(texto) ||
     ENTIDADES_CORPORATIVAS.test(ultimaPergunta) ||

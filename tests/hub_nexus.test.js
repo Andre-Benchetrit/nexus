@@ -38,6 +38,19 @@ test('estagios SSE traduzem checkpoints sem expor conteudo tecnico', () => {
   assert.equal(statusDoCheckpoint({ tipo: 'tool_concluida' }), 'validando_evidencias');
   assert.equal(statusDoEvento('Executando tool analisar_vendas'), 'consultando_dados');
   assert.equal(statusDoEvento('Groq: aguardando resposta'), 'interpretando');
+  assert.equal(statusDoCheckpoint({ tipo: 'analisando_anexo' }), 'analisando_anexo');
+  assert.equal(statusDoCheckpoint({ tipo: 'recuperando_analise' }), 'recuperando_analise');
+  assert.equal(statusDoCheckpoint({ tipo: 'comparando_anexos' }), 'comparando_anexos');
+});
+
+test('API autoriza anexos e artefatos antes de abrir seus binários', () => {
+  const apiSource = fs.readFileSync(path.join(__dirname, '..', 'services', 'nexus-api', 'server.js'), 'utf8');
+  const upload = apiSource.match(/app\.post\('\/v1\/conversations\/:id\/attachments'[\s\S]*?\n  \}\);/)?.[0] || '';
+  assert.ok(upload.indexOf('decisaoPermissao') < upload.indexOf('arquivo.toBuffer()'));
+  const downloadAnexo = apiSource.match(/app\.get\('\/v1\/conversations\/:id\/attachments\/:attachmentId'[\s\S]*?\n  \}\);/)?.[0] || '';
+  assert.ok(downloadAnexo.indexOf('exigirPermissao') < downloadAnexo.indexOf('.abrir('));
+  const turno = apiSource.match(/app\.post\('\/v1\/conversations\/:id\/turns'[\s\S]*?reply\.hijack\(\);/)?.[0] || '';
+  assert.ok(turno.indexOf('exigirPermissao') < turno.indexOf('resolverParaTurno'));
 });
 
 test('API recusa concluir turno com mensagem vazia', () => {

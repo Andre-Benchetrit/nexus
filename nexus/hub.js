@@ -370,25 +370,117 @@ function criarServicoHub(opcoes = {}) {
     await obterConversa(conversationId);
     const limite = Math.min(LIMITE_MENSAGENS, Math.max(1, Number(filtros.limite || 50)));
     const linhas = (await pool.query(`
-      SELECT m.id,m.turn_id,m.trace_id,m.papel,m.conteudo,m.proveniencia,m.criado_em,
+      SELECT m.id,m.turn_id,m.trace_id,m.papel,m.conteudo,m.proveniencia,m.metadata,m.criado_em,
+        m.retry_root_message_id,m.variant_index,m.variant_active,
         t.status AS turn_status,
         (SELECT ae.metadados->>'source_mode' FROM nexus.audit_events ae
           WHERE ae.turn_id=m.turn_id AND ae.tipo='source_policy_decision'
           ORDER BY ae.criado_em DESC,ae.id DESC LIMIT 1) AS source_mode,
         CASE WHEN m.papel='user' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object(
           'id',a.id,'mediaType',a.media_type,'bytes',a.bytes,'width',a.width,'height',a.height,
+          'kind',a.kind,'name',a.file_name,'format',a.format,'pages',a.page_count,
+          'sheets',a.sheet_count,'cells',a.cell_count,
           'url','/api/nexus/conversations/' || a.conversation_id || '/attachments/' || a.id
         ) ORDER BY a.criado_em,a.id) FROM nexus.conversation_attachments a
-          WHERE a.turn_id=m.turn_id AND a.status='ready'), '[]'::jsonb) ELSE '[]'::jsonb END AS attachments
+          WHERE a.turn_id=m.turn_id AND a.status='ready'), '[]'::jsonb) ELSE '[]'::jsonb END AS attachments,
+        CASE WHEN m.papel='assistant' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'id',ar.id,'format',ar.format,'mediaType',ar.media_type,'name',ar.file_name,
+          'title',ar.title,'bytes',ar.bytes,'classification',ar.classification,
+          'url','/api/nexus/conversations/' || ar.conversation_id || '/artifacts/' || ar.id
+        ) ORDER BY ar.criado_em,ar.id) FROM nexus.conversation_artifacts ar
+          WHERE ar.turn_id=m.turn_id AND ar.status='ready'), '[]'::jsonb) ELSE '[]'::jsonb END AS artifacts
       FROM nexus.conversation_messages m
       LEFT JOIN nexus.ai_turns t ON t.id=m.turn_id
       WHERE m.conversation_id=$1 AND ($2::timestamptz IS NULL OR m.criado_em<$2)
       ORDER BY m.criado_em DESC,m.id DESC LIMIT $3
     `, [conversationId, filtros.cursor || null, limite])).rows.reverse();
-    return linhas.map((linha) => ({ id: linha.id, turnId: linha.turn_id, traceId: linha.trace_id,
+    const mensagens = linhas.map((linha) => ({ id: linha.id, turnId: linha.turn_id, traceId: linha.trace_id,
       role: linha.papel, content: linha.conteudo, provenance: linha.proveniencia,
       sourceMode: linha.source_mode || 'automatico', attachments: linha.attachments || [],
-      turnStatus: linha.turn_status, createdAt: linha.criado_em }));
+      artifacts: linha.artifacts || [], knowledgeSources: linha.metadata?.fontesDocumentais || [],
+      turnStatus: linha.turn_status, createdAt: linha.criado_em,
+      variantRootId: linha.retry_root_message_id || linha.id,
+      variantIndex: Number(linha.variant_index || 1), variantActive: linha.variant_active !== false }));
+    const grupos = new Map();
+    for (const mensagem of mensagens.filter((item) => item.role === 'assistant')) {
+      const raiz = mensagem.variantRootId;
+      if (!grupos.has(raiz)) grupos.set(raiz, []);
+      grupos.get(raiz).push(mensagem);
+    }
+    const emitidos = new Set();
+    const resposta = [];
+    for (const mensagem of mensagens) {
+      if (mensagem.role === 'user') { resposta.push(mensagem); continue; }
+      const raiz = mensagem.variantRootId;
+      if (emitidos.has(raiz)) continue;
+      emitidos.add(raiz);
+      const variantes = (grupos.get(raiz) || [mensagem]).sort((a, b) => a.variantIndex - b.variantIndex);
+      const selecionada = [...variantes].reverse().find((item) => item.variantActive) || variantes.at(-1);
+      resposta.push({ ...selecionada, variants: variantes.map((item) => ({
+        id: item.id, turnId: item.turnId, traceId: item.traceId, content: item.content,
+        provenance: item.provenance, sourceMode: item.sourceMode, artifacts: item.artifacts,
+        knowledgeSources: item.knowledgeSources, createdAt: item.createdAt,
+        variantIndex: item.variantIndex, active: item.variantActive
+      })) });
+    }
+    return resposta;
+  }
+
+  async function prepararNovaTentativa(conversationId, messageId) {
+    await obterConversa(conversationId);
+    const resposta = (await pool.query(`WITH escolhida AS (
+        SELECT id,COALESCE(retry_root_message_id,id) AS raiz
+        FROM nexus.conversation_messages
+        WHERE id=$1 AND conversation_id=$2 AND papel='assistant'
+      ), original AS (
+        SELECT m.* FROM nexus.conversation_messages m JOIN escolhida e ON m.id=e.raiz
+      )
+      SELECT original.id AS root_message_id,u.id AS user_message_id,u.conteudo,u.turn_id,
+        COALESCE((SELECT ae.metadados->>'source_mode' FROM nexus.audit_events ae
+          WHERE ae.turn_id=original.turn_id AND ae.tipo='source_policy_decision'
+          ORDER BY ae.criado_em DESC,ae.id DESC LIMIT 1),'automatico') AS source_mode
+      FROM original JOIN nexus.conversation_messages u
+        ON u.turn_id=original.turn_id AND u.papel='user'`, [messageId, conversationId])).rows[0];
+    if (!resposta) throw new ErroHub('RESPOSTA_NAO_ENCONTRADA', 'A resposta não está disponível para nova tentativa.', 404);
+    const attachmentIds = (await pool.query(`SELECT id FROM nexus.conversation_attachments
+      WHERE conversation_id=$1 AND principal_id=$2 AND turn_id=$3 AND status='ready'
+      ORDER BY criado_em,id`, [conversationId, ator.principalId, resposta.turn_id])).rows.map((item) => item.id);
+    return { message: resposta.conteudo, sourceMode: resposta.source_mode,
+      rootMessageId: resposta.root_message_id, userMessageId: resposta.user_message_id,
+      originalTurnId: resposta.turn_id, attachmentIds };
+  }
+
+  async function selecionarVariante(conversationId, messageId) {
+    const conversa = await obterConversa(conversationId);
+    return comTransacao(pool, async (cliente) => {
+      const selecionada = (await cliente.query(`SELECT m.id,m.turn_id,
+          COALESCE(m.retry_root_message_id,m.id) AS raiz,raiz.turn_id AS root_turn_id
+        FROM nexus.conversation_messages m
+        JOIN nexus.conversation_messages raiz
+          ON raiz.id=COALESCE(m.retry_root_message_id,m.id)
+        WHERE m.id=$1 AND m.conversation_id=$2 AND m.papel='assistant' FOR UPDATE OF m`,
+      [messageId, conversationId])).rows[0];
+      if (!selecionada) throw new ErroHub('RESPOSTA_NAO_ENCONTRADA', 'A versão da resposta não foi encontrada.', 404);
+      await cliente.query(`UPDATE nexus.conversation_messages SET variant_active=(id=$3)
+        WHERE conversation_id=$1 AND papel='assistant'
+          AND (id=$2 OR retry_root_message_id=$2)`, [conversationId, selecionada.raiz, selecionada.id]);
+      await cliente.query(`WITH mensagem_origem AS (
+          SELECT id FROM nexus.conversation_messages
+          WHERE conversation_id=$1 AND turn_id=$2 AND papel='user'
+          ORDER BY criado_em,id LIMIT 1
+        )
+        UPDATE nexus.conversation_attachment_analyses caa
+        SET active=(caa.turn_id=$3)
+        WHERE caa.conversation_id=$1
+          AND caa.message_id IN (SELECT id FROM mensagem_origem)`,
+      [conversationId, selecionada.root_turn_id, selecionada.turn_id]);
+      await auditarAcao(cliente, ator, { conversationId, tipo: 'hub_response_variant_selected',
+        recurso: selecionada.id, resultado: 'success', metadados: {
+          root_message_id: selecionada.raiz, department_id: conversa.department_id,
+          attachment_analysis_turn_id: selecionada.turn_id
+        } });
+      return { selectedMessageId: selecionada.id, rootMessageId: selecionada.raiz };
+    });
   }
 
   async function iniciarSolicitacao(conversationId, dados) {
@@ -709,6 +801,7 @@ function criarServicoHub(opcoes = {}) {
     ator, atualizarConversa, atualizarPrincipal, atualizarSetor, cadastrarPrincipal,
     cadastrarSetor, concluirAtividade, criarConversa, excluirConversa, iniciarSolicitacao,
     listarAuditoria, listarCandidaturasMemoria, listarConversas, listarMensagens,
+    prepararNovaTentativa, selecionarVariante,
     listarPapeis, listarPrincipals, listarSetores,
     marcarSolicitacao, obterConversa, obterSolicitacao, obterTrace, perfil, relatorioCustos,
     responderOferta, revisarCandidaturaMemoria, substituirAtribuicoes, validarComposicao

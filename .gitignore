@@ -25,6 +25,7 @@ atestados_inventory.json
 .tmp/
 tmp/
 outputs/
+/anexos/
 *.inspect.ndjson
 /Nexus_Analise_de_Custos_IA/
 *.log

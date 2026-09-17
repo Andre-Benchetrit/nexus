@@ -168,6 +168,60 @@ function estabilizarDecisaoComHistorico(decisao, pergunta, historico = []) {
   };
 }
 
+function resolverContextoTemporalDaSolicitacao(perguntaAtual, historico, dataReferencia) {
+  const atual = String(perguntaAtual || '').trim();
+  const direto = extrairContextoTemporal(atual, dataReferencia);
+  if (direto) return direto;
+  const normalizado = atual.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const anoCurto = /^(?:(?:e\s+)?(?:de fato|na verdade|correto|corretamente|quis dizer|corrigindo)\s+)?(?:o\s+ano\s+)?((?:19|20)\d{2})[.! ]*$/.exec(normalizado);
+  if (anoCurto) {
+    const anteriorComMes = [...(historico || [])].reverse().find((item) =>
+      /\b(?:janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\b/i
+        .test(String(item?.pergunta || item?.perguntaAutonoma || ''))
+    );
+    if (anteriorComMes) {
+      const anterior = String(anteriorComMes.pergunta || anteriorComMes.perguntaAutonoma)
+        .replace(/[?!.,;:\s]+$/g, '');
+      const resolvido = extrairContextoTemporal(`${anterior} de ${anoCurto[1]}`, dataReferencia);
+      if (resolvido) return { ...resolvido, origem: 'correcao_ano_continuacao' };
+    }
+  }
+  if (pareceContinuacao(atual) || referenciaContextual(atual)) {
+    const anteriorComPeriodo = [...(historico || [])].reverse().find((item) => {
+      const periodo = item?.periodo || item?.rota?.periodo;
+      const inicio = periodo?.data_inicial || periodo?.inicio;
+      const fim = periodo?.data_final || periodo?.fim;
+      return /^\d{4}-\d{2}-\d{2}$/.test(String(inicio || '')) &&
+        /^\d{4}-\d{2}-\d{2}$/.test(String(fim || ''));
+    });
+    if (anteriorComPeriodo) {
+      const periodo = anteriorComPeriodo.periodo || anteriorComPeriodo.rota.periodo;
+      return {
+        tipo: 'periodo_explicito', origem: 'periodo_anterior_estruturado',
+        inicio: periodo.data_inicial || periodo.inicio,
+        fim: periodo.data_final || periodo.fim
+      };
+    }
+  }
+  return null;
+}
+
+function aplicarContextoTemporalNaDecisao(decisao, temporal) {
+  if (!decisao || !temporal?.inicio || !temporal?.fim) return decisao;
+  return {
+    ...decisao,
+    periodo: {
+      data_inicial: temporal.inicio,
+      data_final: temporal.fim,
+      referencia: temporal.origem || 'normalizacao_deterministica'
+    },
+    codigosMotivo: [...new Set([
+      ...(decisao.codigosMotivo || []),
+      'periodo_normalizado_deterministicamente'
+    ])]
+  };
+}
+
 async function executarAgenteInterno(pergunta, dependencias = {}) {
   if (!pergunta || !pergunta.trim()) throw new Error('Informe uma pergunta.');
   const texto = pergunta.trim();
@@ -304,8 +358,12 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
   if (interacao.acao === 'continuar' && interacao.texto) {
     perguntaNormalizada = interacao.texto;
   }
-  const contextoTemporal = extrairContextoTemporal(perguntaNormalizada, dataReferencia);
   const historicoCurto = await memoria?.listarCurta() || [];
+  const contextoTemporal = resolverContextoTemporalDaSolicitacao(
+    dependencias.perguntaAtual || perguntaNormalizada,
+    historicoCurto,
+    dataReferencia
+  );
   const modoPlaybook = resolverModoPlaybook(dependencias.playbookMode);
   const playbooks = modoPlaybook === 'off' ? [] : await memoria?.buscarPlaybooks?.(perguntaNormalizada) || [];
   if (modoPlaybook === 'shadow' && playbooks.length) {
@@ -341,13 +399,15 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       decisaoSemantica = await interpretarRotaSemantica(
         perguntaNormalizada,
         await memoria?.montarContextoEstruturado?.() || [],
-        { ...dependencias, estadoExecucao, playbooks: modoPlaybook === 'assist' ? playbooks : [] }
+        { ...dependencias, estadoExecucao, dataReferencia, contextoTemporal,
+          playbooks: modoPlaybook === 'assist' ? playbooks : [] }
       );
       decisaoSemantica = estabilizarDecisaoComHistorico(
         decisaoSemantica,
         perguntaNormalizada,
         historicoCurto
       );
+      decisaoSemantica = aplicarContextoTemporalNaDecisao(decisaoSemantica, contextoTemporal);
       dependencias.onEvento?.(
         `Roteador semantico: ${JSON.stringify({
           modo: modoRoteador,
@@ -601,6 +661,7 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
           temporal: contextoTemporal,
           decisao: decisaoRota,
           pergunta: perguntaNormalizada,
+          perguntaAtual: dependencias.perguntaAtual || perguntaNormalizada,
           referenciasAnteriores: historicoCurto.at(-1)?.referencias || {}
         }
       ),
@@ -1002,13 +1063,17 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       exigeSintese,
       evidenciaFactual,
       ferramentasExecutadas: resultadosTools.map((item) => item.nome),
+      fontesDocumentais: resultadosTools.flatMap((item) => item.resultado?.fontes_download || []),
       shadow: modoRoteador === 'shadow' && decisaoSemantica ? {
         dominioLegado: decisaoLegada.dominioPrimario,
         dominioV2: decisaoSemantica.dominioPrimario,
         divergiu: decisaoLegada.dominioPrimario !== decisaoSemantica.dominioPrimario
       } : null,
       fallbackSemantico: erroRoteadorSemantico?.message || null
-    }
+    },
+    // Evidência estruturada privada para materialização local. A camada generalista
+    // remove este campo antes de responder e nunca o inclui no histórico do modelo.
+    _resultadosTools: resultadosTools
   };
   const entidadesMemoria = {};
   for (const item of resultadosTools) {
@@ -1292,7 +1357,7 @@ async function main() {
   console.log(resultado.texto);
   if (resultado.proveniencia) {
     const rotulo = resultado.proveniencia === 'dados_nexus'
-      ? `dados internos do Nexus${resultado.evidencia?.updatedAt ? ` - atualizacao ${resultado.evidencia.updatedAt}` : ''}`
+      ? `dados do Sysemp${resultado.evidencia?.updatedAt ? ` - atualizacao ${resultado.evidencia.updatedAt}` : ''}`
       : 'conhecimento geral do modelo';
     console.error(`[fonte] ${rotulo}`);
   }
@@ -1313,9 +1378,11 @@ if (require.main === module) {
 }
 
 module.exports = {
+  aplicarContextoTemporalNaDecisao,
   configurarTerminalUtf8,
   executarAgente,
   lerArgumentos,
+  resolverContextoTemporalDaSolicitacao,
   respostaIndisponibilidadeDocumental,
   INSTRUCOES,
   MAX_RODADAS_GENERICAS,

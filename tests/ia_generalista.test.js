@@ -68,6 +68,11 @@ test('guarda de fonte distingue conversa, web e continuacao corporativa', () => 
     ultimaPergunta: 'SKU é código auxiliar?',
     ultimaResposta: 'Quer que eu reconsulte o Nexus?'
   }).motivo, 'continuacao_corporativa');
+  assert.equal(exigeFonteCorporativa('e de fato 2026.', {
+    ultimaPergunta: 'Quais produtos mais venderam no mês de julho?',
+    ultimaResposta: 'Poderia confirmar o ano desejado?',
+    ultimaProveniencia: 'dados_nexus'
+  }).motivo, 'continuacao_corporativa');
 });
 
 test('objetivo corporativo preserva pergunta atual e contexto que resolve o periodo', () => {
@@ -82,6 +87,19 @@ test('objetivo corporativo preserva pergunta atual e contexto que resolve o peri
   assert.match(objetivo, /01\/08 a 25\/08/);
   assert.match(objetivo, /Pergunta atual do usuario: Faça o mesmo relatório desse período/);
   assert.match(objetivo, /A pergunta atual prevalece/);
+});
+
+test('objetivo corporativo preserva resultado anterior para operacao de continuidade', () => {
+  const objetivo = construirObjetivoCorporativo(
+    'Divida esse resultado por 2.',
+    'dividir o resultado anterior por dois',
+    [
+      { role: 'user', content: 'Qual foi o total?' },
+      { role: 'assistant', content: 'O total comprovado foi 120.' }
+    ]
+  );
+  assert.match(objetivo, /total comprovado foi 120/);
+  assert.match(objetivo, /Divida esse resultado por 2/);
 });
 
 test('nao afirma que uma memoria foi registrada quando houve apenas sinal em observe', () => {

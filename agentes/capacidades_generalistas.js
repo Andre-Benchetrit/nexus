@@ -50,12 +50,34 @@ const CAPACIDADES_GENERALISTAS = Object.freeze({
     executor: 'nexus_local', permissao: 'ia.web.pesquisar',
     unidadesFaturaveis: ['web_search_credits']
   }),
+  'ia.arquivo.processar_local': capacidade({
+    habilitada: ['read', 'v1'].includes(String(process.env.NEXUS_FILES_MODE || 'off').toLowerCase()),
+    executor: 'nexus_local', permissao: 'ia.arquivo.processar_local', modalidades: ['arquivo', 'texto'],
+    unidadesFaturaveis: ['files', 'pages', 'sheets', 'cells', 'ocr_pages']
+  }),
+  'ia.arquivo.analisar': capacidade({
+    habilitada: String(process.env.NEXUS_FILES_MODE || 'off').toLowerCase() === 'v1',
+    executor: 'provider_native', permissao: 'ia.arquivo.analisar', modalidades: ['arquivo', 'texto']
+  }),
+  'ia.arquivo.evidencia.consultar': capacidade({
+    habilitada: String(process.env.NEXUS_FILES_MODE || 'off').toLowerCase() === 'v1',
+    executor: 'nexus_local', permissao: 'ia.arquivo.analisar', modalidades: ['arquivo', 'texto'],
+    unidadesFaturaveis: [], politicaReutilizacao: 'mesma_analise'
+  }),
+  'ia.arquivo.gerar': capacidade({
+    habilitada: String(process.env.NEXUS_ARTIFACTS_MODE || 'off').toLowerCase() === 'v1',
+    executor: 'nexus_local', permissao: 'ia.arquivo.gerar', modalidades: ['texto', 'arquivo'],
+    efeito: 'escrita', idempotencia: false, politicaReutilizacao: 'nunca',
+    unidadesFaturaveis: ['artifacts', 'artifact_bytes']
+  }),
   'ia.imagem.gerar': capacidade({
     executor: 'nexus_local', permissao: 'ia.imagem.gerar', modalidades: ['texto', 'imagem'],
     unidadesFaturaveis: ['image_generation_requests']
   }),
   'ia.planilha.criar': capacidade({
-    executor: 'nexus_local', permissao: 'ia.planilha.criar', modalidades: ['texto', 'arquivo']
+    habilitada: String(process.env.NEXUS_ARTIFACTS_MODE || 'off').toLowerCase() === 'v1',
+    executor: 'nexus_local', permissao: 'ia.arquivo.gerar', modalidades: ['texto', 'arquivo'],
+    efeito: 'escrita', idempotencia: false, politicaReutilizacao: 'nunca'
   })
 });
 

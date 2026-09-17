@@ -60,6 +60,7 @@
   "license": "ISC",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
+    "@e965/xlsx": "0.20.3",
     "@google/genai": "^2.11.0",
     "@huggingface/transformers": "^4.2.0",
     "@napi-rs/canvas": "^1.0.8",
@@ -67,7 +68,9 @@
     "docx": "^9.7.1",
     "dotenv": "^17.4.2",
     "duckdb": "^1.4.4",
+    "exceljs": "^4.4.0",
     "fast-csv": "^5.0.7",
+    "jszip": "^3.10.1",
     "mammoth": "^1.12.1",
     "openai": "^6.46.0",
     "pdfjs-dist": "^6.2.108",

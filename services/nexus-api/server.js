@@ -15,6 +15,11 @@ const { verificarTokenHub } = require('../../nexus/hub_token');
 const { criarLakeStorage } = require('../../nexus/lake_storage');
 const { criarAttachmentStorage } = require('../../nexus/attachment_storage');
 const { criarServicoAnexos, processarFilaLimpeza } = require('../../nexus/anexos');
+const { criarServicoInteligenciaAnexos } = require('../../nexus/attachment_intelligence_store');
+const { criarArtifactStorage } = require('../../nexus/artifact_storage');
+const { criarServicoArtefatos, processarFilaLimpezaArtefatos } = require('../../nexus/artefatos');
+const { criarDatasetStorage } = require('../../nexus/dataset_storage');
+const { criarServicoDatasets, processarFilaLimpezaDatasets } = require('../../nexus/datasets');
 const { criarKnowledgeStorage } = require('../../nexus/knowledge_storage');
 const { criarKnowledgeOneDrivePublisher } = require('../../nexus/knowledge_onedrive_publisher');
 const { criarServicoDocumentacao } = require('../../nexus/documentacao');
@@ -30,11 +35,23 @@ function codigoErro(erro) {
   return /^[A-Za-z0-9_-]{2,80}$/.test(String(valor)) ? String(valor).toUpperCase() : 'ERRO_INTERNO';
 }
 
+function nomeDownloadSeguro(valor, padrao = 'arquivo') {
+  return String(valor || padrao).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9._ -]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 180) || padrao;
+}
+
 function statusDoCheckpoint(item = {}) {
   const tipo = String(item.tipo || '');
+  if (/recuperando_analise/.test(tipo)) return 'recuperando_analise';
+  if (/comparando_anexos/.test(tipo)) return 'comparando_anexos';
+  if (/analisando_anexo|attachment_analysis/.test(tipo)) return 'analisando_anexo';
+  if (/indexando_anexo|attachment_index/.test(tipo)) return 'indexando_anexo';
   if (/politica|policy_validation/.test(tipo)) return 'validando_politicas';
   if (/web|pesquisa/.test(tipo)) return 'consultando_web';
   if (/extraindo_texto/.test(tipo)) return 'extraindo_texto';
+  if (/arquivo_gerado_validado|artifact_validation/.test(tipo)) return 'validando_arquivo_gerado';
+  if (/gerando_arquivo|artifact_generation/.test(tipo)) return 'gerando_arquivo';
+  if (/analisando_arquivo|file_analysis/.test(tipo)) return 'extraindo_conteudo';
   if (/ocr|imagem_local|anexo/.test(tipo)) return 'processando_imagem';
   if (/vision|visao/.test(tipo)) return 'interpretando_imagem';
   if (/rota|router|faixa_semantica/.test(tipo)) return 'planejando';
@@ -65,7 +82,19 @@ function rotuloStatus(codigo) {
     consultando_web: 'Pesquisando fontes na internet',
     processando_imagem: 'Processando a imagem com segurança',
     extraindo_texto: 'Extraindo texto e códigos',
-    interpretando_imagem: 'Interpretando o conteúdo visual'
+    interpretando_imagem: 'Interpretando o conteúdo visual',
+    recebendo_arquivo: 'Recebendo o arquivo',
+    validando_arquivo: 'Validando o arquivo com segurança',
+    extraindo_conteudo: 'Extraindo o conteúdo relevante',
+    analisando_planilha: 'Analisando a planilha localmente',
+    extraindo_imagens: 'Extraindo imagens do documento',
+    interpretando_paginas: 'Interpretando as páginas selecionadas',
+    indexando_anexo: 'Indexando o anexo com segurança',
+    analisando_anexo: 'Analisando o anexo',
+    comparando_anexos: 'Comparando os anexos',
+    recuperando_analise: 'Recuperando a análise já validada',
+    gerando_arquivo: 'Gerando o arquivo solicitado',
+    validando_arquivo_gerado: 'Validando o arquivo gerado'
   }[codigo] || 'Pensando';
 }
 
@@ -92,6 +121,7 @@ async function criarServidor(opcoes = {}) {
   const logger = opcoes.logger ?? { level: process.env.NEXUS_API_LOG_LEVEL || 'info' };
   const maxUploadBytes = Math.max(
     Number(process.env.NEXUS_IMAGE_MAX_BYTES || 10 * 1024 * 1024),
+    Number(process.env.NEXUS_FILES_MAX_BYTES || 25 * 1024 * 1024),
     Number(process.env.NEXUS_KNOWLEDGE_MAX_BYTES || 50 * 1024 * 1024)
   );
   const app = Fastify({ logger, trustProxy: true,
@@ -99,6 +129,9 @@ async function criarServidor(opcoes = {}) {
   const pool = opcoes.pool || criarPoolNexus();
   const lakeStorage = opcoes.lakeStorage || criarLakeStorage();
   const attachmentStorage = opcoes.attachmentStorage || criarAttachmentStorage();
+  const artifactStorage = opcoes.artifactStorage || criarArtifactStorage();
+  const datasetStorage = opcoes.datasetStorage || criarDatasetStorage();
+  const datasetsMode = String(opcoes.datasetsMode || process.env.NEXUS_DATASETS_MODE || 'off').toLowerCase();
   const knowledgeStorage = opcoes.knowledgeStorage || criarKnowledgeStorage();
   const knowledgePublisher = opcoes.knowledgePublisher || (
     String(process.env.NEXUS_KNOWLEDGE_ONEDRIVE_WRITE_ENABLED || '0') === '1'
@@ -106,6 +139,8 @@ async function criarServidor(opcoes = {}) {
   );
   const executor = opcoes.executarAssistente || executarAssistente;
   let timerLimpezaAnexos = null;
+  let timerLimpezaArtefatos = null;
+  let timerLimpezaDatasets = null;
   const agendador = opcoes.agendador || criarAgendadorLake({
     pool, storage: lakeStorage,
     onEvento: ({ tipo }) => app.log.info({ event: 'lake_update_progress', kind: tipo })
@@ -149,7 +184,12 @@ async function criarServidor(opcoes = {}) {
 
   app.setErrorHandler((erro, request, reply) => {
     const status = erro.status || erro.statusCode || 500;
-    request.log.error({ event: 'api_error', code: codigoErro(erro), status });
+    request.log.error({
+      event: 'api_error', code: codigoErro(erro), status,
+      stage: erro.etapaProcessamento || undefined,
+      durationMs: erro.tempoProcessamentoMs || undefined,
+      err: status >= 500 ? erro : undefined
+    });
     reply.code(status).send({ error: {
       code: codigoErro(erro),
       message: status >= 500 ? 'O Nexus encontrou um erro operacional.' : erro.message
@@ -164,8 +204,27 @@ async function criarServidor(opcoes = {}) {
     });
   }
 
-  function anexos(request) {
-    return criarServicoAnexos({ pool, storage: attachmentStorage, principalId: request.ator.pid });
+  function anexos(request, departmentId = null, onStatus = null) {
+    const inteligencia = criarServicoInteligenciaAnexos({
+      pool, storage: attachmentStorage, principalId: request.ator.pid, departmentId
+    });
+    return criarServicoAnexos({ pool, storage: attachmentStorage,
+      principalId: request.ator.pid, departmentId, inteligencia, onStatus });
+  }
+
+  function inteligenciaAnexos(request, departmentId = null) {
+    return criarServicoInteligenciaAnexos({
+      pool, storage: attachmentStorage, principalId: request.ator.pid, departmentId
+    });
+  }
+
+  function artefatos(request) {
+    return criarServicoArtefatos({ pool, storage: artifactStorage, principalId: request.ator.pid });
+  }
+
+  function datasets(request, departmentId = null) {
+    return criarServicoDatasets({ pool, storage: datasetStorage, principalId: request.ator.pid,
+      departmentId, modo: datasetsMode });
   }
 
   function documentacao(request) {
@@ -175,17 +234,33 @@ async function criarServidor(opcoes = {}) {
     });
   }
 
+  async function exigirPermissao(request, permissao, departmentId, mensagem) {
+    const autorizacao = await decisaoPermissao(pool, request.ator.pid, permissao, departmentId || null);
+    if (!autorizacao.permitida) {
+      throw new ErroHub('ACESSO_NEGADO', mensagem || 'Você não possui permissão para esta operação.', 403);
+    }
+    return autorizacao;
+  }
+
   app.get('/health/live', async () => ({ status: 'ok' }));
   app.get('/health/ready', async (_request, reply) => {
     let banco = false;
     try { await pool.query('SELECT 1'); banco = true; } catch (_) { banco = false; }
-    const lake = await lakeStorage.verificarSaude();
+    const [lake, arquivos, artefatosHealth, datasetsHealth] = await Promise.all([
+      lakeStorage.verificarSaude(), attachmentStorage.verificarSaude(), artifactStorage.verificarSaude(),
+      datasetsMode === 'off' ? Promise.resolve({ saudavel: true, tipo: 'disabled' })
+        : datasetStorage.verificarSaude()
+    ]);
     const exigeDados = String(process.env.NEXUS_LAKE_REQUIRE_DATA || '0') === '1';
     const dadosDisponiveis = !exigeDados || Number(lake.camadas?.silver || 0) + Number(lake.camadas?.gold || 0) > 0;
-    const pronto = banco && lake.saudavel && dadosDisponiveis;
+    const pronto = banco && lake.saudavel && arquivos.saudavel && artefatosHealth.saudavel &&
+      datasetsHealth.saudavel && dadosDisponiveis;
     if (!pronto) reply.code(503);
     return { status: pronto ? 'ready' : 'not_ready', database: banco,
-      lake: { healthy: lake.saudavel, type: lake.tipo, datasets: lake.camadas || {} } };
+      lake: { healthy: lake.saudavel, type: lake.tipo, datasets: lake.camadas || {} },
+      files: { healthy: arquivos.saudavel, type: arquivos.tipo },
+      artifacts: { healthy: artefatosHealth.saudavel, type: artefatosHealth.tipo },
+      temporaryDatasets: { healthy: datasetsHealth.saudavel, type: datasetsHealth.tipo } };
   });
 
   app.post('/v1/auth/resolve', async (request) => resolverIdentidadeMicrosoft(pool, {
@@ -227,8 +302,13 @@ async function criarServidor(opcoes = {}) {
     servico(request).atualizarConversa(request.params.id, request.body || {}));
   app.delete('/v1/conversations/:id', async (request) => {
     const chaves = await anexos(request).chavesDaConversa(request.params.id);
+    const chavesArtefatos = await artefatos(request).chavesDaConversa(request.params.id);
+    const chavesDatasets = datasetsMode === 'off' ? []
+      : await datasets(request).chavesDaConversa(request.params.id);
     const resultado = await servico(request).excluirConversa(request.params.id);
     await anexos(request).finalizarExclusaoConversa(request.params.id, chaves);
+    await artefatos(request).excluirChaves(chavesArtefatos);
+    if (datasetsMode !== 'off') await datasets(request).excluirChaves(chavesDatasets);
     return resultado;
   });
   app.get('/v1/conversations/:id/messages', async (request) =>
@@ -237,43 +317,101 @@ async function criarServidor(opcoes = {}) {
     }));
   app.get('/v1/conversations/:id/turns/:requestId', async (request) =>
     servico(request).obterSolicitacao(request.params.id, request.params.requestId));
+  app.post('/v1/conversations/:id/messages/:messageId/select', async (request) =>
+    servico(request).selecionarVariante(request.params.id, request.params.messageId));
 
   app.post('/v1/conversations/:id/attachments', async (request, reply) => {
-    const conversa = await servico(request).obterConversa(request.params.id);
-    const autorizacao = await decisaoPermissao(pool, request.ator.pid,
-      'ia.imagem.processar_local', conversa.department_id);
-    if (!autorizacao.permitida) throw new ErroHub('ACESSO_NEGADO', 'Você não possui permissão para processar imagens.', 403);
-    const arquivo = await request.file();
-    if (!arquivo) throw new ErroHub('ANEXO_AUSENTE', 'Selecione uma imagem para enviar.');
-    const buffer = await arquivo.toBuffer();
-    if (arquivo.file.truncated) throw new ErroHub('ANEXO_GRANDE', 'A imagem excede o limite permitido.');
-    const item = await anexos(request).salvar(request.params.id, buffer);
-    reply.code(201);
-    return { id: item.id, mediaType: item.media_type, bytes: Number(item.bytes),
-      width: item.width, height: item.height, status: item.status, createdAt: item.criado_em,
-      url: `/api/nexus/conversations/${request.params.id}/attachments/${item.id}` };
+    const inicio = Date.now();
+    let etapa = 'recebendo_arquivo';
+    try {
+      const conversa = await servico(request).obterConversa(request.params.id);
+      const arquivo = await request.file();
+      if (!arquivo) throw new ErroHub('ANEXO_AUSENTE', 'Selecione um arquivo para enviar.');
+      const imagem = String(arquivo.mimetype || '').startsWith('image/') || /\.(?:png|jpe?g|webp)$/i.test(String(arquivo.filename || ''));
+      etapa = 'autorizando_arquivo';
+      const autorizacao = await decisaoPermissao(pool, request.ator.pid,
+        imagem ? 'ia.imagem.processar_local' : 'ia.arquivo.processar_local', conversa.department_id);
+      if (!autorizacao.permitida) throw new ErroHub('ACESSO_NEGADO', 'Você não possui permissão para processar este arquivo.', 403);
+      etapa = 'recebendo_arquivo';
+      const buffer = await arquivo.toBuffer();
+      if (arquivo.file.truncated) throw new ErroHub('ANEXO_GRANDE', 'O arquivo excede o limite permitido.');
+      etapa = 'validando_arquivo';
+      const item = await anexos(request, conversa.department_id, (evento) => {
+        if (evento?.etapa) etapa = evento.etapa;
+      }).salvar(request.params.id, {
+        buffer, fileName: arquivo.filename, mediaType: arquivo.mimetype
+      });
+      request.log.info({ event: 'attachment_upload_completed', format: item.format,
+        bytes: Number(item.bytes), stage: item.analysis_status || 'ready',
+        cacheHit: item.cache_hit === true, durationMs: Date.now() - inicio });
+      reply.code(201);
+      return { id: item.id, mediaType: item.media_type, bytes: Number(item.bytes),
+        width: item.width, height: item.height, status: item.status, kind: item.kind,
+        name: item.file_name, format: item.format, pages: item.page_count,
+        sheets: item.sheet_count, cells: item.cell_count, createdAt: item.criado_em,
+        analysisStatus: item.analysis_status || item.status, cacheHit: item.cache_hit === true,
+        url: `/api/nexus/conversations/${request.params.id}/attachments/${item.id}` };
+    } catch (erro) {
+      erro.etapaProcessamento ||= etapa;
+      erro.tempoProcessamentoMs ||= Date.now() - inicio;
+      throw erro;
+    }
   });
+  app.get('/v1/conversations/:id/attachments/:attachmentId/status', async (request) =>
+    anexos(request).obterStatus(request.params.id, request.params.attachmentId));
   app.get('/v1/conversations/:id/attachments/:attachmentId', async (request, reply) => {
-    const { item, buffer } = await anexos(request).abrir(request.params.id, request.params.attachmentId);
+    const servicoAnexos = anexos(request);
+    const metadados = await servicoAnexos.obter(request.params.id, request.params.attachmentId);
+    await exigirPermissao(request, metadados.kind === 'image'
+      ? 'ia.imagem.processar_local' : 'ia.arquivo.processar_local', metadados.department_id,
+    'Você não possui permissão para baixar este anexo.');
+    const { item, buffer } = await servicoAnexos.abrir(request.params.id, request.params.attachmentId);
     reply.header('Content-Type', item.media_type);
     reply.header('Cache-Control', 'private, max-age=3600');
-    reply.header('Content-Disposition', 'inline');
+    const disposition = item.kind === 'image' ? 'inline' : 'attachment';
+    reply.header('Content-Disposition', `${disposition}; filename="${nomeDownloadSeguro(item.file_name)}"`);
     return reply.send(buffer);
   });
   app.delete('/v1/conversations/:id/attachments/:attachmentId', async (request) =>
     anexos(request).excluir(request.params.id, request.params.attachmentId));
+  app.get('/v1/conversations/:id/artifacts/:artifactId', async (request, reply) => {
+    const servicoArtefatos = artefatos(request);
+    const metadados = await servicoArtefatos.obter(request.params.id, request.params.artifactId);
+    await exigirPermissao(request, 'ia.arquivo.gerar', metadados.department_id,
+      'Você não possui permissão para baixar este arquivo gerado.');
+    const { item, buffer } = await servicoArtefatos.abrir(request.params.id, request.params.artifactId);
+    reply.header('Content-Type', item.media_type);
+    reply.header('Cache-Control', 'private, no-store');
+    reply.header('Content-Disposition', `attachment; filename="${nomeDownloadSeguro(item.file_name)}"`);
+    return reply.send(buffer);
+  });
+  app.delete('/v1/conversations/:id/artifacts/:artifactId', async (request) =>
+    artefatos(request).excluir(request.params.id, request.params.artifactId));
 
   app.post('/v1/conversations/:id/turns', {
     config: { rateLimit: { max: Number(process.env.NEXUS_TURN_RATE_LIMIT_PER_MINUTE || 20), timeWindow: '1 minute' } }
   }, async (request, reply) => {
     const hub = servico(request);
-    const attachmentIds = Array.isArray(request.body?.attachmentIds) ? request.body.attachmentIds.map(String) : [];
-    const pergunta = String(request.body?.message || (attachmentIds.length ? 'Analise as imagens anexadas.' : '')).trim();
+    const retryMessageId = request.body?.retryMessageId ? String(request.body.retryMessageId) : null;
+    const retry = retryMessageId
+      ? await hub.prepararNovaTentativa(request.params.id, retryMessageId) : null;
+    const attachmentIds = retry?.attachmentIds ||
+      (Array.isArray(request.body?.attachmentIds) ? request.body.attachmentIds.map(String) : []);
+    const pergunta = String(retry?.message || request.body?.message ||
+      (attachmentIds.length ? 'Analise os arquivos anexados.' : '')).trim();
     if (!pergunta || pergunta.length > 20_000) {
       throw new ErroHub('MENSAGEM_INVALIDA', 'Informe uma mensagem de ate 20.000 caracteres.');
     }
-    const sourceMode = validarModoFonte(request.body?.sourceMode);
-    const anexosTurno = await anexos(request).resolverParaTurno(request.params.id, attachmentIds);
+    const sourceMode = validarModoFonte(retry?.sourceMode || request.body?.sourceMode);
+    const conversaTurno = await hub.obterConversa(request.params.id);
+    const servicoAnexosTurno = anexos(request, conversaTurno.department_id);
+    for (const attachmentId of attachmentIds) {
+      const metadados = await servicoAnexosTurno.obter(request.params.id, attachmentId);
+      await exigirPermissao(request, metadados.kind === 'image'
+        ? 'ia.imagem.processar_local' : 'ia.arquivo.analisar', conversaTurno.department_id,
+      'Você não possui permissão para analisar este anexo.');
+    }
+    const anexosTurno = await servicoAnexosTurno.resolverParaTurno(request.params.id, attachmentIds);
     const inicio = await hub.iniciarSolicitacao(request.params.id, {
       clientRequestId: request.body?.clientRequestId,
       compositionLevel: request.body?.compositionLevel
@@ -291,10 +429,12 @@ async function criarServidor(opcoes = {}) {
     const enviar = (nome, dados) => {
       if (conectado && !reply.raw.destroyed) reply.raw.write(eventoSse(nome, dados));
     };
-    const etapa = (codigo) => {
-      if (!codigo || codigo === ultimoStatus) return;
+    const etapa = (codigo, detalhes = {}) => {
+      if (!codigo || codigo === ultimoStatus && detalhes.cacheHit == null) return;
       ultimoStatus = codigo;
-      enviar('stage.changed', { code: codigo, label: rotuloStatus(codigo) });
+      enviar('stage.changed', { code: codigo, label: rotuloStatus(codigo),
+        ...(detalhes.cacheHit == null ? {} : { cacheHit: detalhes.cacheHit === true }),
+        ...(detalhes.attachments ? { attachments: detalhes.attachments } : {}) });
     };
 
     enviar('turn.accepted', {
@@ -317,6 +457,8 @@ async function criarServidor(opcoes = {}) {
     etapa('interpretando');
     try {
       const composicao = inicio.request.composition_level;
+      const servicoArtefatosTurno = artefatos(request);
+      const servicoDatasetsTurno = datasets(request, inicio.conversation.department_id);
       const resultado = validarResultadoTurno(await executor(pergunta, {
         assistantMode: 'generalist',
         sessaoMemoria: inicio.conversation.chave_sessao,
@@ -337,11 +479,23 @@ async function criarServidor(opcoes = {}) {
         sourceMode,
         traceId: inicio.request.trace_id,
         anexos: anexosTurno,
+        servicoAnexos: anexos(request),
+        servicoInteligenciaAnexos: inteligenciaAnexos(request, inicio.conversation.department_id),
+        servicoArtefatos: servicoArtefatosTurno,
+        servicoDatasets: servicoDatasetsTurno,
+        filesMode: process.env.NEXUS_FILES_MODE || 'off',
+        artifactsMode: process.env.NEXUS_ARTIFACTS_MODE || 'off',
+        datasetsMode,
+        retryRootMessageId: retry?.rootMessageId || null,
+        existingUserMessageId: retry?.userMessageId || null,
         onTurnStarted: async ({ turnId }) => {
           await hub.marcarSolicitacao(inicio.request.id, 'running', { turnId });
-          await anexos(request).vincularTurno(attachmentIds, turnId);
+          if (!retry) await anexos(request).vincularTurno(attachmentIds, turnId);
         },
-        onCheckpoint: (item) => etapa(statusDoCheckpoint(item)),
+        onCheckpoint: (item) => etapa(statusDoCheckpoint(item), {
+          cacheHit: item?.dados?.cacheHit,
+          attachments: item?.dados?.attachments
+        }),
         onEvento: (texto) => etapa(statusDoEvento(texto))
       }));
       etapa('preparando_resposta');
@@ -364,7 +518,10 @@ async function criarServidor(opcoes = {}) {
           content: resultado.texto,
           provenance: resultado.proveniencia,
           sourceMode,
-          evidence: resultado.evidencia || (resultado.fontesWeb?.length ? { sources: resultado.fontesWeb } : null),
+           evidence: resultado.evidencia || (resultado.fontesWeb?.length ? { sources: resultado.fontesWeb } : null),
+           artifacts: resultado.artefatos || [],
+           knowledgeSources: resultado.fontesDocumentais || [],
+           attachmentAnalysis: resultado.analiseAnexos || null,
           usage: resultado.usageSummary
         }
       });
@@ -412,6 +569,15 @@ async function criarServidor(opcoes = {}) {
       ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : 'application/pdf');
     reply.header('Content-Disposition', `attachment; filename="documento.${formato}"`);
     return reply.send(buffer);
+  });
+  app.get('/v1/knowledge/:id/download/source', async (request, reply) => {
+    const origem = await documentacao(request).abrirFontePublicada(request.params.id, {
+      departmentId: request.query?.departmentId || null
+    });
+    reply.header('Content-Type', origem.mediaType || 'application/octet-stream');
+    reply.header('Cache-Control', 'private, no-store');
+    reply.header('Content-Disposition', `attachment; filename="${nomeDownloadSeguro(origem.fileName, 'documento')}"`);
+    return reply.send(origem.buffer);
   });
   app.get('/v1/knowledge/:id/pages/:page/image', async (request, reply) => {
     const buffer = await documentacao(request).abrirPaginaVisual(
@@ -486,10 +652,20 @@ async function criarServidor(opcoes = {}) {
     timerLimpezaAnexos = setInterval(() => processarFilaLimpeza({ pool, storage: attachmentStorage })
       .catch((erro) => app.log.warn({ event: 'attachment_cleanup_error', code: codigoErro(erro) })), 5 * 60 * 1000);
     timerLimpezaAnexos.unref?.();
+    timerLimpezaArtefatos = setInterval(() => processarFilaLimpezaArtefatos({ pool, storage: artifactStorage })
+      .catch((erro) => app.log.warn({ event: 'artifact_cleanup_error', code: codigoErro(erro) })), 5 * 60 * 1000);
+    timerLimpezaArtefatos.unref?.();
+    if (datasetsMode !== 'off') {
+      timerLimpezaDatasets = setInterval(() => processarFilaLimpezaDatasets({ pool, storage: datasetStorage })
+        .catch((erro) => app.log.warn({ event: 'dataset_cleanup_error', code: codigoErro(erro) })), 5 * 60 * 1000);
+      timerLimpezaDatasets.unref?.();
+    }
   });
   app.addHook('onClose', async () => {
     agendador.parar();
     if (timerLimpezaAnexos) clearInterval(timerLimpezaAnexos);
+    if (timerLimpezaArtefatos) clearInterval(timerLimpezaArtefatos);
+    if (timerLimpezaDatasets) clearInterval(timerLimpezaDatasets);
     if (!opcoes.pool) await pool.end();
   });
 

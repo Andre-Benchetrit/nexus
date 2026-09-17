@@ -35,13 +35,17 @@ O PostgreSQL operacional não substitui o lake nem os bancos de origem. Ele guar
 - Faz fallback entre providers sem repetir tools já concluídas no mesmo turno.
 - Pesquisa a web com fontes citadas e proteção contra vazamento de dados corporativos.
 - Processa imagens localmente para OCR, QR, códigos de barras e metadados seguros; visão externa é opcional e governada.
+- Converte PDF, DOCX, XLS, XLSX e imagens em uma representação canônica privada, reutiliza parsing/OCR por hash dentro do mesmo usuário e analisa a pergunta antes de decidir a rota.
+- Gera XLSX, DOCX e PDF privados no chat, com identidade visual configurável por implantação e linhagem para anexos e resultados corporativos usados.
 - Consulta procedimentos, políticas e manuais versionados, sempre limitados ao setor ativo e com citação de documento, versão e página.
 - Audita chamadas de IA, tokens, custos, tools, autorização, fallback e proveniência sem gravar prompts, SQL, credenciais ou resultados técnicos brutos.
 
 ## Fluxo de uma pergunta
 
 ```text
-Pergunta do usuário
+Pergunta do usuário + anexos autorizados
+  → validação, IR local e análise compacta do anexo
+  → intenção derivada somente da mensagem autenticada
   → política de fonte e autorização
   → conversa geral, pesquisa web ou consulta corporativa
   → roteador + plano de capabilities validados
@@ -122,6 +126,7 @@ As variáveis completas e seus valores de exemplo ficam em [.env.example](.env.e
 | Fallback e aprendizado | `NEXUS_HANDOFF_MODE`, `NEXUS_MEMORY_AUTOMATION_MODE`, `NEXUS_PLAYBOOK_MODE` |
 | Pesquisa web | `NEXUS_WEB_MODE`, `NEXUS_WEB_PROVIDER`, `TAVILY_API_KEY` |
 | Imagens | `NEXUS_IMAGE_MODE`, `NEXUS_ATTACHMENTS_ROOT`, `NEXUS_VISION_PROVIDER`, `NEXUS_VISION_MODEL` |
+| Arquivos, conjuntos e artefatos | `NEXUS_FILES_MODE`, `NEXUS_FILES_ROOT`, `NEXUS_ATTACHMENT_INTELLIGENCE_MODE`, `NEXUS_ATTACHMENT_EVIDENCE_MAX_BYTES`, `NEXUS_DATASETS_MODE`, `NEXUS_DATASETS_ROOT`, `NEXUS_ARTIFACTS_MODE`, `NEXUS_ARTIFACTS_ROOT`, `NEXUS_ARTIFACT_BRAND_JSON` |
 | Base de conhecimento | `NEXUS_KNOWLEDGE_MODE`, `NEXUS_KNOWLEDGE_ROOT`, `NEXUS_KNOWLEDGE_EMBEDDING_MODE`, `NEXUS_KNOWLEDGE_VISION_MODEL` |
 | Hub | `AUTH_SECRET`, `NEXUS_HUB_*`, `NEXUS_API_INTERNAL_URL` |
 
@@ -134,6 +139,15 @@ Para o piloto, o Hub opera com `NEXUS_AUTHZ_MODE=enforce`. O CLI pode permanecer
 - A autorização é avaliada antes de cada tool. Em `audit`, uma negação é registrada como `would_deny`; em `enforce`, ela bloqueia a execução.
 - O lake usa Parquet e manifestos de publicação atômica. O adapter atual é filesystem, preparado para futura troca por Object Storage, BigLake ou BigQuery sem alterar o Hub nem as tools públicas.
 - Dados internos nunca são enviados automaticamente para pesquisa externa. Conteúdo visual sensível também não é enviado a providers de visão.
+- PDF, DOCX, XLS e XLSX são validados e extraídos localmente. O IR preserva blocos e tabelas de PDF, o vínculo dos prints às seções do Word e abas, fórmulas, valores e nomes definidos do Excel. Macros, conteúdo ativo, objetos incorporados e referências externas executáveis são bloqueados; cálculos de planilhas são feitos no servidor e citados por aba e intervalo. XLS é aceito somente para leitura; arquivos gerados continuam usando XLSX.
+- A inteligência de anexos guarda o conteúdo integral apenas em derivados comprimidos no volume. O banco recebe hashes, localizadores, embeddings locais determinísticos nos níveis de página, tabela, seção, aba, nome definido e imagem, além de metadados seguros. Evidências enviadas ao modelo são limitadas a 32 KB; conteúdo sensível permanece somente no IR local.
+- O cache é isolado por usuário, setor, conjunto de hashes, pergunta, intenção, profundidade, visão e versão do analisador. Reanexar o mesmo arquivo em outro chat do mesmo usuário reaproveita o IR; usuários diferentes nunca compartilham esse cache.
+- Texto, fórmulas, imagens, nomes e metadados do arquivo entram como `untrusted_attachment_evidence`: não podem selecionar tools, iniciar pesquisa, gravar memória, conceder acesso ou mudar a intenção autenticada.
+- O IR e o envelope compacto são validados contra contratos JSON Schema versionados tanto antes da persistência quanto depois da leitura do cache; conteúdo adulterado ou incompatível falha fechado.
+- Em `NEXUS_ATTACHMENT_INTELLIGENCE_MODE=shadow`, o novo IR é criado e auditado sem participar do prompt ou do roteamento. Em `v1`, a etapa “Analisando anexo” é obrigatória e retries reutilizam a análise da ramificação selecionada.
+- Arquivos gerados ficam privados no chat, são reabertos para validação e não entram automaticamente no Knowledge ou OneDrive.
+- Planilhas geradas usam o perfil da implantação em `NEXUS_ARTIFACT_BRAND_JSON` e `NEXUS_ARTIFACT_BRAND_LOGO`. No `.env`, o JSON deve ficar entre aspas quando contiver cores com `#`; uma configuração visual inválida recua para o tema padrão sem impedir a entrega. Resultados de até 5.000 linhas recebem o template completo; volumes maiores mantêm a mesma identidade em modo streaming para limitar uso de memória.
+- No modo de conjuntos, uma planilha somente consulta o lake quando a pergunta relaciona explicitamente suas linhas a catálogo, estoque ou vendas. A associação é feita em lote no DuckDB e os dados temporários expiram após 24 horas.
 
 ## Comandos úteis
 

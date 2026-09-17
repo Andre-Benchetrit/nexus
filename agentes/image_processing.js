@@ -83,7 +83,7 @@ async function obterWorkerOcr(opcoes = {}) {
 
 async function processarImagemLocal(buffer, opcoes = {}) {
   const inicio = Date.now();
-  const sanitizada = await sanitizarImagem(buffer, opcoes);
+  const sanitizada = opcoes.sanitizada || await sanitizarImagem(buffer, opcoes);
   opcoes.onEtapa?.('extraindo_texto');
   let texto = '';
   let confiancaOcr = null;

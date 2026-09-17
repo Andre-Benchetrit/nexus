@@ -154,6 +154,29 @@ function formatarRankingProdutos(resultadosTools = []) {
   return linhas.join('\n');
 }
 
+function corrigirAlegacaoAusenciaDocumental(texto, resultadosTools = []) {
+  const consultouDocumentacao = resultadosTools.some((item) =>
+    item.nome === 'consultar_documentacao');
+  const original = String(texto || '');
+  if (!consultouDocumentacao || !original.trim()) return original;
+  const normalizar = (valor) => String(valor || '').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const sentencas = original.split(/(?<=[.!?])\s+/u);
+  let removeuAlegacao = false;
+  const preservadas = sentencas.filter((sentenca) => {
+    const normalizada = normalizar(sentenca);
+    const ausenciaAbsoluta = /\b(?:nao existe|nao ha)\b/.test(normalizada);
+    const contextoDocumental = /\b(?:base|documentacao|documento|manual|guia|procedimento|politica|identidade visual)\b/.test(normalizada);
+    if (!ausenciaAbsoluta || !contextoDocumental) return true;
+    removeuAlegacao = true;
+    return false;
+  });
+  if (!removeuAlegacao) return original;
+  const ressalva = 'A busca realizada não localizou esse conteúdo com relevância suficiente nos resultados retornados. Isso não comprova que o documento não exista na base autorizada.';
+  const restante = preservadas.join(' ').trim();
+  return restante ? `${ressalva}\n\n${restante}` : ressalva;
+}
+
 function aplicarGarantiasResposta(texto, resultadosTools = []) {
   const painelFocado = [...resultadosTools].reverse().find((item) => (
     item.nome === 'analisar_indicadores' &&
@@ -166,6 +189,7 @@ function aplicarGarantiasResposta(texto, resultadosTools = []) {
   let resposta = formatarRankingProdutos(resultadosTools)
     || formatarPainelFocado(painelFocado?.resultado)
     || formatarDatasResposta(texto);
+  resposta = corrigirAlegacaoAusenciaDocumental(resposta, resultadosTools);
   const ultimoRecebimento = [...resultadosTools].reverse().find((item) => (
     item.nome === 'analisar_reposicoes' &&
     item.resultado?.operacao === 'ultimo_recebimento' &&
@@ -416,6 +440,7 @@ module.exports = {
   classificarEvidencia,
   criarEnvelopeEvidencia,
   criarManifestoFactual,
+  corrigirAlegacaoAusenciaDocumental,
   extrairIdentificadoresNegocio,
   formatarDatasResposta,
   formatarPainelFocado,

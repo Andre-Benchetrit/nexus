@@ -90,6 +90,10 @@ const {
   definicaoConsultarDocumentacao,
   executarConsultarDocumentacao
 } = require('../tools/consultar_documentacao');
+const {
+  definicaoConsultarConjuntoNexus,
+  executarConsultarConjuntoNexus
+} = require('../tools/consultar_conjunto_nexus');
 
 const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_indicadores',
@@ -261,6 +265,12 @@ function criarRegistroFerramentas(dependencias = {}) {
       terminal: true,
       executar: dependencias.executarConsultarDocumentacaoTool || ((argumentos) =>
         executarConsultarDocumentacao(argumentos, dependencias))
+    }],
+    ['consultar_conjunto_nexus', {
+      definicao: definicaoConsultarConjuntoNexus,
+      terminal: true,
+      executar: dependencias.executarConsultarConjuntoNexusTool || ((argumentos) =>
+        executarConsultarConjuntoNexus(argumentos, dependencias))
     }],
     ['consultar_silver', {
       definicao: definicaoConsultarSilver,

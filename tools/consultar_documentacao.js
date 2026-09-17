@@ -188,6 +188,27 @@ async function executarConsultarDocumentacao(argumentos, dependencias = {}) {
     resultado.analise_visual = await interpretarPaginas(resultado.resultados,
       argumentos.consulta, servico, dependencias);
   }
+  if (resultado.status === 'sucesso') {
+    const pediuArquivo = /\b(?:baixar|download|arquivo|documento\s+(?:original|fonte|completo)|pdf|word)\b/i.test(argumentos.consulta);
+    const visaoInconclusiva = argumentos.analisar_visual === true &&
+      resultado.analise_visual?.status !== 'sucesso';
+    const textoInsuficiente = resultado.resultados?.some((item) =>
+      item.pagina_visual_disponivel && String(item.trecho || '').trim().length < 220);
+    if (pediuArquivo || visaoInconclusiva || textoInsuficiente) {
+      const unicos = new Map();
+      const setorQuery = dependencias.departamentoId
+        ? `?departmentId=${encodeURIComponent(String(dependencias.departamentoId))}` : '';
+      for (const item of resultado.resultados || []) {
+        if (!item.documento_id || unicos.has(item.documento_id)) continue;
+        unicos.set(item.documento_id, {
+          kind: 'knowledge-source', documentId: item.documento_id, title: item.titulo,
+          version: item.versao, format: item.formato || null,
+          url: `/v1/knowledge/${item.documento_id}/download/source${setorQuery}`
+        });
+      }
+      resultado.fontes_download = [...unicos.values()];
+    }
+  }
   return resultado;
 }
 

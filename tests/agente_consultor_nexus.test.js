@@ -8,6 +8,7 @@ const {
 } = require('../agentes/consultor_nexus');
 const {
   aplicarGarantiasResposta,
+  corrigirAlegacaoAusenciaDocumental,
   formatarDatasResposta
 } = require('../agentes/resposta');
 const {
@@ -72,6 +73,17 @@ test('informa data indisponivel sem apresenta-la como analisada', () => {
   assert.match(resposta, /Última data disponível: 29\/07\/2026 \(parcial\)/);
   assert.doesNotMatch(resposta, /Data analisada: 03\/08\/2026/);
   assert.doesNotMatch(resposta, /10 pedidos/);
+});
+
+test('busca documental vazia nunca vira afirmacao de inexistencia na base', () => {
+  const resposta = corrigirAlegacaoAusenciaDocumental(
+    'Não há, na base autorizada, um manual de marca da FID. Procure o Marketing.',
+    [{ nome: 'consultar_documentacao', resultado: { status: 'vazio', resultados: [] } }]
+  );
+  assert.match(resposta, /não localizou esse conteúdo com relevância suficiente/i);
+  assert.match(resposta, /não comprova que o documento não exista/i);
+  assert.doesNotMatch(resposta, /não há, na base autorizada/i);
+  assert.match(resposta, /Procure o Marketing/);
 });
 
 test('ranking de produto usa codigo auxiliar real e nunca renomeia id como SKU', () => {

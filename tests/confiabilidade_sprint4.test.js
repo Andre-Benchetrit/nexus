@@ -18,6 +18,10 @@ const { detectarSinaisAprendizado } = require('../agentes/revisor_memoria');
 const { criarEstadoExecucao } = require('../agentes/execucao_turno');
 const { executarAssistente } = require('../agentes/assistente_nexus');
 const {
+  aplicarContextoTemporalNaDecisao,
+  resolverContextoTemporalDaSolicitacao
+} = require('../agentes/consultor_nexus');
+const {
   definicaoConsultarBloqueiosSemEstoque
 } = require('../tools/consultar_bloqueios_sem_estoque');
 
@@ -176,6 +180,55 @@ test('mes atual versus anterior usa os mesmos dias de cobertura', () => {
   assert.deepEqual(args, {
     data_inicial: '2026-08-01', data_final: '2026-08-17',
     data_inicial_anterior: '2026-07-01', data_final_anterior: '2026-07-17'
+  });
+});
+
+test('periodo deterministico prevalece sobre ano inventado pelo roteador e pela tool', () => {
+  const temporal = resolverContextoTemporalDaSolicitacao(
+    'Quais foram os produtos que mais venderam no mês de julho?',
+    [], '2026-09-03'
+  );
+  const decisao = aplicarContextoTemporalNaDecisao({
+    periodo: { data_inicial: '2023-07-01', data_final: '2023-07-31' },
+    codigosMotivo: []
+  }, temporal);
+  assert.deepEqual(decisao.periodo, {
+    data_inicial: '2026-07-01', data_final: '2026-07-31',
+    referencia: 'mes_nomeado_mais_recente'
+  });
+  const argumentos = aplicarPoliticaArgumentos('analisar_vendas', {
+    data_inicial: '2023-07-01', data_final: '2023-07-31', operacao: 'ranquear'
+  }, { temporal });
+  assert.equal(argumentos.data_inicial, '2026-07-01');
+  assert.equal(argumentos.data_final, '2026-07-31');
+});
+
+test('ano curto corrige o mes da consulta corporativa anterior', () => {
+  assert.deepEqual(resolverContextoTemporalDaSolicitacao(
+    'e de fato 2025.',
+    [{ pergunta: 'Quais foram os produtos que mais venderam no mês de julho?' }],
+    '2026-09-03'
+  ), {
+    tipo: 'periodo_explicito', origem: 'correcao_ano_continuacao',
+    inicio: '2025-07-01', fim: '2025-07-31'
+  });
+});
+
+test('resposta anterior em texto livre nao injeta datas na continuacao', () => {
+  assert.equal(resolverContextoTemporalDaSolicitacao(
+    'tente novamente',
+    [{ pergunta: 'Consulta sem período', resposta: 'Tente o intervalo 01/07/2023 a 31/07/2023.' }],
+    '2026-09-03'
+  ), null);
+  assert.deepEqual(resolverContextoTemporalDaSolicitacao(
+    'agora por marca',
+    [{ pergunta: 'Ranking anterior', periodo: {
+      data_inicial: '2026-07-01', data_final: '2026-07-31'
+    } }],
+    '2026-09-03'
+  ), {
+    tipo: 'periodo_explicito', origem: 'periodo_anterior_estruturado',
+    inicio: '2026-07-01', fim: '2026-07-31'
   });
 });
 

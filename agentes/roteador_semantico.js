@@ -458,6 +458,10 @@ async function interpretarRotaSemantica(pergunta, contextoSessao, dependencias =
     'Perguntas sobre como ou onde executar, desbloquear, liberar, cadastrar, solicitar ou acessar um processo interno pertencem ao dominio documentacao, mesmo quando mencionam pedido, produto ou cliente.',
     'Sugira fachadas de negocio. Gold/Silver somente para capacidade ausente; Bronze apenas auditoria.',
     'Registre as transformacoes de apresentacao pedidas, como agrupar, ordenar ou comparar periodos.',
+    dependencias.dataReferencia
+      ? `Data atual do negocio: ${dependencias.dataReferencia}. Nunca invente outro ano.` : '',
+    dependencias.contextoTemporal
+      ? `Periodo resolvido deterministicamente: ${JSON.stringify(dependencias.contextoTemporal)}. Copie exatamente este periodo para a decisao; nao o substitua por inferencia do modelo.` : '',
     'Sugira intervencao assistida ou avancada quando a intencao exigir multiplas evidencias,',
     'investigacao, reconciliacao, julgamento relevante ou quando uma resposta simples puder ser incompleta.',
     'Complexidade e apenas uma recomendacao; nao libera ferramentas, camadas ou providers.',

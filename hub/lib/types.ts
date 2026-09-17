@@ -20,11 +20,38 @@ export type Message = {
   createdAt?: string; optimistic?: boolean;
   sourceMode?: SourceMode;
   attachments?: Attachment[];
+  artifacts?: Artifact[];
+  knowledgeSources?: KnowledgeSource[];
+  variantRootId?: string; variantIndex?: number; variantActive?: boolean;
+  variants?: MessageVariant[];
+  attachmentAnalysis?: { analysisRef: string; cacheHit: boolean; intent?: unknown; manifests?: unknown[] } | null;
 };
+export type MessageVariant = {
+  id: string; turnId?: string; traceId?: string; content: string; provenance?: string | null;
+  sourceMode?: SourceMode; artifacts?: Artifact[]; knowledgeSources?: KnowledgeSource[];
+  createdAt?: string; variantIndex: number; active: boolean;
+};
+export type AttachmentStatus = "processing" | "ready" | "error" | "deleting";
+export type FileProcessingStage =
+  "validando_arquivo" | "extraindo_conteudo" | "indexando_anexo" | "analisando_anexo" |
+  "comparando_anexos" | "recuperando_analise" | "interpretando_paginas";
 export type Attachment = {
-  id: string; mediaType: string; bytes: number; width: number; height: number;
-  url: string; name?: string; previewUrl?: string;
+  id: string; mediaType: string; bytes: number; width?: number | null; height?: number | null;
+  url: string; name?: string; previewUrl?: string; kind?: "image" | "document";
+  format?: string; pages?: number | null; sheets?: number | null; cells?: number | null;
+  status?: AttachmentStatus; analysisStatus?: FileProcessingStage | string | null;
+  cacheHit?: boolean; errorCode?: string | null; progress?: number | null;
 };
+export type AttachmentStatusEvent = Partial<Attachment> & { attachmentId?: string };
+export type TurnStageEvent = {
+  code?: FileProcessingStage | string; label?: string; cacheHit?: boolean;
+  attachmentId?: string; attachment?: AttachmentStatusEvent;
+  attachments?: AttachmentStatusEvent[];
+};
+export type Artifact = { id: string; format: "xlsx" | "docx" | "pdf"; mediaType: string;
+  name: string; title: string; bytes: number; classification?: string; url: string };
+export type KnowledgeSource = { kind: "knowledge-source"; documentId: string; title: string;
+  version: number; format?: string | null; size?: number | null; url: string };
 export type CompositionLevel = "baixo" | "medio" | "alto" | "extra_alto";
 export type SourceMode = "automatico" | "dados" | "documentacao" | "web";
 export type MemoryOffer = { id: string; statement: string; expiresAt?: string };

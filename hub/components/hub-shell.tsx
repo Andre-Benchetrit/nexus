@@ -9,7 +9,8 @@ import { signOut } from "next-auth/react";
 import { MarkdownMessage } from "./markdown-message";
 import { NexusLogo } from "./nexus-logo";
 import {
-  Attachment, CompositionLevel, Conversation, MemoryOffer, Message, NexusProfile, SourceMode, TurnRequest, nexusFetch
+  Attachment, AttachmentStatusEvent, CompositionLevel, Conversation, FileProcessingStage, MemoryOffer,
+  Message, NexusProfile, SourceMode, TurnRequest, TurnStageEvent, nexusFetch
 } from "@/lib/types";
 
 const COMPOSITIONS: Array<{ value: CompositionLevel; label: string; hint: string }> = [
@@ -27,13 +28,115 @@ const SOURCE_MODES: Array<{ value: SourceMode; label: string; hint: string }> = 
 const SOURCE_MODE_ICONS: Record<SourceMode, string> = {
   automatico: "✦", dados: "◆", documentacao: "▤", web: "◇"
 };
+const FILE_STAGE_LABELS: Record<FileProcessingStage, string> = {
+  validando_arquivo: "Validando arquivo",
+  extraindo_conteudo: "Extraindo conteúdo",
+  indexando_anexo: "Indexando anexo",
+  analisando_anexo: "Analisando anexo",
+  comparando_anexos: "Comparando anexos",
+  recuperando_analise: "Recuperando análise anterior",
+  interpretando_paginas: "Interpretando páginas relevantes"
+};
+const FILE_STAGE_HINTS: Record<FileProcessingStage, string> = {
+  validando_arquivo: "Verificando formato, integridade e segurança.",
+  extraindo_conteudo: "Preparando texto, tabelas e estrutura para análise.",
+  indexando_anexo: "Criando referências reutilizáveis para este arquivo.",
+  analisando_anexo: "Conferindo evidências exatas antes de responder.",
+  comparando_anexos: "Cruzando os arquivos localmente.",
+  recuperando_analise: "Reutilizando uma análise já validada.",
+  interpretando_paginas: "Analisando somente as páginas visuais necessárias."
+};
+const FILE_STAGE_CODES = new Set<string>(Object.keys(FILE_STAGE_LABELS));
 const NEW_CHAT_TURN_KEY = "__new_chat__";
 type PendingFile = { file: File; previewUrl: string };
+type TurnProgress = { label: string; code?: string; cacheHit?: boolean };
 type SendMessageOptions = {
   sourceMode?: SourceMode;
   files?: PendingFile[];
   preserveComposer?: boolean;
+  retryMessageId?: string;
 };
+
+function isImage(mediaType?: string) { return String(mediaType || "").startsWith("image/"); }
+function fileBadge(mediaType?: string, format?: string) {
+  if (isImage(mediaType)) return "IMG";
+  if (format) return format.toUpperCase();
+  if (mediaType === "application/pdf") return "PDF";
+  if (mediaType === "application/vnd.ms-excel") return "XLS";
+  if (mediaType?.includes("spreadsheetml")) return "XLSX";
+  if (mediaType?.includes("wordprocessingml")) return "DOCX";
+  return "ARQ";
+}
+function fileSize(bytes?: number | null) {
+  const value = Number(bytes || 0); return value >= 1048576 ? `${(value / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+function apiFileUrl(url: string) {
+  if (url === "/v1") return "/api/nexus";
+  if (url.startsWith("/v1/")) return `/api/nexus${url.slice(3)}`;
+  return url;
+}
+
+function fileStageLabel(code?: string | null, fallback?: string | null) {
+  return code && FILE_STAGE_CODES.has(code)
+    ? FILE_STAGE_LABELS[code as FileProcessingStage]
+    : String(fallback || "Pensando");
+}
+
+function fileStageHint(code?: string | null) {
+  return code && FILE_STAGE_CODES.has(code)
+    ? FILE_STAGE_HINTS[code as FileProcessingStage]
+    : "O Nexus pode consultar diferentes fontes antes de responder.";
+}
+
+function attachmentProgress(value?: number | null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.round(Math.min(100, Math.max(0, numeric <= 1 ? numeric * 100 : numeric)));
+}
+
+function attachmentState(item: Attachment) {
+  const status = item.status || "ready";
+  const progress = attachmentProgress(item.progress);
+  if (status === "error") return { label: "Falha no processamento", icon: "!", status };
+  if (status === "deleting") return { label: "Removendo arquivo", icon: "…", status };
+  if (item.analysisStatus && FILE_STAGE_CODES.has(item.analysisStatus)) {
+    return { label: `${fileStageLabel(item.analysisStatus)}${progress == null ? "" : ` · ${progress}%`}`, icon: "…", status: "processing" };
+  }
+  if (status === "processing") return { label: `Processando arquivo${progress == null ? "" : ` · ${progress}%`}`, icon: "…", status };
+  return { label: item.cacheHit ? "Pronto · análise reutilizada" : "Pronto", icon: "✓", status: "ready" };
+}
+
+function attachmentPatch(raw: AttachmentStatusEvent) {
+  const patch: Partial<Attachment> = {};
+  if (["processing", "ready", "error", "deleting"].includes(String(raw.status))) patch.status = raw.status;
+  if (typeof raw.analysisStatus === "string" || raw.analysisStatus === null) patch.analysisStatus = raw.analysisStatus;
+  if (typeof raw.cacheHit === "boolean") patch.cacheHit = raw.cacheHit;
+  if (typeof raw.errorCode === "string" || raw.errorCode === null) patch.errorCode = raw.errorCode;
+  if (raw.progress === null || Number.isFinite(Number(raw.progress))) patch.progress = raw.progress == null ? null : Number(raw.progress);
+  for (const key of ["pages", "sheets", "cells"] as const) {
+    if (raw[key] === null || Number.isFinite(Number(raw[key]))) patch[key] = raw[key] == null ? null : Number(raw[key]);
+  }
+  return patch;
+}
+
+function AttachmentCard({ item }: { item: Attachment }) {
+  const state = attachmentState(item);
+  const details = `${fileSize(item.bytes)}${item.pages ? ` · ${item.pages} páginas` : item.sheets ? ` · ${item.sheets} abas` : ""}`;
+  const stateLine = <small className={`attachment-state ${state.status}`} title={item.errorCode || undefined}>
+    <i aria-hidden="true">{state.icon}</i>{state.label}{item.cacheHit && state.status !== "ready" ? <em>Reutilizada</em> : null}
+  </small>;
+  if (isImage(item.mediaType)) {
+    return <figure className={`attachment-preview ${state.status}`} aria-busy={state.status === "processing"}>
+      <img src={apiFileUrl(item.previewUrl || item.url)} alt={item.name || "Imagem anexada"} />
+      <figcaption><strong>{item.name || "Imagem anexada"}</strong><small>{details}</small>{stateLine}</figcaption>
+    </figure>;
+  }
+  const body = <><b>{fileBadge(item.mediaType, item.format)}</b><span><strong>{item.name || "Documento anexado"}</strong>
+    <small>{details}</small>{stateLine}</span><i>{state.status === "ready" ? "Baixar" : state.icon}</i></>;
+  return state.status === "ready"
+    ? <a className="file-card attachment-file ready" href={apiFileUrl(item.url)} download>{body}</a>
+    : <div className={`file-card attachment-file ${state.status}`} role="status" aria-busy={state.status === "processing"}>{body}</div>;
+}
 
 function groupLabel(date?: string) {
   if (!date) return "Anteriores";
@@ -79,7 +182,7 @@ export function HubShell({ profile, initialConversationId }: {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
-  const [turnProgress, setTurnProgress] = useState<Record<string, string>>({});
+  const [turnProgress, setTurnProgress] = useState<Record<string, TurnProgress>>({});
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -97,12 +200,13 @@ export function HubShell({ profile, initialConversationId }: {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const activeIdRef = useRef<string | null>(initialConversationId || null);
-  const turnProgressRef = useRef<Record<string, string>>({});
+  const turnProgressRef = useRef<Record<string, TurnProgress>>({});
 
   const active = conversations.find((item) => item.id === activeId) || null;
   const activeTurnKey = activeId || NEW_CHAT_TURN_KEY;
-  const activeStage = turnProgress[activeTurnKey] || null;
-  const activeLoading = Boolean(activeStage);
+  const activeStageState = turnProgress[activeTurnKey] || null;
+  const activeStage = activeStageState?.label || null;
+  const activeLoading = Boolean(activeStageState);
   const selectedDepartment = currentProfile.setores.find((item) => item.id === departmentId);
   const activePermissions = new Set([
     ...(currentProfile.permissoesGlobais || []),
@@ -127,16 +231,16 @@ export function HubShell({ profile, initialConversationId }: {
     setActiveId(id);
   }
 
-  function setTurnStage(key: string, label: string) {
-    turnProgressRef.current = { ...turnProgressRef.current, [key]: label };
+  function setTurnStage(key: string, label: string, details: Pick<TurnProgress, "code" | "cacheHit"> = {}) {
+    turnProgressRef.current = { ...turnProgressRef.current, [key]: { label, ...details } };
     setTurnProgress(turnProgressRef.current);
   }
 
   function moveTurnStage(from: string, to: string) {
     const next = { ...turnProgressRef.current };
-    const label = next[from];
+    const progress = next[from];
     delete next[from];
-    if (label) next[to] = label;
+    if (progress) next[to] = progress;
     turnProgressRef.current = next;
     setTurnProgress(next);
   }
@@ -328,9 +432,11 @@ export function HubShell({ profile, initialConversationId }: {
   }
 
   function addFiles(files: File[]) {
-    const allowed = new Set(["image/png", "image/jpeg", "image/webp"]);
-    const valid = files.filter((file) => allowed.has(file.type) && file.size <= 10 * 1024 * 1024);
-    if (valid.length !== files.length) setError("Use até quatro imagens PNG, JPEG ou WebP de no máximo 10 MB cada.");
+    const allowed = new Set(["image/png", "image/jpeg", "image/webp", "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]);
+    const valid = files.filter((file) => (allowed.has(file.type) || /\.(?:png|jpe?g|webp|pdf|docx|xlsx?)$/i.test(file.name)) && file.size <= 25 * 1024 * 1024);
+    if (valid.length !== files.length) setError("Use até quatro arquivos PNG, JPEG, WebP, PDF, DOCX, XLS ou XLSX de no máximo 25 MB cada.");
     setPendingFiles((current) => {
       const available = Math.max(0, 4 - current.length);
       return [...current, ...valid.slice(0, available).map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))];
@@ -362,19 +468,54 @@ export function HubShell({ profile, initialConversationId }: {
     }));
   }
 
-  async function uploadFiles(conversationId: string, files: PendingFile[], onStage: (label: string) => void) {
+  function updateAttachmentEverywhere(raw: AttachmentStatusEvent, fallbackId?: string) {
+    const attachmentId = String(raw.attachmentId || raw.id || fallbackId || "");
+    if (!attachmentId) return;
+    const patch = attachmentPatch(raw);
+    setMessages((items) => items.map((message) => !message.attachments?.length ? message : {
+      ...message,
+      attachments: message.attachments.map((item) => item.id === attachmentId ? { ...item, ...patch } : item)
+    }));
+  }
+
+  async function monitorAttachmentStatus(conversationId: string, item: Attachment) {
+    if (item.status !== "processing") return;
+    let consecutiveFailures = 0;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      try {
+        const current = await nexusFetch<AttachmentStatusEvent>(
+          `conversations/${conversationId}/attachments/${item.id}/status`
+        );
+        consecutiveFailures = 0;
+        updateAttachmentEverywhere({ ...current, attachmentId: item.id });
+        if (current.status === "ready" || current.status === "error" || current.status === "deleting") return;
+      } catch {
+        consecutiveFailures += 1;
+        // O SSE ainda pode concluir o cartão; falha transitória do status não deve virar erro do arquivo.
+        if (consecutiveFailures >= 3) return;
+      }
+    }
+  }
+
+  async function uploadFiles(conversationId: string, files: PendingFile[], onStage: (label: string) => void,
+    onAttachment: (item: Attachment, index: number) => void) {
     const uploaded: Attachment[] = [];
     try {
-      for (const item of files) {
-        onStage(`Enviando imagem ${uploaded.length + 1} de ${files.length}`);
+      for (const [index, item] of files.entries()) {
+        onStage(`Enviando arquivo ${uploaded.length + 1} de ${files.length}`);
         const form = new FormData(); form.append("file", item.file);
         const response = await fetch(`/api/nexus/conversations/${conversationId}/attachments`, { method: "POST", body: form });
         if (!response.ok) {
           const body = await response.json().catch(() => null);
-          throw new Error(body?.error?.message || "Não foi possível enviar a imagem.");
+          throw new Error(body?.error?.message || "Não foi possível enviar o arquivo.");
         }
         const attachment = await response.json() as Attachment;
-        uploaded.push({ ...attachment, name: item.file.name, previewUrl: item.previewUrl });
+        const normalized = { ...attachment, status: attachment.status || "ready",
+          name: item.file.name, previewUrl: item.previewUrl } as Attachment;
+        uploaded.push(normalized);
+        onAttachment(normalized, index);
+        if (normalized.status === "processing") void monitorAttachmentStatus(conversationId, normalized);
       }
       return uploaded;
     } catch (cause) {
@@ -385,8 +526,9 @@ export function HubShell({ profile, initialConversationId }: {
 
   async function sendMessage(value = input, options: SendMessageOptions = {}) {
     const text = value.trim();
+    const isRetry = Boolean(options.retryMessageId);
     const initialTurnKey = activeId || NEW_CHAT_TURN_KEY;
-    const files = options.files ? [...options.files] : [...pendingFiles];
+    const files = isRetry ? [] : options.files ? [...options.files] : [...pendingFiles];
     if ((!text && !files.length) || turnProgressRef.current[initialTurnKey]) return;
     stickToBottomRef.current = true;
     setShowJumpToBottom(false);
@@ -394,19 +536,21 @@ export function HubShell({ profile, initialConversationId }: {
     const optimisticId = `optimistic-${crypto.randomUUID()}`;
     const localAttachments: Attachment[] = files.map((item, index) => ({
       id: `${optimisticId}-${index}`, mediaType: item.file.type, bytes: item.file.size,
-      width: 0, height: 0, url: item.previewUrl, name: item.file.name, previewUrl: item.previewUrl
+      width: 0, height: 0, kind: isImage(item.file.type) ? "image" : "document",
+      url: item.previewUrl, name: item.file.name, previewUrl: item.previewUrl,
+      status: "processing", analysisStatus: "validando_arquivo"
     }));
     const createdFromEmpty = !activeId;
     const turnSourceMode = options.sourceMode || sourceMode;
     let conversationId: string | null = activeId;
     let turnKey = initialTurnKey;
     let turnAccepted = false;
-    if (!options.preserveComposer) {
+    if (!options.preserveComposer && !isRetry) {
       setInput(""); setPendingFiles([]); setSourceMode("automatico");
     }
     setError(null); setComposerMenuOpen(false);
-    setTurnStage(turnKey, files.length ? "Preparando imagens" : "Interpretando sua solicitação");
-    setMessages((items) => [...items, {
+    setTurnStage(turnKey, files.length ? "Preparando arquivos" : "Interpretando sua solicitação");
+    if (!isRetry) setMessages((items) => [...items, {
       id: optimisticId, role: "user", content: prompt, optimistic: true,
       sourceMode: turnSourceMode, attachments: localAttachments
     }]);
@@ -416,12 +560,15 @@ export function HubShell({ profile, initialConversationId }: {
         moveTurnStage(turnKey, conversationId);
         turnKey = conversationId;
       }
-      // Firma a conversa na URL assim que ela existe, sem aguardar upload,
-      // OCR ou resposta. history.replaceState preserva o componente e o loading.
-      if (createdFromEmpty || window.location.pathname === "/") {
-        navigateChat(`/chat/${conversationId}`, true);
-      }
-      const uploaded = await uploadFiles(conversationId, files, (label) => setTurnStage(turnKey, label));
+      const uploaded = isRetry ? [] : await uploadFiles(conversationId, files,
+        (label) => setTurnStage(turnKey, label), (attachment, attachmentIndex) => {
+          if (activeIdRef.current !== conversationId) return;
+          setMessages((items) => items.map((item) => item.id !== optimisticId ? item : {
+            ...item,
+            attachments: (item.attachments || []).map((current, index) =>
+              index === attachmentIndex ? attachment : current)
+          }));
+        });
       if (activeIdRef.current === conversationId) {
         setMessages((items) => items.map((item) => item.id === optimisticId
           ? { ...item, attachments: uploaded } : item));
@@ -430,6 +577,7 @@ export function HubShell({ profile, initialConversationId }: {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ message: prompt, attachmentIds: uploaded.map((item) => item.id), compositionLevel: composition,
           sourceMode: turnSourceMode,
+          retryMessageId: options.retryMessageId || undefined,
           clientRequestId: crypto.randomUUID() })
       });
       if (!response.ok) {
@@ -444,23 +592,51 @@ export function HubShell({ profile, initialConversationId }: {
       let acceptedRequestId: string | null = null;
       let terminalError: string | null = null;
       const receive = (name: string, raw: unknown) => {
-        const data = raw as Record<string, any>;
+        const data = raw as TurnStageEvent & Record<string, any>;
         if (name === "turn.accepted" && data.requestId) {
           acceptedRequestId = String(data.requestId);
           turnAccepted = true;
         }
-        if (name === "stage.changed") setTurnStage(turnKey, String(data.label || "Pensando"));
+        if (name === "stage.changed") {
+          const code = data.code ? String(data.code) : undefined;
+          const cacheHit = data.cacheHit === true || code === "recuperando_analise";
+          setTurnStage(turnKey, fileStageLabel(code, data.label), { code, cacheHit });
+          const supplied = Array.isArray(data.attachments) ? data.attachments
+            : data.attachment ? [data.attachment]
+              : data.attachmentId ? [data as AttachmentStatusEvent] : [];
+          if (supplied.length) supplied.forEach((update) => updateAttachmentEverywhere({
+            ...update,
+            analysisStatus: update.analysisStatus ?? (FILE_STAGE_CODES.has(String(code)) ? code : undefined),
+            cacheHit: update.cacheHit ?? (data.cacheHit === true ? true : undefined)
+          }));
+          else if (code && FILE_STAGE_CODES.has(code)) uploaded.forEach((attachment) =>
+            updateAttachmentEverywhere({ attachmentId: attachment.id, analysisStatus: code,
+              cacheHit: data.cacheHit === true || code === "recuperando_analise" ? true : undefined }));
+        }
+        if (["attachment.status", "attachment.updated", "attachments.status", "file.status"].includes(name)) {
+          const supplied = Array.isArray(data.attachments) ? data.attachments
+            : data.attachment ? [data.attachment] : [data as AttachmentStatusEvent];
+          supplied.forEach((update) => updateAttachmentEverywhere(update));
+        }
         if (name === "memory.offer" && activeIdRef.current === conversationId) setMemoryOffer(data as MemoryOffer);
         if (name === "turn.failed") {
+          uploaded.forEach((attachment) => updateAttachmentEverywhere({
+            attachmentId: attachment.id, analysisStatus: null
+          }));
           terminalError = String(data.message || "Não foi possível concluir a resposta.");
           completed = true;
         }
         if (name === "turn.completed" && data.message) {
+          uploaded.forEach((attachment) => updateAttachmentEverywhere({
+            attachmentId: attachment.id, analysisStatus: null
+          }));
           const message = data.message as Message;
           if (!message.content?.trim()) {
             setError("O Nexus concluiu o turno sem produzir uma resposta válida.");
           } else {
-            if (activeIdRef.current === conversationId) setMessages((items) => [...items, message]);
+            if (activeIdRef.current === conversationId) {
+              if (!isRetry) setMessages((items) => [...items, message]);
+            }
           }
           completed = true;
         }
@@ -472,6 +648,10 @@ export function HubShell({ profile, initialConversationId }: {
         buffer = parseSseChunk(buffer, receive);
       }
       if (terminalError) throw new Error(terminalError);
+      if (completed && isRetry && activeIdRef.current === conversationId) {
+        const items = await nexusFetch<Message[]>(`conversations/${conversationId}/messages`);
+        setMessages(visibleMessages(items));
+      }
       if (!completed && acceptedRequestId) completed = await recoverTurn(conversationId, acceptedRequestId);
       if (!completed && activeIdRef.current === conversationId) {
         await nexusFetch<Message[]>(`conversations/${conversationId}/messages`)
@@ -480,8 +660,8 @@ export function HubShell({ profile, initialConversationId }: {
       await refreshConversations();
     } catch (cause) {
       if (!turnAccepted && activeIdRef.current === conversationId) {
-        setMessages((items) => items.filter((item) => item.id !== optimisticId));
-        if (!options.preserveComposer) {
+        if (!isRetry) setMessages((items) => items.filter((item) => item.id !== optimisticId));
+        if (!options.preserveComposer && !isRetry) {
           setPendingFiles(files);
           setInput(text);
           setSourceMode(turnSourceMode);
@@ -496,6 +676,13 @@ export function HubShell({ profile, initialConversationId }: {
       }
     } finally {
       clearTurnStage(turnKey);
+      // A URL só é consolidada depois que o turno foi aceito. Use a History API para
+      // preservar o estado já renderizado; a navegação do App Router remontaria a tela e
+      // produziria um recarregamento visual desnecessário após a resposta.
+      if (createdFromEmpty && turnAccepted && conversationId && activeIdRef.current === conversationId &&
+          window.location.pathname === "/") {
+        navigateChat(`/chat/${conversationId}`, true);
+      }
     }
   }
 
@@ -507,28 +694,30 @@ export function HubShell({ profile, initialConversationId }: {
     setRetryingMessageId(retryId);
     setError(null);
     try {
-      const files: PendingFile[] = [];
-      for (const [attachmentIndex, attachment] of (original.attachments || []).entries()) {
-        const response = await fetch(attachment.url, { cache: "no-store" });
-        if (!response.ok) throw new Error("Não foi possível recuperar uma imagem da mensagem original.");
-        const blob = await response.blob();
-        const mediaType = attachment.mediaType || blob.type || "image/png";
-        const extension = mediaType === "image/jpeg" ? "jpg" : mediaType === "image/webp" ? "webp" : "png";
-        const file = new File([blob], attachment.name || `imagem-repetida-${attachmentIndex + 1}.${extension}`, {
-          type: mediaType,
-          lastModified: Date.now()
-        });
-        files.push({ file, previewUrl: URL.createObjectURL(file) });
-      }
       await sendMessage(original.content, {
         sourceMode: message.sourceMode || original.sourceMode || "automatico",
-        files,
-        preserveComposer: true
+        preserveComposer: true,
+        retryMessageId: message.id
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível tentar novamente.");
     } finally {
       setRetryingMessageId(null);
+    }
+  }
+
+  async function selectResponseVariant(message: Message, direction: -1 | 1) {
+    if (!activeId || activeLoading || !message.variants?.length) return;
+    const atual = Math.max(0, message.variants.findIndex((item) => item.id === message.id));
+    const destino = message.variants[atual + direction];
+    if (!destino) return;
+    setError(null);
+    try {
+      await nexusFetch(`conversations/${activeId}/messages/${destino.id}/select`, { method: "POST" });
+      const items = await nexusFetch<Message[]>(`conversations/${activeId}/messages`);
+      setMessages(visibleMessages(items));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível trocar a versão da resposta.");
     }
   }
 
@@ -654,30 +843,55 @@ export function HubShell({ profile, initialConversationId }: {
           <div className="suggestion-grid">{suggestions.slice(0, 4).map((item) =>
             <button key={item} onClick={() => sendMessage(item)}>{item}<span>↗</span></button>)}</div>
         </section> : <div className="message-stream">
-          {messages.map((message, index) => <article className={`message ${message.role}`} key={message.id || index}>
-            {message.role === "assistant" && <div className="assistant-mark"><NexusLogo compact /></div>}
-            <div className="message-body">
-              {message.attachments?.length ? <div className="message-attachments">{message.attachments.map((item) =>
-                <img key={item.id} src={item.previewUrl || item.url} alt={item.name || "Imagem anexada"} />)}</div> : null}
-              {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <p>{message.content}</p>}
-              {message.role === "assistant" && <footer className="message-footer">
-                <div className="message-meta">
-                  {message.provenance && <span className="source-chip">{{ dados_nexus: "◆ Dados internos Nexus", web: "◇ Fontes web",
-                    arquivo: "▧ Imagem", misto: "✦ Fontes combinadas", conhecimento_geral: "◇ Conhecimento geral" }[message.provenance] || "◇ Conhecimento geral"}</span>}
-                  {message.traceId && <span title={message.traceId}>Trace {message.traceId.slice(0, 8)}</span>}
-                </div>
-                <button type="button" className="message-retry-button"
-                  disabled={activeLoading || retryingMessageId === (message.id || message.traceId || `assistant-${index}`)}
-                  onClick={() => retryAssistantMessage(message, index)}
-                  aria-label="Tentar responder novamente" title="Tentar responder novamente">
-                  {retryingMessageId === (message.id || message.traceId || `assistant-${index}`) ? "…" : "↻"}
-                </button>
-              </footer>}
-            </div>
-          </article>)}
-          {activeLoading && <article className="message assistant thinking"><div className="assistant-mark"><NexusLogo compact /></div>
+          {messages.map((message, index) => {
+            const messageKey = message.id || message.traceId || `assistant-${index}`;
+            const retryingHere = message.role === "assistant" && retryingMessageId === messageKey;
+            const variants = message.variants || [];
+            const variantPosition = Math.max(0, variants.findIndex((item) => item.id === message.id));
+            return <article className={`message ${message.role}`} key={message.variantRootId || message.id || index}>
+              {message.role === "assistant" && <div className="assistant-mark"><NexusLogo compact /></div>}
+              <div className="message-body">
+                {retryingHere ? <div className="thinking-state inline-retry"><span className="thinking-orbit"><i /><i /><i /></span>
+                  <div><strong>{activeStage || "Interpretando novamente"}</strong>
+                    <small>{activeStageState?.cacheHit ? "Análise do anexo reutilizada; a resposta anterior não participa desta tentativa."
+                      : "A resposta anterior não participa desta tentativa."}</small>
+                    {activeStageState?.cacheHit && <span className="analysis-cache-chip">Análise reutilizada</span>}</div></div> : <>
+                  {message.attachments?.length ? <div className="message-attachments">{message.attachments.map((item) =>
+                    <AttachmentCard key={item.id} item={item} />)}</div> : null}
+                  {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <p>{message.content}</p>}
+                  {message.artifacts?.length ? <div className="response-files">{message.artifacts.map((item) =>
+                    <a className="file-card generated" href={apiFileUrl(item.url)} download key={item.id}><b>{fileBadge(item.mediaType, item.format)}</b>
+                      <span><strong>{item.title || item.name}</strong><small>{fileSize(item.bytes)} · Arquivo privado da conversa</small></span><i>Baixar</i></a>)}</div> : null}
+                  {message.knowledgeSources?.length ? <div className="response-files">{message.knowledgeSources.map((item) =>
+                    <a className="file-card source" href={apiFileUrl(item.url)} download key={`${item.documentId}-${item.version}`}>
+                      <b>{(item.format || "FONTE").toUpperCase()}</b><span><strong>{item.title}</strong><small>Versão {item.version} · Fonte publicada</small></span><i>Baixar</i></a>)}</div> : null}
+                </>}
+                {message.role === "assistant" && <footer className="message-footer">
+                  <div className="message-meta">
+                    {message.provenance && <span className="source-chip">{{ dados_nexus: "◆ Dados do Sysemp", web: "◇ Fontes web",
+                      arquivo: "▧ Arquivo", misto: "✦ Fontes combinadas", conhecimento_geral: "◇ Conhecimento geral" }[message.provenance] || "◇ Conhecimento geral"}</span>}
+                    {message.traceId && <span title={message.traceId}>Trace {message.traceId.slice(0, 8)}</span>}
+                  </div>
+                  {variants.length > 1 && <div className="response-variant-switcher" aria-label="Versões da resposta">
+                    <button type="button" disabled={activeLoading || variantPosition <= 0}
+                      onClick={() => selectResponseVariant(message, -1)} aria-label="Resposta anterior">‹</button>
+                    <span>{variantPosition + 1} / {variants.length}</span>
+                    <button type="button" disabled={activeLoading || variantPosition >= variants.length - 1}
+                      onClick={() => selectResponseVariant(message, 1)} aria-label="Próxima resposta">›</button>
+                  </div>}
+                  <button type="button" className="message-retry-button"
+                    disabled={activeLoading || retryingHere || !message.id}
+                    onClick={() => retryAssistantMessage(message, index)}
+                    aria-label="Tentar responder novamente" title="Tentar responder novamente">
+                    {retryingHere ? "…" : "↻"}
+                  </button>
+                </footer>}
+              </div>
+            </article>})}
+          {activeLoading && !retryingMessageId && <article className="message assistant thinking"><div className="assistant-mark"><NexusLogo compact /></div>
             <div className="thinking-state"><span className="thinking-orbit"><i /><i /><i /></span><div><strong>{activeStage}</strong>
-              <small>O Nexus pode consultar diferentes fontes antes de responder.</small></div></div></article>}
+              <small>{fileStageHint(activeStageState?.code)}</small>
+              {activeStageState?.cacheHit && <span className="analysis-cache-chip">Análise reutilizada</span>}</div></div></article>}
           {memoryOffer && <aside className="memory-offer"><span>✦</span><div><strong>Aprendizado reutilizável identificado</strong>
             <p>{memoryOffer.statement}</p><div><button onClick={() => respondMemory("confirmar")}>Enviar para aprovação</button>
               <button onClick={() => respondMemory("descartar")}>Descartar</button></div></div></aside>}
@@ -691,13 +905,15 @@ export function HubShell({ profile, initialConversationId }: {
 
       <footer className="composer-zone">
         {pendingFiles.length > 0 && <div className="attachment-tray">{pendingFiles.map((item, index) => <figure key={item.previewUrl}>
-          <img src={item.previewUrl} alt={item.file.name} /><button type="button" onClick={() => removePending(index)} aria-label="Remover imagem">×</button>
+          {isImage(item.file.type) ? <img src={item.previewUrl} alt={item.file.name} /> : <div className="pending-file-icon">{fileBadge(item.file.type)}</div>}
+          <button type="button" onClick={() => removePending(index)} aria-label="Remover arquivo">×</button>
           <figcaption>{item.file.name}</figcaption></figure>)}</div>}
         <form className="composer" onSubmit={(event: FormEvent) => { event.preventDefault(); sendMessage(); }}
           onDragOver={(event: DragEvent) => event.preventDefault()} onDrop={(event: DragEvent) => {
             event.preventDefault(); addFiles(Array.from(event.dataTransfer.files));
           }}>
-        <input ref={fileInputRef} type="file" hidden multiple accept="image/png,image/jpeg,image/webp" onChange={chooseFiles} />
+        <input ref={fileInputRef} type="file" hidden multiple
+          accept="image/png,image/jpeg,image/webp,application/pdf,.docx,.xls,.xlsx" onChange={chooseFiles} />
         <details className={`composer-actions ${sourceMode !== "automatico" ? "mode-selected" : ""}`}
           open={composerMenuOpen} onToggle={(event) => setComposerMenuOpen(event.currentTarget.open)}>
           <summary className="attach-button" aria-label={`Mais opções. Função atual: ${SOURCE_MODES.find((item) => item.value === sourceMode)?.label}`}
@@ -708,7 +924,7 @@ export function HubShell({ profile, initialConversationId }: {
             <button type="button" onClick={() => {
               setComposerMenuOpen(false); fileInputRef.current?.click();
             }} disabled={pendingFiles.length >= 4}>
-              <span className="action-icon">▧</span><span><strong>Anexar imagem</strong><small>PNG, JPEG ou WebP</small></span>
+              <span className="action-icon">▧</span><span><strong>Anexar arquivo</strong><small>PNG, JPEG, WebP, PDF, DOCX, XLS ou XLSX</small></span>
             </button>
             <p>Função</p>
             {SOURCE_MODES.map((item) => <button type="button" key={item.value}

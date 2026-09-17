@@ -205,6 +205,14 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     campos: ['id_produto', 'sku', 'ean', 'descricao_produto'],
     operacoes: ['resolver'], mutavel: false
   }),
+  consultar_conjunto_nexus: capacidade({
+    dominio: 'conjunto', intencoes: ['enriquecer', 'filtrar', 'ranquear', 'comparar'],
+    entidades: ['dataset_ref', 'produto', 'sku', 'ean'],
+    campos: ['catalogo', 'estoque', 'vendas'],
+    operacoes: ['enriquecer', 'filtrar', 'ranquear', 'comparar'], mutavel: false,
+    transformacoesPermitidas: ['ordenar', 'destacar', 'formatar_tabela'],
+    derivacoesPermitidas: [], granularidades: ['produto']
+  }),
   construir_sql: capacidade({
     dominio: 'sql', intencoes: ['construir', 'validar', 'explicar'],
     entidades: [

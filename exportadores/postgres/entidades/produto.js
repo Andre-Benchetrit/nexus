@@ -23,6 +23,10 @@ module.exports = {
       'estoque',
       'dt_cadastro',
       'dt_alteracao',
+      'peso_liquido',
+      'altura',
+      'largura',
+      'comprimento',
     ]
   }
 };

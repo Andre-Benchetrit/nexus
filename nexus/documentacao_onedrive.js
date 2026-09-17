@@ -198,6 +198,54 @@ async function listarArquivosFontesGraph(graph, { driveId, fontes }) {
   return { arquivos: [...arquivosPorId.values()], estados, erros };
 }
 
+function primeiroSegmento(caminho) {
+  return String(caminho || '').replace(/\\/g, '/').split('/').filter(Boolean)[0]?.toLowerCase() || null;
+}
+
+async function removerDocumentosAusentes(opcoes = {}) {
+  const { pool, servico, driveId, arquivos = [], fontes = [], estados = [] } = opcoes;
+  if (!pool || !servico || !driveId) throw new Error('Reconciliacao de ausentes exige pool, servico e driveId.');
+  const concluidas = new Set(estados.filter((item) => item.status === 'concluido').map((item) => item.key));
+  const fontesRecursivas = new Set(fontes
+    .filter((fonte) => (fonte.rootItemId || fonte.rootPath) && concluidas.has(fonte.key))
+    .map((fonte) => fonte.key));
+  const arquivosRecursivos = arquivos.filter((arquivo) => fontesRecursivas.has(arquivo.sourceKey));
+  const prefixosAtivos = new Set(arquivosRecursivos.map((arquivo) => primeiroSegmento(arquivo.caminho)).filter(Boolean));
+  if (!fontesRecursivas.size || !prefixosAtivos.size) {
+    return { candidatos: 0, removidos: 0, protegidos: 0, falhas: [] };
+  }
+  const idsAtuais = new Set(arquivos.map((arquivo) => String(arquivo.item?.id || '')).filter(Boolean));
+  const caminhosExatos = new Set(fontes.filter((fonte) => fonte.itemId).map((fonte) =>
+    String(fonte.caminho || '').replace(/\\/g, '/').toLowerCase()).filter(Boolean));
+  const registros = (await pool.query(`SELECT id,external_item_id,external_path
+    FROM nexus.knowledge_documents
+    WHERE origem='onedrive' AND external_drive_id=$1
+      AND current_published_version_id IS NULL AND status IN ('rascunho','em_revisao')`, [driveId])).rows;
+  const candidatos = registros.filter((documento) => {
+    const caminho = String(documento.external_path || '').replace(/\\/g, '/').toLowerCase();
+    return caminho && prefixosAtivos.has(primeiroSegmento(caminho)) &&
+      !caminhosExatos.has(caminho) && !idsAtuais.has(String(documento.external_item_id || ''));
+  });
+  const resumo = { candidatos: candidatos.length, removidos: 0, protegidos: 0, falhas: [] };
+  for (const documento of candidatos) {
+    try {
+      const resultado = await servico.removerRascunhoSincronizado(documento.id, {
+        motivo: 'ausente_na_origem_onedrive'
+      });
+      if (resultado.removido) resumo.removidos += 1;
+      else resumo.protegidos += 1;
+      if (resultado.falhasArquivos?.length) resumo.falhas.push({
+        codigo: 'LIMPEZA_STORAGE_PARCIAL', caminho: documento.external_path,
+        arquivos: resultado.falhasArquivos.length
+      });
+    } catch (erro) {
+      resumo.falhas.push({ codigo: String(erro.codigo || erro.code || erro.name || 'PRUNE_ERROR'),
+        caminho: documento.external_path, mensagem: String(erro.message || erro).slice(0, 300) });
+    }
+  }
+  return resumo;
+}
+
 async function sincronizarDocumentacaoOneDrive(opcoes = {}) {
   const { pool, principalId } = opcoes;
   if (!pool || !principalId) throw new Error('Sincronizacao documental exige pool e principalId.');
@@ -242,6 +290,11 @@ async function sincronizarDocumentacaoOneDrive(opcoes = {}) {
         caminho: arquivo.caminho, mensagem: String(erro.message || erro).slice(0, 300) });
     }
   }
+  const ausentes = await removerDocumentosAusentes({
+    pool, servico, driveId, arquivos, fontes, estados: leitura.estados
+  });
+  resumo.ausentes = ausentes;
+  resumo.erros.push(...ausentes.falhas);
   await pool.query(`INSERT INTO nexus.knowledge_sync_state
     (source_key,last_success_at,last_scan_at,status,erro_codigo,metadados)
     VALUES ('onedrive-conhecimento',now(),now(),$1,NULL,$2::jsonb)
@@ -250,7 +303,7 @@ async function sincronizarDocumentacaoOneDrive(opcoes = {}) {
   [resumo.erros.length ? 'concluido_com_alertas' : 'concluido', JSON.stringify({
     encontrados: resumo.encontrados, importados: resumo.importados,
     duplicados: resumo.duplicados, ignorados: resumo.ignorados, erros: resumo.erros.length,
-    fontes: resumo.fontes
+    fontes: resumo.fontes, ausentes: resumo.ausentes
   })]);
   return resumo;
 }
@@ -385,4 +438,5 @@ async function reconciliarOrigensDuplicadas(opcoes = {}) {
 
 module.exports = { classificarPasta, extensaoPermitida, importarDiretorioLocal,
   baixarItemComRetry, lerFontesOneDrive, listarArquivosFontesGraph, listarRecursivamente, normalizarNome,
-  reconciliarOrigensDuplicadas, registrarImportacaoComRetry, sincronizarDocumentacaoOneDrive };
+  reconciliarOrigensDuplicadas, registrarImportacaoComRetry, removerDocumentosAusentes,
+  sincronizarDocumentacaoOneDrive };
