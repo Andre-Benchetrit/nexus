@@ -305,8 +305,10 @@ async function criarServidor(opcoes = {}) {
       : await datasets(request).chavesDaConversa(request.params.id);
     const resultado = await servico(request).excluirConversa(request.params.id);
     await anexos(request).finalizarExclusaoConversa(request.params.id, chaves);
-    await artefatos(request).excluirChaves(chavesArtefatos);
-    if (datasetsMode !== 'off') await datasets(request).excluirChaves(chavesDatasets);
+    await artefatos(request).finalizarExclusaoConversa(request.params.id, chavesArtefatos);
+    if (datasetsMode !== 'off') {
+      await datasets(request).finalizarExclusaoConversa(request.params.id, chavesDatasets);
+    }
     return resultado;
   });
   app.get('/v1/conversations/:id/messages', async (request) =>

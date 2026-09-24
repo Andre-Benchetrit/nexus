@@ -168,8 +168,13 @@ function criarServicoArtefatos({ pool, storage, principalId, departmentId = null
       catch (erro) { await pool.query('INSERT INTO nexus.artifact_cleanup_jobs(storage_key,last_error_code) VALUES ($1,$2)', [chave, erro.code || erro.name || 'STORAGE_DELETE_ERROR']); }
     }
   }
-  return { abrir, chavesDaConversa, excluir, excluirChaves, gerar, gerarDeDataset,
-    listarPorTurno, obter };
+  async function finalizarExclusaoConversa(conversationId, chaves = []) {
+    await excluirChaves(chaves);
+    await pool.query(`DELETE FROM nexus.conversation_artifacts
+      WHERE conversation_id=$1 AND principal_id=$2`, [conversationId, principalId]);
+  }
+  return { abrir, chavesDaConversa, excluir, excluirChaves, finalizarExclusaoConversa,
+    gerar, gerarDeDataset, listarPorTurno, obter };
 }
 
 async function processarFilaLimpezaArtefatos({ pool, storage, limite = 20 }) {

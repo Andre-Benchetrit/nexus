@@ -31,7 +31,26 @@ function horarioNoFuso(data = new Date(), fuso = 'America/Sao_Paulo') {
     hora: Number(partes.hour), minuto: Number(partes.minute), fuso };
 }
 
-function decidirExecucao(agora = new Date(), env = process.env) {
+function validarTipoManual(valor) {
+  if (valor == null) return null;
+  const tipo = String(valor).trim().toLowerCase();
+  if (!['full', 'intraday'].includes(tipo)) throw new Error('--run deve ser full ou intraday.');
+  return tipo;
+}
+
+function argumentos(argv = process.argv.slice(2)) {
+  const igual = argv.find((item) => item.startsWith('--run='));
+  const indice = argv.indexOf('--run');
+  const valor = igual ? igual.slice('--run='.length) : indice >= 0 ? argv[indice + 1] : null;
+  return { tipoManual: validarTipoManual(valor) };
+}
+
+function decidirExecucao(agora = new Date(), env = process.env, tipoManual = null) {
+  const manual = validarTipoManual(tipoManual);
+  if (manual) {
+    return { executar: true, tipo: manual, manual: true,
+      horario: horarioNoFuso(agora, env.NEXUS_LAKE_WORKER_TIMEZONE || 'America/Sao_Paulo') };
+  }
   if (String(env.NEXUS_LAKE_WORKER_ENABLED || '0') !== '1') {
     return { executar: false, motivo: 'worker_desabilitado' };
   }
@@ -51,7 +70,7 @@ async function executarWorker(opcoes = {}) {
   const storage = opcoes.storage || (opcoes.criarStorage || criarLakeStorage)({ env });
   let pool;
   try {
-    const decisao = decidirExecucao(opcoes.agora || new Date(), env);
+    const decisao = decidirExecucao(opcoes.agora || new Date(), env, opcoes.tipoManual);
     if (!decisao.executar) return { status: 'ignorado', ...decisao };
     pool = opcoes.pool || (opcoes.criarPool || criarPoolNexus)({ env });
     const resultado = await (opcoes.executarPipeline || executarPipeline)({
@@ -73,7 +92,9 @@ async function executarWorker(opcoes = {}) {
 }
 
 async function main() {
+  const opcoesCli = argumentos();
   const resultado = await executarWorker({
+    tipoManual: opcoesCli.tipoManual,
     onEvento: ({ tipo, evento }) => process.stdout.write(JSON.stringify({
       level: 'info', event: 'lake_update_progress', kind: tipo, message: evento
     }) + '\n')
@@ -91,4 +112,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { decidirExecucao, executarWorker, horarioNoFuso, horasIntradiarias };
+module.exports = { argumentos, decidirExecucao, executarWorker, horarioNoFuso,
+  horasIntradiarias, validarTipoManual };

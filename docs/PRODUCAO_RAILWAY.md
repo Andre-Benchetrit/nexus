@@ -82,6 +82,48 @@ O smoke test cria um prefixo `_smoke/<uuid>`, publica um Parquet, consulta-o com
 DuckDB, confere a integridade registrada e remove o prefixo. Ele não lê nem
 grava dados corporativos.
 
+## Migração do lake e corte de produção
+
+O Sprint 2 usa dry-run por padrão e mantém o lake local intacto:
+
+```bash
+npm run lake:migrate -- --from ./lake
+npm run lake:migrate -- --from ./lake --apply
+npm run lake:migrate -- --from ./lake --apply --resume
+npm run lake:validate -- --from ./lake
+```
+
+O migrador envia os dados antes do manifesto, confere tamanho e SHA-256 e não
+sobrescreve snapshots. `--resume` aceita somente objetos cuja integridade seja
+idêntica à origem. A validação compara todos os snapshots e abre o Parquet mais
+recente de cada objeto tanto localmente quanto pelo S3.
+
+Depois da validação, importe o estado e rode o próprio Worker manualmente:
+
+```bash
+npm run lake:state:import -- --from ./lake/_controle/estado.json
+npm run lake:state:import -- --from ./lake/_controle/estado.json --apply
+npm run lake:worker -- --run full
+npm run lake:worker -- --run intraday
+```
+
+Somente após as duas execuções manuais terminarem com sucesso, configure
+`NEXUS_LAKE_REQUIRE_DATA=1`, `NEXUS_LAKE_WORKER_ENABLED=1` e habilite o cron.
+
+## Limpeza dos chats de pré-produção
+
+Crie um backup verificado do PostgreSQL antes de executar:
+
+```bash
+npm run nexus:chats:cleanup
+npm run nexus:chats:cleanup -- --apply --confirmation <token-do-dry-run>
+```
+
+O token fixa o instante e o conjunto de conversas do dry-run. A limpeza mantém
+usuários, permissões, auditoria e conhecimento aprovado, mas remove mensagens,
+anexos, artefatos e datasets dos chats existentes naquele instante. Falhas de
+remoção física entram nas filas de limpeza.
+
 Valide também:
 
 - `/health/ready` na API;
