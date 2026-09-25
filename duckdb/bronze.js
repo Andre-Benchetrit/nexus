@@ -60,8 +60,10 @@ async function listarArquivosRecursivamente(diretorio, nomeArquivo) {
   return resultados;
 }
 
-async function descobrirExecucoesValidas(raizLake, entidade) {
-  return criarLakeStorage({ raizLake }).listarVersoes(entidade.destino.camada, entidade.nome);
+async function descobrirExecucoesValidas(raizOuStorage, entidade) {
+  const storage = raizOuStorage?.listarVersoes
+    ? raizOuStorage : criarLakeStorage({ raizLake: raizOuStorage });
+  return storage.listarVersoes(entidade.destino.camada, entidade.nome);
 }
 
 function obterConfiguracaoEntidade(nome, catalogo) {
@@ -109,6 +111,11 @@ function criarLeitorBronze(opcoes = {}) {
   const raizLake = storage.raizLake || path.resolve(opcoes.raizLake || RAIZ_LAKE_PADRAO);
   const catalogo = opcoes.catalogo || catalogoPadrao;
   const con = opcoes.conexao || criarConexaoDuckDB();
+  let storagePreparado = null;
+  const prepararStorage = () => {
+    storagePreparado ||= Promise.resolve().then(() => storage.prepararConexaoDuckDB(con));
+    return storagePreparado;
+  };
   const entidadesPreparadas = new Map();
   let fechado = false;
 
@@ -116,6 +123,7 @@ function criarLeitorBronze(opcoes = {}) {
     if (fechado) throw new Error('O leitor do bronze já foi fechado.');
     if (entidadesPreparadas.has(nome)) return entidadesPreparadas.get(nome);
 
+    await prepararStorage();
     const entidade = obterConfiguracaoEntidade(nome, catalogo);
     const execucoes = await storage.listarVersoes(entidade.destino.camada, entidade.nome);
     if (!execucoes.length) {
@@ -383,9 +391,10 @@ function criarLeitorBronze(opcoes = {}) {
   }
 
   async function listarEntidades() {
+    await prepararStorage();
     const resultado = [];
     for (const entidade of Object.values(catalogo)) {
-      const execucoes = await descobrirExecucoesValidas(raizLake, entidade);
+      const execucoes = await descobrirExecucoesValidas(storage, entidade);
       const ultima = execucoes
         .map(({ manifesto }) => manifesto.fim || manifesto.inicio)
         .filter(Boolean)

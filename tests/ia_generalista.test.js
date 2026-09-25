@@ -19,6 +19,7 @@ const {
   executarAssistente,
   construirObjetivoCorporativo,
   corrigirAlegacaoMemoria,
+  orientarModoDadosSeConsultaNaoRoteada,
   normalizarHistoricoVisivel,
   possuiTextoResposta,
   resolverModoAssistente
@@ -73,6 +74,26 @@ test('guarda de fonte distingue conversa, web e continuacao corporativa', () => 
     ultimaResposta: 'Poderia confirmar o ano desejado?',
     ultimaProveniencia: 'dados_nexus'
   }).motivo, 'continuacao_corporativa');
+  assert.equal(exigeFonteCorporativa('Verifique o painel executivo diário de ontem.').motivo,
+    'fato_operacional_mutavel');
+  assert.equal(exigeFonteCorporativa('Pode fazer uma comparação entre ele e o do dia 23?', {
+    ultimaPergunta: 'Verifique o painel executivo diário de ontem.',
+    ultimaProveniencia: 'dados_nexus'
+  }).motivo, 'continuacao_corporativa');
+});
+
+test('orienta modo Consultar dados quando automatico nao iniciou consulta corporativa', () => {
+  const texto = orientarModoDadosSeConsultaNaoRoteada(
+    'No momento não tenho acesso à ferramenta de consulta de dados corporativos do Sysemp.',
+    { modoFonte: 'automatico', politicaObrigatoria: false, consultaRealizada: false }
+  );
+  assert.match(texto, /modo Automático não iniciou/i);
+  assert.match(texto, /botão `\+`/i);
+  assert.match(texto, /`Consultar dados`/i);
+  assert.doesNotMatch(texto, /não tenho acesso/i);
+  assert.equal(orientarModoDadosSeConsultaNaoRoteada('Resposta comum.', {
+    modoFonte: 'automatico', politicaObrigatoria: false, consultaRealizada: false
+  }), 'Resposta comum.');
 });
 
 test('objetivo corporativo preserva pergunta atual e contexto que resolve o periodo', () => {

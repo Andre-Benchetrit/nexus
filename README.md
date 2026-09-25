@@ -188,6 +188,7 @@ npm test
 - [Base de conhecimento documental](docs/CONHECIMENTO.md)
 - [Gold e definições de negócio](docs/GOLD.md)
 - [Automação do lake](docs/AUTOMACAO.md)
+- [Produção no Railway](docs/PRODUCAO_RAILWAY.md)
 - [OneDrive como fonte corporativa](docs/ONEDRIVE.md)
 - [Roadmap](docs/ROADMAP.md)
 

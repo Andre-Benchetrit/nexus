@@ -44,6 +44,9 @@ Informações sobre a empresa que você é assistente: ${IDENTIDADE_EMPRESA}
 Para fatos internos, atuais ou especificos da empresa, use consultar_nexus. Esses dados vem do Sysemp; nunca os apresente como "dados do Nexus" e nunca invente dados corporativos.
 O resultado de consultar_nexus e a unica evidencia corporativa autorizada. Se ele disser que algo nao e suportado ou precisa de esclarecimento, preserve essa limitacao.
 Nunca afirme que uma ferramenta corporativa esta indisponivel ou inacessivel sem que a tentativa registrada de consultar_nexus tenha retornado erro ou bloqueio.
+Se consultar_nexus nao estiver disponivel entre as capabilities deste turno e a pergunta depender de dados do
+Sysemp, nao descreva isso como falha tecnica. Explique que o modo Automatico nao iniciou a consulta e oriente
+o usuario a abrir o botao +, selecionar Consultar dados e reenviar o pedido.
 Nao mencione nomes de tabelas, camadas ou ferramentas internas que nao estejam no resultado autorizado.
 Use solicitar_revisao_memoria apenas ao identificar uma correcao, preferencia explicita, regra estavel ou
 aprendizado de execucao potencialmente reutilizavel. Essa capability apenas pede avaliacao e nao grava memoria.
@@ -359,6 +362,20 @@ function normalizarHistoricoVisivel(mensagens = []) {
     else normalizadas.push({ role: item.role, content: String(item.content) });
   }
   return normalizadas;
+}
+
+function orientarModoDadosSeConsultaNaoRoteada(texto, contexto = {}) {
+  const resposta = String(texto || '').trim();
+  if (!resposta || contexto.modoFonte !== 'automatico' || contexto.politicaObrigatoria ||
+      contexto.consultaRealizada) return resposta;
+  const alegouIndisponibilidade = /(?:n[aã]o (?:tenho|temos|consigo|foi poss[ií]vel).{0,100}(?:acesso|acessar|consultar|buscar)|(?:ferramenta|consulta|base).{0,80}(?:indispon[ií]vel|inacess[ií]vel|n[aã]o est[aá] dispon[ií]vel))/is
+    .test(resposta);
+  const mencionaDadosCorporativos = /\b(?:sysemp|dados? corporativ|dados? intern|sistema da empresa|painel|indicador|venda|pedido|estoque|faturamento)\w*/i
+    .test(resposta);
+  if (!alegouIndisponibilidade || !mencionaDadosCorporativos) return resposta;
+  return 'O modo Automático não iniciou uma consulta ao Sysemp para esta mensagem. ' +
+    'Para forçar a consulta aos dados corporativos, abra o botão `+`, selecione `Consultar dados` ' +
+    'e envie o pedido novamente.';
 }
 
 function removerUltimaPerguntaDoHistorico(historico = [], pergunta = '') {
@@ -1661,6 +1678,11 @@ async function executarAssistente(pergunta, dependencias = {}) {
         prepararFallback: async () => ({ ...contextoProvider, tools: [], prepararFallback: null })
       };
       resultado = await provider.executar(contextoProvider);
+      resultado = { ...resultado, texto: orientarModoDadosSeConsultaNaoRoteada(resultado.texto, {
+        modoFonte,
+        politicaObrigatoria: politica.obrigatoria,
+        consultaRealizada: Boolean(consultaCache)
+      }) };
       if (respostaCorporativaDireta) resultado = { ...resultado, texto: respostaCorporativaDireta };
     }
     if (modoWeb === 'v1' && decisaoWeb.modo === 'delegada' &&
@@ -1873,6 +1895,7 @@ module.exports = {
   envelopeCorporativo,
   construirObjetivoCorporativo,
   corrigirAlegacaoMemoria,
+  orientarModoDadosSeConsultaNaoRoteada,
   possuiTextoResposta,
   exigeEntregaCorporativaDireta,
   executarAssistente,

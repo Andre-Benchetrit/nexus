@@ -1,5 +1,5 @@
-const path = require('node:path');
-const { resolverRaizLake } = require('../nexus/lake_storage');
+const { criarLakeStorage, resolverRaizLake } = require('../nexus/lake_storage');
+const { criarControlePostgres } = require('./controle_postgres');
 
 const { entidades: catalogoBronzePadrao } = require('../exportadores/catalogo');
 const { ADAPTADORES_FONTE } = require('../exportadores/adaptadores');
@@ -23,8 +23,13 @@ function criarIdExecucao(data = new Date()) {
 function erroResumido(erro) {
   return {
     mensagem: erro.message,
-    codigo: erro.code || null
+    codigo: erro.codigo || erro.code || erro.name || null
   };
+}
+
+function codigoEventoErro(erro) {
+  return String(erro?.codigo || erro?.code || erro?.name || 'LAKE_PIPELINE_ERROR')
+    .replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || 'LAKE_PIPELINE_ERROR';
 }
 
 async function executarEtapa(execucao, etapa, operacao, onEvento) {
@@ -69,7 +74,9 @@ async function executarEtapa(execucao, etapa, operacao, onEvento) {
       duracaoMs: Date.now() - inicioMs,
       erro: erroResumido(erro)
     });
-    onEvento?.(`[${etapa.camada}/${etapa.nome}] Falhou: ${erro.message}`);
+    // O Worker envia eventos aos logs do Railway. Nunca inclua a mensagem
+    // original, pois drivers podem reproduzir SQL, endpoints ou credenciais.
+    onEvento?.(`[${etapa.camada}/${etapa.nome}] Falhou (${codigoEventoErro(erro)}).`);
     throw erro;
   }
 }
@@ -134,10 +141,30 @@ function resumirStatusExecucao(execucao) {
 
 async function executarPipeline(opcoes = {}, dependencias = {}) {
   const raizLake = resolverRaizLake(opcoes);
-  const estado = dependencias.estado || await (dependencias.lerEstado || lerEstado)(raizLake);
+  const storage = dependencias.lakeStorage || opcoes.lakeStorage || criarLakeStorage({
+    raizLake: opcoes.raizLake,
+    env: opcoes.env
+  });
+  const modoControle = String(opcoes.modoControle || opcoes.env?.NEXUS_LAKE_CONTROL ||
+    process.env.NEXUS_LAKE_CONTROL || 'filesystem').toLowerCase();
+  const controle = dependencias.controle || (modoControle === 'postgres'
+    ? criarControlePostgres(dependencias.pool || opcoes.pool)
+    : null);
+  if (!['filesystem', 'postgres'].includes(modoControle)) {
+    throw new Error(`Controle do lake nao implementado: ${modoControle}.`);
+  }
+  const lerWatermark = dependencias.lerEstado || controle?.lerEstado || lerEstado;
+  const estado = dependencias.estado || await lerWatermark(raizLake);
+  const obterUltimoFimExportado = dependencias.obterUltimoFimExportado || (async (_raiz, entidade) => {
+    const versoes = await storage.listarVersoes(entidade.destino.camada, entidade.nome);
+    return versoes.reduce((maior, item) => {
+      const fim = item.manifesto.status === 'sucesso' ? item.manifesto.janela?.fim : null;
+      return fim && (!maior || fim > maior) ? fim : maior;
+    }, null);
+  });
   const plano = await (dependencias.criarPlano || criarPlanoPipeline)(
     { ...opcoes, raizLake },
-    { ...dependencias, estado }
+    { ...dependencias, estado, obterUltimoFimExportado }
   );
   if (opcoes.dryRun) return { plano, execucao: null };
 
@@ -156,16 +183,17 @@ async function executarPipeline(opcoes = {}, dependencias = {}) {
     modo: plano.modo,
     iniciadoEm: agora.toISOString(),
     finalizadoEm: null,
+    tipoAgendado: opcoes.tipoAgendado || null,
     plano,
     etapas: [],
     erro: null,
     falhas: [],
     bloqueios: []
   };
-  const salvarRun = dependencias.salvarExecucao || salvarExecucao;
-  const salvarWatermark = dependencias.salvarEstado || salvarEstado;
-  const adquirir = dependencias.adquirirTrava || adquirirTrava;
-  const liberar = dependencias.liberarTrava || liberarTrava;
+  const salvarRun = dependencias.salvarExecucao || controle?.salvarExecucao || salvarExecucao;
+  const salvarWatermark = dependencias.salvarEstado || controle?.salvarEstado || salvarEstado;
+  const adquirir = dependencias.adquirirTrava || controle?.adquirirTrava || adquirirTrava;
+  const liberar = dependencias.liberarTrava || controle?.liberarTrava || liberarTrava;
   const onEvento = opcoes.onEvento;
   const inicioExecucaoMs = Date.now();
   let trava;
@@ -227,7 +255,8 @@ async function executarPipeline(opcoes = {}, dependencias = {}) {
         const resultado = await exportar(entidade, {
           inicio: etapa.inicio,
           fim: etapa.fim,
-          forcar: etapa.forcar
+          forcar: etapa.forcar,
+          lakeStorage: storage
         });
         if (etapa.avancarWatermark) {
           const anterior = estado.entidades?.[entidade.nome]?.fim || null;
@@ -258,7 +287,7 @@ async function executarPipeline(opcoes = {}, dependencias = {}) {
     for (const etapa of plano.etapas.silver) {
       await executarComContinuidade(
         etapa,
-        () => construirObjetoSilver(catalogoSilver[etapa.nome], { raizLake }),
+        () => construirObjetoSilver(catalogoSilver[etapa.nome], { raizLake, lakeStorage: storage }),
       );
     }
 
@@ -266,7 +295,7 @@ async function executarPipeline(opcoes = {}, dependencias = {}) {
     for (const etapa of plano.etapas.gold) {
       await executarComContinuidade(
         etapa,
-        () => construirObjetoGold(catalogoGold[etapa.nome], { raizLake }),
+        () => construirObjetoGold(catalogoGold[etapa.nome], { raizLake, lakeStorage: storage }),
       );
     }
 

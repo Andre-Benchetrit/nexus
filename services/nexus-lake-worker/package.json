@@ -1,0 +1,10 @@
+{
+  "name": "@nexus/lake-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node worker.js",
+    "check": "node --check worker.js"
+  }
+}

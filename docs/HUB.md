@@ -35,32 +35,33 @@ continue configurado em `audit`.
 
 ## Railway
 
-Crie um ambiente de piloto separado com dois servicos apontando para o mesmo
+Crie um ambiente de piloto separado com tres servicos apontando para o mesmo
 repositorio:
 
 - `nexus-hub`: Dockerfile `hub/Dockerfile`, porta 3000 e dominio publico;
 - `nexus-api`: Dockerfile `services/nexus-api/Dockerfile`, porta 3001, somente
-  rede privada e uma unica replica.
+  rede privada;
+- `nexus-lake-worker`: processo sem dominio, iniciado pelo cron do Railway.
 
-Anexe um volume ao servico da API em `/data/nexus-lake` e configure:
+O lake produtivo usa um Bucket privado e o controle de execucao usa PostgreSQL:
 
 ```env
-NEXUS_LAKE_STORAGE=filesystem
-NEXUS_LAKE_ROOT=/data/nexus-lake
-NEXUS_LAKE_REQUIRE_DATA=1
-NEXUS_LAKE_SCHEDULER_ENABLED=1
-NEXUS_LAKE_INTRADAY_MINUTE=15
+NEXUS_LAKE_STORAGE=s3
+NEXUS_LAKE_CONTROL=postgres
+NEXUS_LAKE_PREFIX=nexus-lake
+NEXUS_LAKE_WORKER_ENABLED=0
 NEXUS_API_INTERNAL_URL=http://nexus-api.railway.internal:3001
 NEXUS_AUTHZ_MODE=enforce
 ```
 
-O agendador executa a carga completa diariamente as 02:00 e uma atualizacao
-intradiaria no minuto 15 de cada hora, usando `America/Sao_Paulo`. Uma trava
-PostgreSQL impede duas atualizacoes simultaneas.
+Configure o cron do Worker como `15 * * * *`. O processo decide pelo fuso
+`America/Sao_Paulo` se deve executar a carga das 02:00, uma carga intradiaria
+entre 08:00 e 22:00, ou encerrar sem processar. A API nao possui agendador
+embutido. Uma trava PostgreSQL impede duas atualizacoes simultaneas.
 
-O volume nao e preenchido durante o build. Depois do primeiro deploy, execute
-uma carga completa no ambiente da API antes de liberar o readiness. Os
-healthchecks sao:
+Neste primeiro sprint, mantenha o Worker desativado e o lake local como fonte
+oficial. O Volume da API continua reservado aos anexos, Knowledge, datasets e
+artefatos; ele nao e substituido pelo Bucket. Os healthchecks sao:
 
 ```text
 GET /health/live
@@ -68,17 +69,15 @@ GET /health/ready
 ```
 
 O frontend expõe `GET /health`. Configure esse caminho como healthcheck do
-serviço público. No primeiro deploy da API, mantenha
-`NEXUS_LAKE_REQUIRE_DATA=0`, execute uma carga histórica diretamente das
-fontes com `npm run lake:atualizar -- --inicio AAAA-MM-DD --forcar` no serviço
-e só então altere para `1`.
+serviço público. Consulte [PRODUCAO_RAILWAY.md](PRODUCAO_RAILWAY.md) para as
+variáveis S3, o smoke test e o corte planejado para o Sprint Produção 2.
 
 ## Lake portatil
 
 `nexus/lake_storage.js` centraliza a localizacao, publicacao e verificacao dos
-datasets. O adapter inicial e `FileSystemLakeStorage`; tools e leitores nao
-dependem do caminho fisico. Uma migracao futura podera implementar um adapter
-de Object Storage ou BigQuery sem alterar os contratos do Hub ou do agente.
+datasets. Os adapters `FileSystemLakeStorage` e `S3LakeStorage` compartilham o
+mesmo contrato; tools e leitores nao dependem do caminho fisico. A troca entre
+filesystem e Object Storage nao altera os contratos do Hub ou do agente.
 
 ## Niveis de composicao
 

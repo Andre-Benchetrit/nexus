@@ -352,8 +352,14 @@ function criarServicoDatasets({ pool, storage, principalId, departmentId = null,
         VALUES ($1,$2)`, [chave, erro.code || erro.name || 'STORAGE_DELETE_ERROR']); }
     }
   }
+  async function finalizarExclusaoConversa(conversationId, chaves = []) {
+    await excluirChaves(chaves);
+    await pool.query(`DELETE FROM nexus.conversation_datasets
+      WHERE conversation_id=$1 AND principal_id=$2`, [conversationId, principalId]);
+  }
   return { abrirCaminho, chavesDaConversa, criarDeAnexo, criarDeLinhas,
-    criarDeResultadoCorporativo, excluirChaves, lerLinhas, listarRecentes, modo: modoEfetivo, obter };
+    criarDeResultadoCorporativo, excluirChaves, finalizarExclusaoConversa,
+    lerLinhas, listarRecentes, modo: modoEfetivo, obter };
 }
 
 async function processarFilaLimpezaDatasets({ pool, storage, limite = 20 }) {
