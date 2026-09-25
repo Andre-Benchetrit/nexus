@@ -24,10 +24,24 @@ function prefixoRelativoWorkspace(workspace, diretorio) {
   return relativo;
 }
 
-async function limparWorkspaceLake(workspace) {
-  if (workspace?.temporario && workspace.raiz) {
-    await fs.rm(workspace.raiz, { recursive: true, force: true });
+async function limparWorkspaceLake(workspace, dependencias = {}) {
+  if (!workspace?.temporario || !workspace.raiz) return true;
+  const remover = dependencias.remover || ((caminho) => fs.rm(caminho, { recursive: true, force: true }));
+  const aguardar = dependencias.aguardar || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const tentativas = dependencias.tentativas || 6;
+  for (let tentativa = 0; tentativa < tentativas; tentativa += 1) {
+    try {
+      await remover(workspace.raiz);
+      return true;
+    } catch (erro) {
+      if (erro.code === 'ENOENT') return true;
+      if (!['EBUSY', 'EPERM'].includes(erro.code)) throw erro;
+      if (tentativa < tentativas - 1) await aguardar(100 * (tentativa + 1));
+    }
   }
+  // O snapshot ja foi publicado antes desta limpeza. Um arquivo temporario
+  // preso pelo SO nao pode reclassificar uma publicacao valida como falha.
+  return false;
 }
 
 module.exports = { criarWorkspaceLake, limparWorkspaceLake, prefixoRelativoWorkspace };

@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { executar, inventariarLake } = require('../scripts/migrar-lake-s3');
+const { executarComConcorrencia } = require('../scripts/validar-lake-s3');
 const { argumentos: argumentosWorker, decidirExecucao } = require('../services/nexus-lake-worker/worker');
 const { corteDoToken, tokenConfirmacao } = require('../scripts/limpar-chats-nexus');
 const { criarServicoAnexos } = require('../nexus/anexos');
@@ -131,4 +132,17 @@ test('finalizacao remove registros de artefatos e datasets mesmo apos excluir os
   assert.deepEqual(removidos, ['artefato.xlsx', 'dataset.parquet']);
   assert.ok(consultas.some((sql) => /DELETE FROM nexus\.conversation_artifacts/.test(sql)));
   assert.ok(consultas.some((sql) => /DELETE FROM nexus\.conversation_datasets/.test(sql)));
+});
+
+test('validador limita concorrencia sem perder itens', async () => {
+  let ativos = 0; let maximo = 0;
+  const concluidos = [];
+  await executarComConcorrencia(Array.from({ length: 25 }, (_, indice) => indice), 4,
+    async (item) => {
+      ativos += 1; maximo = Math.max(maximo, ativos);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      concluidos.push(item); ativos -= 1;
+    });
+  assert.ok(maximo <= 4);
+  assert.deepEqual(concluidos.sort((a, b) => a - b), Array.from({ length: 25 }, (_, indice) => indice));
 });

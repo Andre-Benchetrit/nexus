@@ -250,7 +250,8 @@ async function criarServidor(opcoes = {}) {
         : datasetStorage.verificarSaude()
     ]);
     const exigeDados = String(process.env.NEXUS_LAKE_REQUIRE_DATA || '0') === '1';
-    const dadosDisponiveis = !exigeDados || Number(lake.camadas?.silver || 0) + Number(lake.camadas?.gold || 0) > 0;
+    const dadosDisponiveis = !exigeDados || lake.possuiObjetos === true ||
+      Number(lake.camadas?.silver || 0) + Number(lake.camadas?.gold || 0) > 0;
     const pronto = banco && lake.saudavel && arquivos.saudavel && artefatosHealth.saudavel &&
       datasetsHealth.saudavel && dadosDisponiveis;
     if (!pronto) reply.code(503);

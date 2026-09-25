@@ -17,10 +17,31 @@ function escaparSql(valor) { return String(valor).replace(/'/g, "''"); }
 
 function chaveObjeto(item) { return `${item.camada}:${item.objeto}`; }
 
+function prefixoDaReferencia(storage, referencia) {
+  const prefixoUri = `s3://${storage.bucket}/`;
+  let chave = String(referencia || '');
+  if (chave.startsWith(prefixoUri)) chave = chave.slice(prefixoUri.length);
+  const prefixoBucket = storage.prefixo ? `${storage.prefixo}/` : '';
+  if (prefixoBucket && chave.startsWith(prefixoBucket)) chave = chave.slice(prefixoBucket.length);
+  return path.posix.dirname(chave.replace(/\\/g, '/'));
+}
+
 function compararOrdenacao(a, b) {
   const dataA = a.manifesto.fim || a.manifesto.inicio || '';
   const dataB = b.manifesto.fim || b.manifesto.inicio || '';
   return dataA.localeCompare(dataB) || a.prefixoRelativo.localeCompare(b.prefixoRelativo);
+}
+
+async function executarComConcorrencia(itens, limite, tarefa) {
+  let proximo = 0;
+  const quantidade = Math.min(itens.length, Math.max(1, limite));
+  await Promise.all(Array.from({ length: quantidade }, async () => {
+    while (true) {
+      const indice = proximo++;
+      if (indice >= itens.length) return;
+      await tarefa(itens[indice], indice);
+    }
+  }));
 }
 
 async function perfilParquet(conexao, arquivo) {
@@ -39,13 +60,19 @@ async function executar(opcoes = {}, dependencias = {}) {
   let local; let remoto;
   try {
     const divergencias = [];
-    for (const snapshot of snapshots) {
+    let manifestosValidados = 0;
+    await executarComConcorrencia(snapshots, 12, async (snapshot) => {
       const destino = await manifestoDestino(storage, snapshot);
       if (!destino) divergencias.push({ tipo: 'manifesto_ausente', caminho: snapshot.relativoManifesto });
       else if (!mesmaIntegridade(destino.integridadeMigracao, integridade(snapshot))) {
         divergencias.push({ tipo: 'integridade_divergente', caminho: snapshot.relativoManifesto });
       }
-    }
+      manifestosValidados += 1;
+      if (manifestosValidados % 100 === 0 || manifestosValidados === snapshots.length) {
+        dependencias.onEvento?.({ fase: 'integridade', manifestosValidados,
+          totalManifestos: snapshots.length });
+      }
+    });
     if (divergencias.length) {
       const erro = new Error(`Foram encontradas ${divergencias.length} divergencias de integridade.`);
       erro.codigo = 'LAKE_VALIDATION_INTEGRITY_FAILED'; erro.divergencias = divergencias.slice(0, 20);
@@ -58,17 +85,13 @@ async function executar(opcoes = {}, dependencias = {}) {
       if (!porObjeto.has(chave)) porObjeto.set(chave, []);
       porObjeto.get(chave).push(snapshot);
     }
-    for (const [chave, itens] of porObjeto) {
-      const [camada, objeto] = chave.split(':');
-      const remotos = await storage.listarVersoes(camada, objeto);
-      const esperados = new Set(itens.map((item) => item.prefixoRelativo));
-      const encontrados = new Set(remotos.map((item) => {
-        const prefixoBucket = storage.prefixo ? `${storage.prefixo}/` : '';
-        const chaveManifesto = String(item.chaveManifesto || '').replace(prefixoBucket, '');
-        return path.posix.dirname(chaveManifesto);
-      }));
+    for (const camada of ['bronze', 'silver', 'gold']) {
+      const esperados = new Set(snapshots.filter((item) => item.camada === camada)
+        .map((item) => item.prefixoRelativo));
+      const encontrados = new Set((await storage.listarReferencias(camada))
+        .map((item) => prefixoDaReferencia(storage, item)));
       if (esperados.size !== encontrados.size || [...esperados].some((item) => !encontrados.has(item))) {
-        divergencias.push({ tipo: 'versoes_divergentes', camada, objeto,
+        divergencias.push({ tipo: 'versoes_divergentes', camada,
           esperado: esperados.size, encontrado: encontrados.size });
       }
     }
@@ -135,4 +158,5 @@ if (require.main === module) main().catch((erro) => {
   process.exitCode = 1;
 });
 
-module.exports = { argumentos, compararOrdenacao, executar, perfilParquet };
+module.exports = { argumentos, compararOrdenacao, executar, executarComConcorrencia,
+  perfilParquet, prefixoDaReferencia };

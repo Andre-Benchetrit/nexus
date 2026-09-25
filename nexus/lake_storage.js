@@ -71,6 +71,19 @@ function sha256Buffer(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
+async function mapearComConcorrencia(itens, limite, tarefa) {
+  const resultados = new Array(itens.length);
+  let indice = 0;
+  const quantidade = Math.min(Math.max(1, limite), itens.length);
+  await Promise.all(Array.from({ length: quantidade }, async () => {
+    while (indice < itens.length) {
+      const atual = indice++;
+      resultados[atual] = await tarefa(itens[atual], atual);
+    }
+  }));
+  return resultados;
+}
+
 async function sha256Arquivo(caminho) {
   const hash = createHash('sha256');
   await new Promise((resolve, reject) => {
@@ -152,6 +165,10 @@ function criarFileSystemLakeStorage(opcoes = {}) {
     }
     return ordenarVersoes(versoes);
   }
+  async function listarReferencias(camada) {
+    validarCamada(camada);
+    return listarArquivos(caminhoSeguro(raizLake, camada), 'manifest.json');
+  }
   async function localizarDataset(camada, objeto, versao = 'latest') {
     const versoes = await listarVersoes(camada, objeto);
     if (!versoes.length) return null;
@@ -190,7 +207,7 @@ function criarFileSystemLakeStorage(opcoes = {}) {
     } catch (erro) { return { saudavel: false, tipo: 'filesystem', raizLake, codigo: erro.code || erro.name }; }
   }
   return Object.freeze({ tipo: 'filesystem', raizLake, raizTemporaria: raizLake,
-    localizarDataset, lerManifesto, listarVersoes, publicarSnapshot,
+    localizarDataset, lerManifesto, listarReferencias, listarVersoes, publicarSnapshot,
     prepararConexaoDuckDB: async () => {}, verificarSaude, fechar: async () => {} });
 }
 
@@ -229,6 +246,7 @@ function criarS3LakeStorage(opcoes = {}) {
     forcePathStyle: config.urlStyle === 'path', credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey } });
   const criarUpload = opcoes.criarUpload || ((parametros) => new Upload(parametros));
   const maxManifestos = inteiroSeguro(opcoes.maxManifestos, 10_000, 'NEXUS_LAKE_S3_MAX_MANIFESTS', 1, 100_000);
+  const cacheManifestos = new Map();
   const chaveComPrefixo = (...partes) => juntarChave(config.prefixo, ...partes);
   const uri = (chave) => `s3://${config.bucket}/${chave}`;
   function chaveDaReferencia(referencia) {
@@ -262,14 +280,28 @@ function criarS3LakeStorage(opcoes = {}) {
     } while (ContinuationToken);
     return chaves;
   }
+  async function listarManifestos(camada) {
+    validarCamada(camada);
+    if (!cacheManifestos.has(camada)) {
+      const carregamento = (async () => {
+        const chaves = await listarChavesManifesto(camada);
+        return mapearComConcorrencia(chaves, 12, async (chaveManifesto) => ({
+          chaveManifesto,
+          manifesto: await lerManifesto(camada, null, chaveManifesto)
+        }));
+      })();
+      cacheManifestos.set(camada, carregamento);
+      carregamento.catch(() => cacheManifestos.delete(camada));
+    }
+    return cacheManifestos.get(camada);
+  }
   async function existe(chave) {
     try { await cliente.send(new HeadObjectCommand({ Bucket: config.bucket, Key: chave })); return true; }
     catch (erro) { if (erro?.$metadata?.httpStatusCode === 404 || ['NotFound', 'NoSuchKey'].includes(erro?.name)) return false; throw erro; }
   }
   async function listarVersoes(camada, objeto) {
     validarCamada(camada); const versoes = [];
-    for (const chaveManifesto of await listarChavesManifesto(camada)) {
-      const manifesto = await lerManifesto(camada, objeto, chaveManifesto);
+    for (const { chaveManifesto, manifesto } of await listarManifestos(camada)) {
       if (manifesto.status !== 'sucesso' || (manifesto.objeto || manifesto.entidade) !== objeto) continue;
       const nomeArquivo = segmentoSeguro(manifesto.arquivo || 'dados.parquet', 'Arquivo do manifesto');
       const base = path.posix.dirname(chaveManifesto); const chaveArquivo = juntarChave(base, nomeArquivo);
@@ -283,6 +315,10 @@ function criarS3LakeStorage(opcoes = {}) {
         arquivo: uri(chaveArquivo), arquivoChavesAtuais: chaveChavesAtuais ? uri(chaveChavesAtuais) : null });
     }
     return ordenarVersoes(versoes);
+  }
+  async function listarReferencias(camada) {
+    validarCamada(camada);
+    return (await listarChavesManifesto(camada)).map(uri);
   }
   async function localizarDataset(camada, objeto, versao = 'latest') {
     const versoes = await listarVersoes(camada, objeto);
@@ -323,6 +359,7 @@ function criarS3LakeStorage(opcoes = {}) {
       const buffer = Buffer.from(`${JSON.stringify(manifestoFinal, null, 2)}\n`);
       await cliente.send(new PutObjectCommand({ Bucket: config.bucket, Key: chaveManifesto, Body: buffer,
         ContentType: 'application/json', Metadata: { sha256: sha256Buffer(buffer) }, IfNoneMatch: '*' }));
+      cacheManifestos.delete(camada);
       return { caminho: uri(base), caminhoManifesto: uri(chaveManifesto), manifesto: manifestoFinal };
     } catch (erro) { erro.codigo ||= 'S3_SNAPSHOT_PUBLICATION_FAILED'; throw erro; }
   }
@@ -352,7 +389,8 @@ function criarS3LakeStorage(opcoes = {}) {
   }
   async function fechar() { cliente.destroy?.(); }
   return Object.freeze({ tipo: 's3', raizLake: null, raizTemporaria: config.raizTemporaria,
-    bucket: config.bucket, prefixo: config.prefixo, localizarDataset, lerManifesto, listarVersoes,
+    bucket: config.bucket, prefixo: config.prefixo, localizarDataset, lerManifesto,
+    listarReferencias, listarVersoes,
     publicarSnapshot, prepararConexaoDuckDB, verificarSaude, excluirPrefixoTeste,
     fechar, uriParaChave: uri });
 }

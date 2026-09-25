@@ -3,6 +3,8 @@
 const path = require('node:path');
 const { executarPipeline } = require('../pipeline/executar');
 const { lerEstado, lerUltimaExecucao } = require('../pipeline/controle');
+const { criarControlePostgres } = require('../pipeline/controle_postgres');
+const { criarPoolNexus } = require('../nexus/db');
 const { resolverRaizLake } = require('../nexus/lake_storage');
 
 function lerArgumentos(argumentos) {
@@ -75,15 +77,19 @@ async function main() {
   const opcoes = lerArgumentos(process.argv.slice(2));
   const raizLake = resolverRaizLake();
   if (opcoes.status) {
+    const postgres = String(process.env.NEXUS_LAKE_CONTROL || 'filesystem').toLowerCase() === 'postgres';
+    const pool = postgres ? criarPoolNexus() : null;
+    const controle = postgres ? criarControlePostgres(pool) : { lerEstado, lerUltimaExecucao };
     const [estado, ultimaExecucao] = await Promise.all([
-      lerEstado(raizLake),
-      lerUltimaExecucao(raizLake)
+      controle.lerEstado(raizLake),
+      controle.lerUltimaExecucao(raizLake)
     ]);
     console.log(JSON.stringify({
       estado,
       resumoUltimaExecucao: resumirExecucao(ultimaExecucao),
       ultimaExecucao
     }, null, 2));
+    await pool?.end();
     return;
   }
 

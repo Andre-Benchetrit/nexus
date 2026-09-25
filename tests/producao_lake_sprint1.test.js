@@ -9,9 +9,10 @@ const { criarControlePostgres } = require('../pipeline/controle_postgres');
 const { decidirExecucao, executarWorker } = require('../services/nexus-lake-worker/worker');
 
 class S3Falso {
-  constructor() { this.objetos = new Map(); this.ordem = []; this.falharManifesto = false; }
+  constructor() { this.objetos = new Map(); this.ordem = []; this.falharManifesto = false; this.contagens = {}; }
   async send(comando) {
     const nome = comando.constructor.name;
+    this.contagens[nome] = (this.contagens[nome] || 0) + 1;
     const entrada = comando.input;
     if (nome === 'PutObjectCommand') {
       this.ordem.push(entrada.Key);
@@ -72,6 +73,8 @@ test('S3 publica o manifesto por ultimo e lista somente snapshot completo', asyn
   const versoes = await storage.listarVersoes('gold', 'kpi_teste');
   assert.equal(versoes.length, 1);
   assert.equal(versoes[0].arquivo, 's3://bucket-teste/nexus-lake/gold/kpi_teste/execucao=abc/dados.parquet');
+  assert.deepEqual(await storage.listarReferencias('gold'),
+    ['s3://bucket-teste/nexus-lake/gold/kpi_teste/execucao=abc/manifest.json']);
   assert.equal(versoes[0].manifesto.integridadeObjeto.tamanhoBytes, 15);
 });
 
@@ -89,6 +92,26 @@ test('falha antes do manifesto deixa objetos S3 invisiveis', async (t) => {
   assert.equal((await storage.listarVersoes('silver', 'fato_teste')).length, 0);
   await assert.rejects(storage.lerManifesto('silver', 'fato_teste', 'outro/manifest.json'),
     /fora do prefixo/);
+});
+
+test('S3 reutiliza a leitura dos manifestos entre objetos da mesma camada', async (t) => {
+  const raiz = await fs.mkdtemp(path.join(os.tmpdir(), 'nexus-s3-cache-'));
+  t.after(() => fs.rm(raiz, { recursive: true, force: true }));
+  const parquet = path.join(raiz, 'dados.parquet');
+  await fs.writeFile(parquet, 'cache-fixture');
+  const cliente = new S3Falso();
+  const storage = storageS3(cliente);
+  for (const objeto of ['objeto_a', 'objeto_b']) {
+    await storage.publicarSnapshot({ camada: 'bronze', objeto, arquivoOrigem: parquet,
+      prefixoRelativo: `bronze/${objeto}/execucao=abc`,
+      manifesto: { objeto, execucao: 'abc', arquivo: 'dados.parquet' } });
+  }
+
+  assert.equal((await storage.listarVersoes('bronze', 'objeto_a')).length, 1);
+  const leiturasDepoisDoPrimeiro = cliente.contagens.GetObjectCommand;
+  assert.equal((await storage.listarVersoes('bronze', 'objeto_b')).length, 1);
+  assert.equal(cliente.contagens.GetObjectCommand, leiturasDepoisDoPrimeiro);
+  assert.equal(cliente.contagens.ListObjectsV2Command, 1);
 });
 
 test('snapshot S3 publicado e imutavel', async (t) => {

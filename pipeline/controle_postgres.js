@@ -85,6 +85,17 @@ function criarControlePostgres(pool, opcoes = {}) {
         erro.codigo = 'LAKE_PIPELINE_LOCKED';
         throw erro;
       }
+      // Se o advisory lock foi adquirido, nenhum outro Worker esta ativo.
+      // Execucoes antigas ainda marcadas como "executando" pertencem a um
+      // processo interrompido e nao podem permanecer assim indefinidamente.
+      if (execucao?.id) {
+        await cliente.query(`UPDATE nexus.lake_pipeline_runs
+          SET status='erro',finished_at=COALESCE(finished_at,now()),
+              duration_ms=COALESCE(duration_ms,
+                GREATEST(0,(EXTRACT(EPOCH FROM (now()-started_at))*1000)::bigint)),
+              error_code=COALESCE(error_code,'WORKER_INTERRUPTED'),updated_at=now()
+          WHERE status='executando' AND id<>$1`, [execucao.id]);
+      }
       return { cliente, chaveTrava, execucaoId: execucao?.id || null };
     } catch (erro) {
       cliente.release();
