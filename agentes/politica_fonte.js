@@ -4,11 +4,11 @@ function normalizar(texto) {
 }
 
 const ENTIDADES_CORPORATIVAS =
-  /\b(pedidos?|vendas?|faturamentos?|estoques?|produtos?|notas?(?: fiscais?)?|agendamentos?|reposicoes?|fretes?|clientes?|funcionarios?|colaboradores?|pessoas?|margens?|bloqueios?|rupturas?|procedimentos?|politicas? internas?|manuais?|processos? internos?)\b/;
+  /\b(pedidos?|vendas?|faturamentos?|estoques?|produtos?|notas?(?: fiscais?)?|agendamentos?|reposicoes?|fretes?|clientes?|funcionarios?|colaboradores?|pessoas?|margens?|bloqueios?|rupturas?|indicadores?|paineis?|dashboards?|relatorios? executivos?|procedimentos?|politicas? internas?|manuais?|processos? internos?)\b/;
 const ACAO_OPERACIONAL =
   /\b(hoje|ontem|este mes|nesse mes|agora|atual|ultimo|ultima|quantos|quanto|quais|listar|liste|mostre|temos|verifique|verificar|consulte|consultar|analise|analisar|acompanhe|acompanhar|ranking|ranqueie|top|receita|faturou|vendeu|vendidos?)\b/;
 const REFERENCIA_CONTINUIDADE =
-  /\b(esse|essa|esses|essas|deles|delas|mesmos?|mesmas?|novamente|de novo|tambem|outros?|outras?|agora|periodo|relatorio|filtro|coluna|codigo auxiliar|sku)\b/;
+  /\b(esse|essa|esses|essas|isso|ele|ela|eles|elas|deles|delas|anterior|anteriores|mesmos?|mesmas?|novamente|de novo|tambem|outros?|outras?|agora|periodo|relatorio|comparacao|compare|comparar|versus|filtro|coluna|codigo auxiliar|sku)\b/;
 const RESPOSTA_AFIRMATIVA = /^(sim|pode|claro|isso|correto|confirmo|por favor)[.! ]*$/;
 const AJUSTE_TEMPORAL_CURTO = /^(?:(?:e\s+)?(?:de fato|na verdade|correto|corretamente|quis dizer|corrigindo)\s+)?(?:o\s+ano\s+)?(?:19|20)\d{2}[.! ]*$/;
 

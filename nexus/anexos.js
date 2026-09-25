@@ -350,7 +350,7 @@ function criarServicoAnexos({ pool, storage, principalId, departmentId = null,
   async function chavesDaConversa(conversationId) {
     await conversaAutorizada(conversationId);
     return (await pool.query(`SELECT storage_key,derived_storage_key FROM nexus.conversation_attachments
-      WHERE conversation_id=$1 AND principal_id=$2`, [conversationId, principalId])).rows
+      WHERE conversation_id=$1 AND principal_id=$2 AND asset_id IS NULL`, [conversationId, principalId])).rows
       .flatMap((x) => [x.storage_key, x.derived_storage_key]).filter(Boolean);
   }
 

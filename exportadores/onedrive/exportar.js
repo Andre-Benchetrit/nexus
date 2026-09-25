@@ -12,6 +12,10 @@ const { criarClienteGraph } = require('../../integracoes/microsoft/graph');
 const { operacaoArquivoComRetentativas } = require('../core/arquivos');
 const { criarCaminhosExportacao } = require('../core/caminhos');
 const { lerPlanilha } = require('./excel');
+const { criarLakeStorage } = require('../../nexus/lake_storage');
+const {
+  criarWorkspaceLake, limparWorkspaceLake, prefixoRelativoWorkspace
+} = require('../../nexus/lake_workspace');
 
 const FORMATOS_SUPORTADOS = Object.freeze(['.xlsx']);
 const executarArquivo = promisify(execFile);
@@ -112,7 +116,9 @@ async function exportarOneDrive(entidade, opcoes = {}, dependencias = {}) {
   const env = dependencias.env || process.env;
   const agora = opcoes.agora || new Date();
   const criarCaminhos = dependencias.criarCaminhos || criarCaminhosExportacao;
-  const caminhos = criarCaminhos(entidade, agora);
+  const storage = opcoes.lakeStorage || dependencias.lakeStorage || criarLakeStorage({
+    raizLake: opcoes.raizLake, env
+  });
   const conexao = (dependencias.resolverConexao || resolverConexao)(
     entidade.extracao.conexao,
     { env, exigirCredenciais: !opcoes.dryRun }
@@ -120,6 +126,9 @@ async function exportarOneDrive(entidade, opcoes = {}, dependencias = {}) {
   const itemId = obterItemId(entidade, env);
 
   if (opcoes.dryRun) {
+    const caminhos = criarCaminhos(entidade, agora, {
+      raizLake: storage.raizLake || storage.raizTemporaria
+    });
     return {
       entidade: entidade.nome,
       fonte: entidade.fonte,
@@ -145,10 +154,16 @@ async function exportarOneDrive(entidade, opcoes = {}, dependencias = {}) {
     );
   }
 
-  const anterior = await (dependencias.ultimoManifesto || ultimoManifestoSucesso)(
-    caminhos.raizEntidade
-  );
+  const caminhosReferencia = criarCaminhos(entidade, agora, {
+    raizLake: storage.raizLake || storage.raizTemporaria
+  });
+  const anterior = dependencias.ultimoManifesto || dependencias.criarCaminhos
+    ? await (dependencias.ultimoManifesto || ultimoManifestoSucesso)(caminhosReferencia.raizEntidade)
+    : (await storage.listarVersoes(entidade.destino.camada, entidade.nome)).at(-1)?.manifesto || null;
   if (!opcoes.forcar && anterior?.origem?.eTag && anterior.origem.eTag === item.eTag) {
+    const caminhos = criarCaminhos(entidade, agora, {
+      raizLake: storage.raizLake || storage.raizTemporaria
+    });
     return {
       ...anterior,
       alterado: false,
@@ -164,6 +179,8 @@ async function exportarOneDrive(entidade, opcoes = {}, dependencias = {}) {
     );
   }
 
+  const workspace = await criarWorkspaceLake({ ...opcoes, lakeStorage: storage }, `bronze-${entidade.nome}`);
+  const caminhos = criarCaminhos(entidade, agora, { raizLake: workspace.raiz });
   await fsp.mkdir(caminhos.diretorio, { recursive: true });
   const original = path.join(caminhos.diretorio, `origem${extensao}`);
   const csvTemporario = path.join(caminhos.diretorio, 'dados.csv.tmp');
@@ -219,8 +236,22 @@ async function exportarOneDrive(entidade, opcoes = {}, dependencias = {}) {
         colunas: excel.colunas
       }
     };
-    await fsp.writeFile(caminhos.manifesto, JSON.stringify(manifesto, null, 2));
-    return { ...manifesto, alterado: true, caminhos };
+    let caminhosPublicados = caminhos;
+    if (storage.tipo === 'filesystem') {
+      await fsp.writeFile(caminhos.manifesto, JSON.stringify(manifesto, null, 2));
+    } else {
+      const publicado = await storage.publicarSnapshot({
+        camada: entidade.destino.camada, objeto: entidade.nome, manifesto,
+        arquivoOrigem: caminhos.parquet,
+        arquivosExtras: [{ origem: original, nome: path.basename(original) }],
+        prefixoRelativo: prefixoRelativoWorkspace(workspace, caminhos.diretorio)
+      });
+      caminhosPublicados = { ...caminhos, diretorio: publicado.caminho,
+        parquet: `${publicado.caminho}/dados.parquet`,
+        manifesto: publicado.caminhoManifesto,
+        original: `${publicado.caminho}/${path.basename(original)}` };
+    }
+    return { ...manifesto, alterado: true, caminhos: caminhosPublicados };
   } catch (erro) {
     erroExportacao = erro;
     throw erro;
@@ -234,6 +265,7 @@ async function exportarOneDrive(entidade, opcoes = {}, dependencias = {}) {
         }
       }
     }
+    await limparWorkspaceLake(workspace);
   }
 }
 

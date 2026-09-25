@@ -21,6 +21,10 @@ const {
   validarEntidade
 } = require('../core/sql');
 const { exportarConsultaParaCsv, converterCsvParaParquet } = require('./copy_stream');
+const { criarLakeStorage } = require('../../nexus/lake_storage');
+const {
+  criarWorkspaceLake, limparWorkspaceLake, prefixoRelativoWorkspace
+} = require('../../nexus/lake_workspace');
 
 async function janelaJaExportada(raiz, inicio, fim) {
   if (!fs.existsSync(raiz)) return false;
@@ -43,23 +47,31 @@ async function exportarPostgres(entidade, opcoes = {}) {
   validarEntidade(entidade);
 
   const inicio = opcoes.agora || new Date();
-  const caminhos = criarCaminhosExportacao(entidade, inicio);
+  const storage = opcoes.lakeStorage || criarLakeStorage({ raizLake: opcoes.raizLake, env: opcoes.env });
   const consulta = montarConsultaPostgres(entidade, opcoes);
   const consultaNativa = montarConsultaPostgres(entidade, opcoes, null);
   const consultaChavesAtuais = montarConsultaChavesAtuais(entidade);
   const consultaChavesAtuaisNativa = montarConsultaChavesAtuais(entidade, null);
 
   if (opcoes.dryRun) {
+    const caminhos = criarCaminhosExportacao(entidade, inicio, {
+      raizLake: storage.raizLake || storage.raizTemporaria
+    });
     return { entidade: entidade.nome, consulta, consultaChavesAtuais, caminhos };
   }
 
   if (
     entidade.extracao?.modo === 'incremental_data' &&
     !opcoes.forcar &&
-    await janelaJaExportada(caminhos.raizEntidade, opcoes.inicio, opcoes.fim)
+    (await storage.listarVersoes(entidade.destino.camada, entidade.nome)).some(({ manifesto }) =>
+      manifesto.status === 'sucesso' && manifesto.janela?.inicio === opcoes.inicio &&
+      manifesto.janela?.fim === opcoes.fim)
   ) {
     throw new Error('Esta janela já foi exportada. Use --forcar somente se quiser reprocessá-la.');
   }
+
+  const workspace = await criarWorkspaceLake({ ...opcoes, lakeStorage: storage }, `bronze-${entidade.nome}`);
+  const caminhos = criarCaminhosExportacao(entidade, inicio, { raizLake: workspace.raiz });
 
   await fsp.mkdir(caminhos.diretorio, { recursive: true });
   const con = criarConexaoDuckDB();
@@ -171,11 +183,26 @@ async function exportarPostgres(entidade, opcoes = {}) {
       arquivo: 'dados.parquet'
     };
 
-    await fsp.writeFile(caminhos.manifesto, JSON.stringify(manifesto, null, 2));
+    let caminhosPublicados = caminhos;
+    if (storage.tipo === 'filesystem') {
+      await fsp.writeFile(caminhos.manifesto, JSON.stringify(manifesto, null, 2));
+    } else {
+      const arquivosExtras = reconciliacaoExclusoes
+        ? [{ origem: caminhos.parquetChavesAtuais, nome: 'chaves_atuais.parquet' }] : [];
+      const publicado = await storage.publicarSnapshot({
+        camada: entidade.destino.camada, objeto: entidade.nome, manifesto,
+        arquivoOrigem: caminhos.parquet, arquivosExtras,
+        prefixoRelativo: prefixoRelativoWorkspace(workspace, caminhos.diretorio)
+      });
+      caminhosPublicados = { ...caminhos, diretorio: publicado.caminho,
+        parquet: `${publicado.caminho}/dados.parquet`, manifesto: publicado.caminhoManifesto,
+        parquetChavesAtuais: reconciliacaoExclusoes
+          ? `${publicado.caminho}/chaves_atuais.parquet` : caminhos.parquetChavesAtuais };
+    }
     console.log(`[${entidade.nome}] Concluído: ${totalLinhas} linhas.`);
-    console.log(caminhos.parquet);
+    console.log(caminhosPublicados.parquet);
 
-    return { ...manifesto, caminhos };
+    return { ...manifesto, caminhos: caminhosPublicados };
   } catch (error) {
     erroExportacao = error;
     throw error;
@@ -212,6 +239,7 @@ async function exportarPostgres(entidade, opcoes = {}) {
         if (erroExportacao) erroExportacao.message += ` (CSV temporario de chaves nao removido: ${erroLimpeza.message})`;
       }
     }
+    await limparWorkspaceLake(workspace);
   }
 }
 
