@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { comTransacao, criarPoolNexus, obterConfiguracaoBanco } = require('../nexus/db');
-const { listarMigrations, obterStatusMigrations } = require('../nexus/migrations');
+const { listarMigrations, normalizarSqlMigration, obterStatusMigrations } = require('../nexus/migrations');
 
 test('configuracao do banco operacional exige URL e valida limites', () => {
   assert.throws(() => obterConfiguracaoBanco({}), /NEXUS_DATABASE_URL/);
@@ -36,6 +36,19 @@ test('migrations possuem ordem e checksum deterministico', (t) => {
   assert.deepEqual(migrations.map((item) => item.nome), ['001_primeira.sql', '002_segunda.sql']);
   assert.equal(migrations[0].checksum.length, 64);
   assert.equal(listarMigrations(diretorio)[0].checksum, migrations[0].checksum);
+});
+
+test('checksum de migration independe do final de linha do sistema operacional', (t) => {
+  const diretorio = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-migrations-eol-'));
+  t.after(() => fs.rmSync(diretorio, { recursive: true, force: true }));
+  const arquivo = path.join(diretorio, '001_teste.sql');
+  fs.writeFileSync(arquivo, 'SELECT 1;\nSELECT 2;\n');
+  const checksumLf = listarMigrations(diretorio)[0].checksum;
+  fs.writeFileSync(arquivo, 'SELECT 1;\r\nSELECT 2;\r\n');
+  const migrationCrLf = listarMigrations(diretorio)[0];
+  assert.equal(migrationCrLf.checksum, checksumLf);
+  assert.equal(migrationCrLf.sql, 'SELECT 1;\nSELECT 2;\n');
+  assert.equal(normalizarSqlMigration('SELECT 1;\rSELECT 2;'), 'SELECT 1;\nSELECT 2;');
 });
 
 test('status acusa migration alterada depois da aplicacao', async (t) => {

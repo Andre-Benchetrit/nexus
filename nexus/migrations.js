@@ -6,12 +6,16 @@ const { comTransacao } = require('./db');
 const DIRETORIO_MIGRATIONS = path.join(__dirname, 'migrations');
 const CHAVE_TRAVA = 721_913_047;
 
+function normalizarSqlMigration(sql) {
+  return String(sql).replace(/\r\n?/g, '\n');
+}
+
 function listarMigrations(diretorio = DIRETORIO_MIGRATIONS) {
   return fs.readdirSync(diretorio)
     .filter((nome) => /^\d{3}_[a-z0-9_]+\.sql$/.test(nome))
     .sort()
     .map((nome) => {
-      const sql = fs.readFileSync(path.join(diretorio, nome), 'utf8');
+      const sql = normalizarSqlMigration(fs.readFileSync(path.join(diretorio, nome), 'utf8'));
       return {
         nome,
         sql,
@@ -80,5 +84,6 @@ async function aplicarMigrations(pool, opcoes = {}) {
 module.exports = {
   aplicarMigrations,
   listarMigrations,
+  normalizarSqlMigration,
   obterStatusMigrations
 };
