@@ -243,11 +243,12 @@ test('provider Anthropic e selecionavel e exige modelo', async (t) => {
 test('assistente responde conversa geral sem executar agente corporativo', async () => {
   let corporativo = false;
   const resultado = await executarAssistente('Explique EBITDA', {
-    memoria: memoriaFalsa(), auditoriaIA: false, knowledgeMode: 'v1',
+    memoria: memoriaFalsa(), auditoriaIA: false, knowledgeMode: 'v1', webMode: 'v1',
     generalistProvider: {
       nome: 'mock', modelo: 'mock',
       async executar({ tools }) {
-        assert.deepEqual(tools.map((item) => item.definicao.name), ['consultar_documentacao']);
+        assert.deepEqual(tools.map((item) => item.definicao.name),
+          ['pesquisar_web', 'consultar_documentacao', 'validar_politicas']);
         return { texto: 'EBITDA e um indicador.', provider: 'mock', modelo: 'mock' };
       }
     },
@@ -257,11 +258,12 @@ test('assistente responde conversa geral sem executar agente corporativo', async
   assert.equal(corporativo, false);
 });
 
-test('generalista valida politica dinamicamente sem passar pelo roteador corporativo', async () => {
+test('modo geral valida politica dinamicamente sem consultar fontes opcionais', async () => {
   let corporativo = false;
   let consultaRecebida = null;
   const resultado = await executarAssistente('Vou solicitar a senha dele pelo WhatsApp.', {
-    memoria: memoriaFalsa(), auditoriaIA: false, knowledgeMode: 'v1',
+    sourceMode: 'geral', memoria: memoriaFalsa(), auditoriaIA: false,
+    knowledgeMode: 'v1', webMode: 'v1',
     executarConsultarDocumentacaoTool: async (argumentos) => {
       consultaRecebida = argumentos;
       return { status: 'sucesso', resultados: [{
@@ -274,11 +276,13 @@ test('generalista valida politica dinamicamente sem passar pelo roteador corpora
       nome: 'mock', modelo: 'mock',
       async executar({ tools, instrucoes }) {
         assert.match(instrucoes, /compartilhar senha ou acesso/);
-        const tool = tools.find((item) => item.definicao.name === 'consultar_documentacao');
+        assert.match(instrucoes, /Modo Conhecimento geral/);
+        assert.equal(tools.some((item) => item.definicao.name === 'consultar_documentacao'), false);
+        assert.equal(tools.some((item) => item.definicao.name === 'pesquisar_web'), false);
+        const tool = tools.find((item) => item.definicao.name === 'validar_politicas');
         assert.ok(tool);
         const evidencia = JSON.parse(await tool.executar({
-          consulta: 'compartilhamento de senha pelo WhatsApp', limite: 4,
-          analisar_visual: false
+          consulta: 'compartilhamento de senha pelo WhatsApp', analisar_visual: false
         }));
         assert.equal(evidencia.status, 'sucesso');
         return { texto: 'Isso pode contrariar a política: credenciais são pessoais. Responsabilidade e uso de ativos - versao 1, pagina 3.', provider: 'mock', modelo: 'mock' };
@@ -306,7 +310,7 @@ test('guarda corporativa consulta o agente existente antes da resposta final', a
     generalistProvider: {
       nome: 'mock', modelo: 'mock',
       async executar({ tools, mensagens }) {
-        assert.equal(tools.length, 0);
+        assert.deepEqual(tools.map((item) => item.definicao.name), ['validar_politicas']);
         assert.match(mensagens.at(-1).content, /Evidencia corporativa/);
         return { texto: 'O produto foi localizado.', provider: 'mock', modelo: 'mock' };
       }
@@ -427,7 +431,7 @@ test('fallback generalista reutiliza a consulta Nexus feita no turno', async () 
   const fallback = {
     nome: 'fallback', modelo: 'f',
     async executar(contexto) {
-      assert.equal(contexto.tools.length, 0);
+      assert.deepEqual(contexto.tools.map((item) => item.definicao.name), ['validar_politicas']);
       assert.match(
         contexto.mensagens.map((item) => String(item.content)).join('\n'),
         /Evidencia corporativa|Nao repita tools concluidas/

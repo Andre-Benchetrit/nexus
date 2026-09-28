@@ -12,6 +12,7 @@ const PERMISSOES_ESPECIAIS = Object.freeze({
   processar_imagem_local: 'ia.imagem.processar_local',
   interpretar_imagem: 'ia.imagem.interpretar',
   consultar_documentacao: 'documentacao.consultar',
+  validar_politicas: 'documentacao.consultar',
   baixar_fonte_documentacao: 'documentacao.fonte.baixar',
   analisar_arquivo: 'ia.arquivo.analisar',
   consultar_evidencia_anexo: 'ia.arquivo.analisar',

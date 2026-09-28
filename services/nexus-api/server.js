@@ -110,7 +110,7 @@ function validarResultadoTurno(resultado) {
 
 function validarModoFonte(valor) {
   const modo = String(valor || 'automatico').toLowerCase();
-  if (!['automatico', 'dados', 'documentacao', 'web'].includes(modo)) {
+  if (!['automatico', 'geral', 'dados', 'documentacao', 'web'].includes(modo)) {
     throw new ErroHub('MODO_FONTE_INVALIDO', 'Selecione uma funcao valida para a mensagem.', 400);
   }
   return modo;

@@ -112,7 +112,7 @@ npm run nexus:hub
 
 O Hub local abre em `http://localhost:3000`.
 
-Em cada mensagem, o usuário pode manter **Automático** ou escolher diretamente **Consultar dados**, **Verificar documentação** ou **Pesquisar na web**. A escolha limita a fonte daquele turno; permissões e guardas contra vazamento continuam sendo aplicadas pelo servidor.
+Em cada mensagem, o usuário pode manter **Automático** ou escolher diretamente **Conhecimento geral**, **Consultar dados**, **Verificar documentação** ou **Pesquisar na web**. **Conhecimento geral** não consulta Sysemp, web nem documentação opcional, mas continua aplicando validações obrigatórias de políticas. A escolha vale por um turno; depois do envio o compositor volta para **Automático**. Permissões e guardas contra vazamento continuam sendo aplicadas pelo servidor.
 
 ## Configurações importantes
 
