@@ -82,6 +82,8 @@ test('mensagens do Hub preservam o modo de fonte e permitem nova tentativa', () 
   assert.match(shell, /async function retryAssistantMessage/);
   assert.match(shell, /className="message-retry-button"/);
   assert.match(shell, /sourceMode: message\.sourceMode \|\| original\.sourceMode \|\| "automatico"/);
+  assert.match(shell, /value: "geral", label: "Conhecimento geral"/);
+  assert.match(shell, /setSourceMode\("automatico"\)/);
   assert.match(hubSource, /sourceMode: linha\.source_mode \|\| 'automatico'/);
   assert.match(apiSource, /provenance: resultado\.proveniencia,[\s\S]*sourceMode,/);
 });

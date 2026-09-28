@@ -53,7 +53,7 @@ export type Artifact = { id: string; format: "xlsx" | "docx" | "pdf"; mediaType:
 export type KnowledgeSource = { kind: "knowledge-source"; documentId: string; title: string;
   version: number; format?: string | null; size?: number | null; url: string };
 export type CompositionLevel = "baixo" | "medio" | "alto" | "extra_alto";
-export type SourceMode = "automatico" | "dados" | "documentacao" | "web";
+export type SourceMode = "automatico" | "geral" | "dados" | "documentacao" | "web";
 export type MemoryOffer = { id: string; statement: string; expiresAt?: string };
 export type TurnRequest = {
   id: string; traceId: string; turnId?: string | null;

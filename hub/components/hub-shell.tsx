@@ -21,12 +21,13 @@ const COMPOSITIONS: Array<{ value: CompositionLevel; label: string; hint: string
 ];
 const SOURCE_MODES: Array<{ value: SourceMode; label: string; hint: string }> = [
   { value: "automatico", label: "Automático", hint: "O Nexus escolhe a fonte" },
+  { value: "geral", label: "Conhecimento geral", hint: "Sem consultar Sysemp, documentos ou web" },
   { value: "dados", label: "Consultar dados", hint: "Indicadores e registros internos" },
   { value: "documentacao", label: "Verificar documentação", hint: "Procedimentos, políticas e manuais" },
   { value: "web", label: "Pesquisar na web", hint: "Fontes públicas citadas" }
 ];
 const SOURCE_MODE_ICONS: Record<SourceMode, string> = {
-  automatico: "✦", dados: "◆", documentacao: "▤", web: "◇"
+  automatico: "✦", geral: "●", dados: "◆", documentacao: "▤", web: "◇"
 };
 const FILE_STAGE_LABELS: Record<FileProcessingStage, string> = {
   validando_arquivo: "Validando arquivo",
