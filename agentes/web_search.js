@@ -374,6 +374,32 @@ function validarCitacoesWeb(texto, resultados = []) {
   };
 }
 
+function listarFontesWeb(resultados = []) {
+  return [...new Map(resultados.flatMap((item) => item?.fontes || [])
+    .filter((item) => item?.url)
+    .map((item) => [item.url, item])).values()];
+}
+
+function materializarCitacoesWeb(texto, resultados = [], opcoes = {}) {
+  const fontes = listarFontesWeb(resultados);
+  if (!fontes.length) return String(texto || '').trim();
+  const permitidas = new Map(fontes.map((item) => [item.url, item]));
+  let saida = String(texto || '').trim();
+  saida = saida.replace(/\[(?:fonte\s+|f)(\d+)\](?!\()/gi, (marcador, indiceTexto) => {
+    const fonte = fontes[Number(indiceTexto) - 1];
+    return fonte ? `[${fonte.titulo}](${fonte.url})` : marcador;
+  });
+  saida = saida.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (link, rotulo, url) =>
+    permitidas.has(url) ? link : rotulo);
+  const validacao = validarCitacoesWeb(saida, resultados);
+  if (!validacao.valida && opcoes.anexarSeAusentes === true) {
+    const referencias = fontes.slice(0, 4)
+      .map((item) => `- [${item.titulo}](${item.url})`).join('\n');
+    saida = `${saida}${saida ? '\n\n' : ''}Fontes consultadas:\n${referencias}`;
+  }
+  return saida;
+}
+
 function respostaWebDeterministica(resultados = [], evidenciaPreservada = '', opcoes = {}) {
   const fontes = [...new Map(resultados.flatMap((item) => item.fontes || [])
     .map((item) => [item.url, item])).values()];
@@ -397,5 +423,6 @@ module.exports = {
   extrairAssuntoPesquisa, normalizarPlanoPesquisa, prepararSpecPesquisa,
   extrairConsultaPublica, normalizarResultadoTavily, pedidoExplicitoPesquisaWeb,
   precisaPesquisaWeb, resolverModoWeb,
-  respostaWebDeterministica, validarAderenciaConsulta, validarCitacoesWeb, validarConsultaExterna
+  listarFontesWeb, materializarCitacoesWeb, respostaWebDeterministica,
+  validarAderenciaConsulta, validarCitacoesWeb, validarConsultaExterna
 };

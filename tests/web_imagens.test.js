@@ -8,7 +8,7 @@ const sharp = require('sharp');
 const {
   classificarIntencaoPesquisa, criarOrcamentoPesquisa, criarTavilyWebSearchProvider,
   extrairConsultaPublica, normalizarResultadoTavily, precisaPesquisaWeb, prepararSpecPesquisa,
-  normalizarPlanoPesquisa, respostaWebDeterministica, validarAderenciaConsulta,
+  materializarCitacoesWeb, normalizarPlanoPesquisa, respostaWebDeterministica, validarAderenciaConsulta,
   validarCitacoesWeb, validarConsultaExterna
 } = require('../agentes/web_search');
 const {
@@ -68,6 +68,16 @@ test('plano de pesquisa aceita cobertura e fontes definidas pelo agente sem cata
   assert.deepEqual(plano.coverage, ['texto legal', 'interpretação do tribunal', 'limites de aplicação']);
   assert.deepEqual(plano.includeDomains, ['planalto.gov.br', 'www.tst.jus.br']);
   assert.equal(plano.minimumEvidenceSources, 2);
+});
+
+test('materializa marcadores de fonte e remove links que nao vieram da pesquisa', () => {
+  const resultados = [{ fontes: [{ titulo: 'Fonte oficial', url: 'https://www.gov.br/regra' }] }];
+  const texto = materializarCitacoesWeb(
+    'A regra está descrita em [Fonte 1]. [Link inventado](https://exemplo.com/inventado)', resultados
+  );
+  assert.match(texto, /\[Fonte oficial\]\(https:\/\/www\.gov\.br\/regra\)/);
+  assert.doesNotMatch(texto, /exemplo\.com/);
+  assert.equal(validarCitacoesWeb(texto, resultados).valida, true);
 });
 
 test('modo geral bloqueia fontes opcionais e orienta Consultar dados sem alegar falha', async () => {
@@ -494,12 +504,39 @@ test('citacao invalida e reparada pelo agente antes do fallback de links', async
         return { texto: 'A nova versão melhora o desempenho.', provider: 'mock', modelo: 'mock' };
       }
       assert.equal(stage, 'web_citation_repair');
-      return { texto: 'A nova versão melhora o desempenho ' +
-        '[PostgreSQL](https://www.postgresql.org/about/news/).', provider: 'mock', modelo: 'mock' };
+      return { texto: 'A nova versão melhora o desempenho [Fonte 1].', provider: 'mock', modelo: 'mock' };
     } }
   });
   assert.equal(chamadasModelo, 2);
   assert.match(resultado.texto, /melhora o desempenho/);
+  assert.doesNotMatch(resultado.texto, /não trouxeram evidência suficiente/i);
+  assert.equal(resultado.validacaoWeb.valida, true);
+});
+
+test('preserva a sintese e anexa fontes autorizadas se o reparo de citacao falhar', async () => {
+  const resultado = await executarAssistente('Explique a regra publicada', {
+    sourceMode: 'web', memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: governancaFalsa(), webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar() { return {
+      status: 'complete', provider: 'tavily', profundidade: 'basic', creditos: 1,
+      atualizadoEm: new Date().toISOString(), fontes: [{ titulo: 'Fonte oficial',
+        url: 'https://www.gov.br/regra', dominio: 'www.gov.br',
+        trecho: 'A regra oficial exige conferência.', conteudo: 'A regra oficial exige conferência.' }],
+      avaliacaoRelevancia: { evidenciaSuficiente: true }
+    }; } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools, stage }) {
+      if (stage === 'generalist_response') {
+        const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
+        await pesquisar.executar({ query: 'regra publicada fonte oficial', objective: 'Explicar a regra',
+          coverage: ['obrigação aplicável'], sourceStrategy: 'oficiais', riskLevel: 'medio',
+          minimumSources: 1, preferredDomains: ['gov.br'] });
+        return { texto: 'A regra oficial exige conferência.', provider: 'mock', modelo: 'mock' };
+      }
+      throw new Error('provider temporariamente indisponível no reparo');
+    } }
+  });
+  assert.match(resultado.texto, /A regra oficial exige conferência/);
+  assert.match(resultado.texto, /\[Fonte oficial\]\(https:\/\/www\.gov\.br\/regra\)/);
   assert.doesNotMatch(resultado.texto, /não trouxeram evidência suficiente/i);
   assert.equal(resultado.validacaoWeb.valida, true);
 });
