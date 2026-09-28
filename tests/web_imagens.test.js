@@ -6,10 +6,9 @@ const path = require('node:path');
 const sharp = require('sharp');
 
 const {
-  DOMINIOS_OFICIAIS_BRASIL, classificarIntencaoPesquisa, classificarIntencaoRegulatoria,
-  construirConsultaRegulatoriaOficial, criarOrcamentoPesquisa, criarTavilyWebSearchProvider,
+  classificarIntencaoPesquisa, criarOrcamentoPesquisa, criarTavilyWebSearchProvider,
   extrairConsultaPublica, normalizarResultadoTavily, precisaPesquisaWeb, prepararSpecPesquisa,
-  requisitosPesquisaFactual, respostaWebDeterministica, validarAderenciaConsulta,
+  normalizarPlanoPesquisa, respostaWebDeterministica, validarAderenciaConsulta,
   validarCitacoesWeb, validarConsultaExterna
 } = require('../agentes/web_search');
 const {
@@ -25,9 +24,11 @@ function governancaFalsa() {
     async concluirTool() {} };
 }
 
-test('politica web exige intencao de pesquisa e nao usa atualidade isolada', () => {
+test('politica web deterministica reconhece apenas pedido explicito ou continuacao', () => {
   assert.equal(precisaPesquisaWeb('Pesquise as novidades do PostgreSQL'), true);
-  assert.equal(precisaPesquisaWeb('Qual é a versão atual do PostgreSQL?'), true);
+  assert.equal(precisaPesquisaWeb('Qual é a versão atual do PostgreSQL?'), false);
+  assert.equal(precisaPesquisaWeb('Quais hipóteses permitem justa causa?'), false);
+  assert.equal(precisaPesquisaWeb('Compare pesquisas eleitorais recentes'), false);
   assert.equal(precisaPesquisaWeb('Tente gravar novamente agora.'), false);
   assert.equal(precisaPesquisaWeb('Faça isso hoje, por favor.'), false);
   assert.equal(precisaPesquisaWeb('Pode tentar novamente agora?'), false);
@@ -56,43 +57,17 @@ test('modo de fonte explicito e validado antes da execucao', () => {
   });
 });
 
-test('classifica duvida fiscal como pesquisa oficial sem vazar identificadores', () => {
-  const pergunta = 'Cliente João colocou o nome dele no CPF 123.456.789-00 de outro na nota fiscal. Na devolução, pode dar problema?';
-  const intencao = classificarIntencaoPesquisa(pergunta);
-  assert.equal(intencao.modo, 'delegada');
-  assert.equal(intencao.regulatoria, true);
-  assert.equal(intencao.consultaCorporativaExplicita, false);
-  assert.deepEqual(intencao.officialDomains, [...DOMINIOS_OFICIAIS_BRASIL]);
-  assert.doesNotMatch(intencao.consultaSugerida, /João|123|456|789/);
-  assert.match(construirConsultaRegulatoriaOficial(pergunta), /CPF.*nota fiscal eletrônica.*devolução/i);
-  assert.equal(classificarIntencaoRegulatoria(
-    'Consulte a nota 123 e verifique a regra fiscal aplicável.'
-  ).consultaCorporativaExplicita, true);
-});
-
-test('pesquisa factual eleitoral pede escopo antes de buscar indices ambiguos', () => {
-  const pergunta = 'Sobre as eleições, quais os índices de maior e menor aprovação entre os candidatos?';
-  const requisitos = requisitosPesquisaFactual(pergunta);
-  assert.equal(requisitos.precisaEsclarecer, true);
-  assert.deepEqual(requisitos.lacunas, ['local', 'cargo', 'periodo_ou_instituto']);
-  const intencao = classificarIntencaoPesquisa(pergunta);
-  assert.equal(intencao.modo, 'esclarecer');
-  assert.match(intencao.perguntaEsclarecimento, /país.*cargo.*ano|país.*cargo.*pesquisa/i);
-
-  const definida = classificarIntencaoPesquisa(
-    'Na eleição presidencial do Brasil em 2026, compare a pesquisa mais recente entre os candidatos.'
-  );
-  assert.equal(definida.modo, 'delegada');
-  assert.equal(definida.tipo, 'indicadores_eleitorais');
-  assert.ok(definida.requiredEvidenceGroups.length > 0);
-});
-
-test('contexto anterior pode completar o escopo de uma pesquisa eleitoral', () => {
-  const intencao = classificarIntencaoPesquisa('Quais têm maior e menor aprovação?', {
-    ultimaPergunta: 'Compare os candidatos à eleição presidencial do Brasil em 2026.',
-    ultimaResposta: 'Posso verificar a pesquisa mais recente.'
+test('plano de pesquisa aceita cobertura e fontes definidas pelo agente sem catalogo tematico', () => {
+  const plano = normalizarPlanoPesquisa({
+    query: 'hipóteses justa causa artigo 482 CLT',
+    objective: 'Explicar hipóteses e limites da justa causa',
+    coverage: ['texto legal', 'interpretação do tribunal', 'limites de aplicação'],
+    sourceStrategy: 'primarias', riskLevel: 'alto', minimumSources: 2,
+    preferredDomains: ['planalto.gov.br', 'www.tst.jus.br', 'https://invalido/rota']
   });
-  assert.equal(intencao.modo, 'delegada');
+  assert.deepEqual(plano.coverage, ['texto legal', 'interpretação do tribunal', 'limites de aplicação']);
+  assert.deepEqual(plano.includeDomains, ['planalto.gov.br', 'www.tst.jus.br']);
+  assert.equal(plano.minimumEvidenceSources, 2);
 });
 
 test('modo geral bloqueia fontes opcionais e orienta Consultar dados sem alegar falha', async () => {
@@ -207,16 +182,25 @@ test('automatico oferece web como tool de verificacao factual sem depender de pa
       webSearchProvider: { nome: 'mock', async pesquisar(spec) {
         buscas += 1;
         assert.match(spec.query, /reforma tributária.*comércio eletrônico/i);
+        assert.deepEqual(spec.coverage, ['mudanças normativas', 'impactos operacionais']);
+        assert.equal(spec.sourceStrategy, 'oficiais');
         return { status: 'complete', provider: 'tavily', profundidade: 'basic', creditos: 1,
           atualizadoEm: new Date().toISOString(), fontes: [{ id: 'f1', titulo: 'Receita Federal',
             url: 'https://www.gov.br/receitafederal/reforma', dominio: 'www.gov.br',
-            trecho: 'Informações oficiais sobre a reforma.' }] };
+            trecho: 'Informações oficiais sobre a reforma.' }, { id: 'f2', titulo: 'Ministério da Fazenda',
+            url: 'https://www.gov.br/fazenda/reforma', dominio: 'www.gov.br',
+            trecho: 'Impactos operacionais da reforma.' }],
+          avaliacaoRelevancia: { evidenciaSuficiente: true } };
       } },
       generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
         const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
         assert.ok(pesquisar);
         await pesquisar.executar({
-          query: 'reforma tributária impactos comércio eletrônico Brasil', searchDepth: 'basic'
+          query: 'reforma tributária impactos comércio eletrônico Brasil',
+          objective: 'Explicar os impactos relevantes para o comércio eletrônico',
+          coverage: ['mudanças normativas', 'impactos operacionais'],
+          sourceStrategy: 'oficiais', riskLevel: 'alto', minimumSources: 2,
+          preferredDomains: ['gov.br'], searchDepth: 'basic'
         });
         return { texto: 'A reforma altera a tributação do consumo ' +
           '[Receita Federal](https://www.gov.br/receitafederal/reforma).', provider: 'mock', modelo: 'mock' };
@@ -315,7 +299,7 @@ test('pesquisa oficial descarta dominios fora da lista mesmo se o provider os de
     { title: 'SEFAZ', url: 'https://www.fazenda.mg.gov.br/regra', content: 'Regra fiscal nota fiscal devolução', score: 0.9 },
     { title: 'Blog', url: 'https://exemplo.com/regra', content: 'Regra fiscal nota fiscal devolução', score: 0.99 }
   ] }, {
-    query: 'regra fiscal nota fiscal devolução', includeDomains: DOMINIOS_OFICIAIS_BRASIL
+    query: 'regra fiscal nota fiscal devolução', includeDomains: ['gov.br', 'fazenda.mg.gov.br']
   });
   assert.deepEqual(resultado.fontes.map((item) => item.dominio), ['www.fazenda.mg.gov.br']);
 });
@@ -487,7 +471,40 @@ test('pesquisa posterior pede ao generalista para reformular e sintetizar as fon
   assert.equal(resultado.validacaoWeb.valida, true);
 });
 
-test('automatico pesquisa regra fiscal em fontes oficiais sem chamar Sysemp nem vazar CPF', async () => {
+test('citacao invalida e reparada pelo agente antes do fallback de links', async () => {
+  let chamadasModelo = 0;
+  const resultado = await executarAssistente('Quais são as novidades do PostgreSQL?', {
+    memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar() { return {
+      status: 'complete', provider: 'tavily', profundidade: 'basic', creditos: 1,
+      atualizadoEm: new Date().toISOString(), fontes: [{ id: 'f1', titulo: 'PostgreSQL',
+        url: 'https://www.postgresql.org/about/news/', dominio: 'www.postgresql.org',
+        trecho: 'Nova versão publicada.', conteudo: 'A nova versão melhora o desempenho.' }],
+      avaliacaoRelevancia: { evidenciaSuficiente: true }
+    }; } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools, stage }) {
+      chamadasModelo += 1;
+      if (stage === 'generalist_response') {
+        const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
+        await pesquisar.executar({
+          query: 'PostgreSQL novidades versão recente', objective: 'Resumir as novidades',
+          coverage: ['versão publicada', 'impactos relevantes'], sourceStrategy: 'primarias',
+          riskLevel: 'baixo', minimumSources: 1, preferredDomains: ['postgresql.org']
+        });
+        return { texto: 'A nova versão melhora o desempenho.', provider: 'mock', modelo: 'mock' };
+      }
+      assert.equal(stage, 'web_citation_repair');
+      return { texto: 'A nova versão melhora o desempenho ' +
+        '[PostgreSQL](https://www.postgresql.org/about/news/).', provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.equal(chamadasModelo, 2);
+  assert.match(resultado.texto, /melhora o desempenho/);
+  assert.doesNotMatch(resultado.texto, /não trouxeram evidência suficiente/i);
+  assert.equal(resultado.validacaoWeb.valida, true);
+});
+
+test('automatico deixa o agente definir cobertura e fontes de uma pesquisa de alto risco', async () => {
   let consultasCorporativas = 0;
   const especificacoes = [];
   const fontes = [
@@ -497,7 +514,7 @@ test('automatico pesquisa regra fiscal em fontes oficiais sem chamar Sysemp nem 
       dominio: 'www.fazenda.mg.gov.br', trecho: 'Procedimento fiscal estadual.' }
   ];
   const resultado = await executarAssistente(
-    'Cliente João colocou o nome dele no CPF 123.456.789-00 de outro na nota fiscal. Na devolução, pode dar problema?', {
+    'Em uma devolução, a divergência entre nome e CPF na nota fiscal pode causar problema?', {
       memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
       webSearchProvider: { nome: 'mock', async pesquisar(spec) {
         especificacoes.push(spec);
@@ -507,7 +524,13 @@ test('automatico pesquisa regra fiscal em fontes oficiais sem chamar Sysemp nem 
       generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
         const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
         assert.ok(pesquisar);
-        const evidencia = JSON.parse(await pesquisar.executar({ query: 'texto que deve ser ignorado' }));
+        const evidencia = JSON.parse(await pesquisar.executar({
+          query: 'divergência nome CPF nota fiscal devolução orientação oficial Brasil',
+          objective: 'Verificar riscos e procedimentos aplicáveis à divergência cadastral',
+          coverage: ['validade fiscal', 'procedimento de devolução', 'forma de correção'],
+          sourceStrategy: 'oficiais', riskLevel: 'alto', minimumSources: 2,
+          preferredDomains: ['gov.br', 'fazenda.mg.gov.br']
+        }));
         assert.equal(evidencia.fontes.length, 2);
         return { texto: 'A divergência exige validação e possível correção fiscal ' +
           '[Portal oficial](https://www.gov.br/nfe/regra) e ' +
@@ -519,14 +542,15 @@ test('automatico pesquisa regra fiscal em fontes oficiais sem chamar Sysemp nem 
   assert.equal(consultasCorporativas, 0);
   assert.equal(resultado.proveniencia, 'web');
   assert.ok(especificacoes.length >= 1);
-  assert.deepEqual(especificacoes[0].includeDomains, [...DOMINIOS_OFICIAIS_BRASIL]);
-  assert.doesNotMatch(especificacoes[0].query, /João|123|456|789/);
+  assert.deepEqual(especificacoes[0].includeDomains, ['gov.br', 'fazenda.mg.gov.br']);
+  assert.deepEqual(especificacoes[0].coverage,
+    ['validade fiscal', 'procedimento de devolução', 'forma de correção']);
 });
 
-test('pedido de localizar nota e verificar regra usa rota mista sanitizada', async () => {
+test('pedido explicito de localizar nota e pesquisar regra usa rota mista sanitizada', async () => {
   let consultasCorporativas = 0;
   const especificacoes = [];
-  const resultado = await executarAssistente('Consulte a nota 123 e verifique a regra fiscal aplicável.', {
+  const resultado = await executarAssistente('Consulte a nota 123 e pesquise na web a regra fiscal aplicável.', {
     memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
     webSearchProvider: { nome: 'mock', async pesquisar(spec) {
       especificacoes.push(spec);
@@ -574,7 +598,7 @@ test('assistente pede o assunto antes de pesquisar um pedido vago', async () => 
   assert.match(resultado.texto, /O que você gostaria que eu pesquisasse/);
 });
 
-test('assistente pede escopo eleitoral antes de consumir pesquisa ou modelo', async () => {
+test('agente decide semanticamente quando falta escopo sem classificador eleitoral dedicado', async () => {
   let buscas = 0;
   let chamadasModelo = 0;
   const resultado = await executarAssistente(
@@ -583,13 +607,16 @@ test('assistente pede escopo eleitoral antes de consumir pesquisa ou modelo', as
       webSearchProvider: { nome: 'mock', async pesquisar() {
         buscas += 1; return { status: 'empty', fontes: [] };
       } },
-      generalistProvider: { nome: 'mock', modelo: 'mock', async executar() {
-        chamadasModelo += 1; return { texto: 'não deveria chamar', provider: 'mock', modelo: 'mock' };
+      generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
+        chamadasModelo += 1;
+        assert.ok(tools.some((item) => item.definicao.name === 'pesquisar_web'));
+        return { texto: 'De qual país, cargo e período ou instituto de pesquisa você está falando?',
+          provider: 'mock', modelo: 'mock' };
       } }
     }
   );
   assert.equal(buscas, 0);
-  assert.equal(chamadasModelo, 0);
+  assert.equal(chamadasModelo, 1);
   assert.match(resultado.texto, /país.*cargo.*ano|país.*cargo.*pesquisa/i);
   assert.equal(resultado.proveniencia, 'conhecimento_geral');
 });

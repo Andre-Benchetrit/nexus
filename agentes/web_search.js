@@ -3,12 +3,8 @@ const catalogoEntidadesWeb = require('../config/web-entities.json');
 
 const CONSULTA_SENSIVEL = /(?:postgres(?:ql)?:\/\/|api[_ -]?key|senha|password|secret|bearer\s+[a-z0-9._-]+|\b(?:select|insert|update|delete)\s+.+\bfrom\b|\b\d{7,}\b|@[a-z0-9.-]+\.[a-z]{2,})/i;
 const PEDIDO_EXPLICITO = /\b(pesquis(?:e|ar)|busque? (?:na|a )?internet|procure? (?:na|a )?web|fontes? (?:na|da )?internet|consulte? (?:a|na) web)\b/i;
-const PEDIDO_PUBLICO_IMPLICITO = /\b(?:ultim(?:a|as|o|os)\s+not[ií]cias?|not[ií]cias?\s+(?:recentes?\s+)?(?:de|da|do|sobre)|cota[cç][aã]o\s+(?:atual\s+)?(?:de|do|da)|pre[cç]o\s+atual\s+(?:de|do|da)|vers[aã]o\s+atual\s+(?:de|do|da)|mudan[cç]as?\s+mais\s+recentes?\s+(?:de|do|da|em)|lan[cç]amentos?\s+mais\s+recentes?\s+(?:de|do|da))\b/i;
 const CONTINUACAO_WEB = /\b(?:mais fontes|outras fontes|continue (?:a|essa) pesquisa|aprofunde (?:a|essa) pesquisa|pesquise novamente|busque novamente|procure novamente|tente (?:pesquisar|buscar) novamente|sobre (?:isso|esse assunto)|e quanto a|e sobre)\b/i;
 const INFORMACAO_INSTAVEL = /\b(hoje|agora|atual|atualmente|recente|ultim[oa]s?|noticia|preco|cotacao|legislacao|lei|regulamento|versao|lancamento|agenda|previsao|presidente|ceo)\b/i;
-const DOMINIOS_OFICIAIS_BRASIL = Object.freeze([
-  'gov.br', 'planalto.gov.br', 'confaz.fazenda.gov.br', 'fazenda.mg.gov.br'
-]);
 const TERMOS_GENERICOS = new Set([
   'a', 'as', 'algo', 'alguma', 'coisa', 'com', 'como', 'da', 'das', 'de', 'do', 'dos',
   'e', 'em', 'esta', 'estao', 'eu', 'internet', 'mais', 'me', 'mim', 'na', 'nas', 'nexus',
@@ -46,106 +42,25 @@ function sugerirConsultaPesquisa(pergunta = '') {
     .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function requisitosPesquisaFactual(pergunta = '', contexto = {}) {
-  const contextoVisivel = [contexto.ultimaPergunta, contexto.ultimaResposta, pergunta]
-    .filter(Boolean).join(' ');
-  const texto = normalizarIntencao(contextoVisivel);
-  const eleitoral = /\b(?:eleic(?:ao|oes)|eleitoral|candidat[oa]s?|intencao de voto)\b/.test(texto);
-  const pedeIndice = /\b(?:aprovacao|rejeicao|intencao de voto|percentua(?:l|is)|indices?|taxas?|maior|menor|mais votad[oa]|menos votad[oa]|pesquisa mais recente|pesquisa eleitoral)\b/.test(texto);
-  if (!eleitoral || !pedeIndice) return {
-    precisaEsclarecer: false, lacunas: [], requiredEvidenceGroups: [], minimumEvidenceSources: 1
-  };
-
-  const possuiLocal = /\b(?:brasil|brasileir[oa]|argentina|chile|uruguai|paraguai|estados unidos|eua|portugal|\w+\s*[-/]\s*(?:sp|mg|rj|es|ba|pr|sc|rs|go|df|pe|ce|pa|am))\b/.test(texto);
-  const possuiCargo = /\b(?:presidencial|presidente|governador|prefeito|senador|deputad[oa]|vereador|cargo|municipal|estadual|federal|segundo turno|primeiro turno)\b/.test(texto);
-  const possuiPeriodo = /\b(?:20\d{2}|hoje|atual|mais recente|ultima pesquisa|primeiro turno|segundo turno|datafolha|quaest|ipec|parana pesquisas|atlasintel)\b/.test(texto);
-  const lacunas = [];
-  if (!possuiLocal) lacunas.push('local');
-  if (!possuiCargo) lacunas.push('cargo');
-  if (!possuiPeriodo) lacunas.push('periodo_ou_instituto');
-  return {
-    precisaEsclarecer: lacunas.length > 0,
-    lacunas,
-    perguntaEsclarecimento: lacunas.length
-      ? 'De qual eleição você está falando? Informe o país/estado/cidade, o cargo e o ano ou a pesquisa/período que deseja comparar.'
-      : null,
-    requiredEvidenceGroups: [[
-      '%', 'percentual', 'intenção de voto', 'aprovacao', 'rejeicao', 'pesquisa eleitoral'
-    ]],
-    minimumEvidenceSources: 1,
-    tipo: 'indicadores_eleitorais'
-  };
-}
-
-function classificarIntencaoRegulatoria(pergunta = '') {
-  const texto = normalizarIntencao(pergunta);
-  const fiscal = /\b(?:fiscal|nota fiscal|nf-?e|nfc-?e|cpf|cnpj|tribut|imposto|devolu[cç][aã]o|cancelamento fiscal|carta de corre[cç][aã]o|sefaz|confaz)\b/.test(texto);
-  const juridica = /\b(?:lei|legisla[cç][aã]o|jur[ií]dic|regulamento|direito do consumidor|procon|contrato)\b/.test(texto);
-  const pedeRegra = /\b(?:pode dar problema|[eé] permitido|[eé] obrigat[oó]rio|qual (?:a )?regra|verifi\w*.{0,30}regra|regra (?:fiscal|juridica|legal)|o que (?:a )?(?:lei|legisla[cç][aã]o) diz|como corrigir|como regularizar|quais? (?:os )?riscos?|consequ[eê]ncias?|validade|responsabilidade)\b/.test(texto);
-  const consultaCorporativaExplicita = /\b(?:consulte|consultar|localize|localizar|busque|buscar|verifique|verificar)\b.{0,80}\b(?:venda|pedido|nota|nf-?e|cliente|registro)\b/.test(texto) ||
-    /\b(?:venda|pedido|nota|nf-?e)\s*(?:n[ºo°.]|numero|id|c[oó]digo)?\s*\d{3,}\b/.test(texto);
-  const regulatoria = (fiscal || juridica) && (pedeRegra || juridica);
-  return {
-    regulatoria,
-    dominio: fiscal ? 'fiscal' : juridica ? 'juridico' : null,
-    consultaCorporativaExplicita
-  };
-}
-
-function construirConsultaRegulatoriaOficial(pergunta = '') {
-  const texto = normalizarIntencao(pergunta);
-  const termos = [];
-  if (/diverg|diferent|incorret|errad/.test(texto)) termos.push('divergência cadastral');
-  if (/\bnome\b/.test(texto)) termos.push('nome');
-  if (/\bcpf\b/.test(texto)) termos.push('CPF');
-  if (/\bcnpj\b/.test(texto)) termos.push('CNPJ');
-  if (/nota fiscal|nf-?e|nfc-?e/.test(texto)) termos.push('nota fiscal eletrônica');
-  if (/devolu/.test(texto)) termos.push('devolução');
-  if (/cancel/.test(texto)) termos.push('cancelamento');
-  if (/carta de corre/.test(texto)) termos.push('carta de correção');
-  if (/consumidor|procon/.test(texto)) termos.push('direito do consumidor');
-  if (/contrato/.test(texto)) termos.push('contrato');
-  if (!termos.length) termos.push('regra fiscal ou jurídica aplicável');
-  return `${[...new Set(termos)].join(' ')} orientação oficial legislação Brasil`.slice(0, 500);
-}
-
 function classificarIntencaoPesquisa(pergunta = '', contexto = {}) {
   const texto = normalizarIntencao(pergunta);
   const explicita = PEDIDO_EXPLICITO.test(texto);
-  const regulatoria = classificarIntencaoRegulatoria(pergunta);
-  const requisitos = requisitosPesquisaFactual(pergunta, contexto);
-  const publicaImplicita = PEDIDO_PUBLICO_IMPLICITO.test(texto) || regulatoria.regulatoria ||
-    Boolean(requisitos.tipo);
   const continuacao = contexto.ultimaProveniencia === 'web' && CONTINUACAO_WEB.test(texto);
   const instavel = INFORMACAO_INSTAVEL.test(texto);
-  if (!explicita && !publicaImplicita && !continuacao) {
-    return { modo: 'nenhuma', explicita: false, publicaImplicita: false,
-      continuacao: false, instavel, assunto: null, ...regulatoria };
+  if (!explicita && !continuacao) {
+    return { modo: 'nenhuma', explicita: false, continuacao: false,
+      instavel, assunto: null };
   }
   const assunto = extrairAssuntoPesquisa(pergunta);
-  if (!assunto) {
-    return { modo: 'esclarecer', explicita, publicaImplicita, continuacao,
-      instavel, assunto: null, ...regulatoria };
-  }
-  if (requisitos.precisaEsclarecer) {
-    return { modo: 'esclarecer', explicita, publicaImplicita, continuacao,
-      instavel: true, assunto, ...regulatoria, ...requisitos };
-  }
-  if (regulatoria.regulatoria) {
-    const consultaSugerida = construirConsultaRegulatoriaOficial(pergunta);
-    return {
-      modo: 'delegada', explicita, publicaImplicita: true, continuacao,
-      instavel: true, assunto: consultaSugerida, consultaSugerida,
-      officialDomains: [...DOMINIOS_OFICIAIS_BRASIL], requiredSourceCount: 2,
-      ...regulatoria, ...requisitos
-    };
+  if (!assunto && !continuacao) {
+    return { modo: 'esclarecer', explicita, continuacao,
+      instavel, assunto: null };
   }
   return {
     modo: 'delegada',
-    explicita, publicaImplicita, continuacao, instavel, assunto,
+    explicita, continuacao, instavel, assunto,
     consultaSugerida: explicita || continuacao
-      ? sugerirConsultaPesquisa(pergunta) : String(pergunta).trim(),
-    ...requisitos
+      ? sugerirConsultaPesquisa(pergunta) : String(pergunta).trim()
   };
 }
 
@@ -159,7 +74,11 @@ function pedidoExplicitoPesquisaWeb(pergunta = '') {
 
 function extrairConsultaPublica(pergunta = '') {
   const internas = /\b(fid|nexus|noss[oa]s?|meu|minha|faturamento|estoque|pedidos?|vendas?|sku|ean|marketplace_pedido)\b/i;
-  const partes = String(pergunta).split(/[?.;]|\b(?:e compare|comparando|em relação a|versus|vs\.?|com nossos?|com minhas?)\b/i)
+  const texto = String(pergunta).replace(
+    /\be\s+(?=(?:pesquis(?:e|ar)|busque?\s+(?:(?:na|a)\s+)?internet|procure?\s+(?:(?:na|a)\s+)?web|consulte?\s+(?:a|na)\s+web)\b)/gi,
+    '. '
+  );
+  const partes = texto.split(/[?.;]|\b(?:e compare|comparando|em relação a|versus|vs\.?|com nossos?|com minhas?)\b/i)
     .map((item) => item.replace(PEDIDO_EXPLICITO, ' ').replace(/\s+/g, ' ').trim())
     .filter((item) => item.length >= 3 && !internas.test(item) && !CONSULTA_SENSIVEL.test(item));
   if (!partes.length) {
@@ -227,10 +146,42 @@ function encontrarEntidadePublica(query = '') {
     (entidade.aliases || []).some((alias) => normalizada.includes(` ${normalizarIntencao(alias)} `))) || null;
 }
 
+function normalizarDominioPesquisa(valor = '') {
+  const dominio = String(valor || '').trim().toLowerCase()
+    .replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+  if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(dominio)) return null;
+  return dominio;
+}
+
+function normalizarPlanoPesquisa(spec = {}) {
+  const risco = ['baixo', 'medio', 'alto'].includes(spec.riskLevel) ? spec.riskLevel : 'baixo';
+  const estrategia = ['primarias', 'oficiais', 'especializadas', 'diversas'].includes(spec.sourceStrategy)
+    ? spec.sourceStrategy : 'diversas';
+  const cobertura = [...new Set((Array.isArray(spec.coverage) ? spec.coverage : [])
+    .map((item) => limparTrecho(item, 160)).filter(Boolean))].slice(0, 8);
+  const dominios = [...new Set([
+    ...(Array.isArray(spec.preferredDomains) ? spec.preferredDomains : []),
+    ...(Array.isArray(spec.includeDomains) ? spec.includeDomains : [])
+  ].map(normalizarDominioPesquisa).filter(Boolean))].slice(0, 8);
+  const minimoInformado = Number(spec.minimumSources || spec.minimumEvidenceSources || 1);
+  const minimo = Math.min(4, Math.max(risco === 'alto' ? 2 : 1,
+    Number.isFinite(minimoInformado) ? minimoInformado : 1));
+  return {
+    ...spec,
+    objective: limparTrecho(spec.objective, 300) || null,
+    coverage: cobertura,
+    riskLevel: risco,
+    sourceStrategy: estrategia,
+    includeDomains: dominios,
+    minimumEvidenceSources: minimo
+  };
+}
+
 function prepararSpecPesquisa(spec = {}) {
-  const entidade = encontrarEntidadePublica(spec.query);
-  if (!entidade) return { ...spec, requiredTerms: spec.requiredTerms || [] };
-  let query = String(spec.query || '');
+  const plano = normalizarPlanoPesquisa(spec);
+  const entidade = encontrarEntidadePublica(plano.query);
+  if (!entidade) return { ...plano, requiredTerms: plano.requiredTerms || [] };
+  let query = String(plano.query || '');
   const aliases = [...(entidade.aliases || [])].sort((a, b) => b.length - a.length);
   for (const alias of aliases) {
     const padrao = new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
@@ -240,11 +191,11 @@ function prepararSpecPesquisa(spec = {}) {
     }
   }
   return {
-    ...spec,
+    ...plano,
     query: query.replace(/\s+/g, ' ').trim(),
     entityId: entidade.id,
     officialDomains: entidade.officialDomains || [],
-    requiredTerms: [...new Set([...(spec.requiredTerms || []), ...(entidade.requiredTerms || [])])]
+    requiredTerms: [...new Set([...(plano.requiredTerms || []), ...(entidade.requiredTerms || [])])]
   };
 }
 
@@ -324,6 +275,13 @@ function normalizarResultadoTavily(resposta = {}, spec = {}) {
       minimoFontes,
       motivo: evidenciaSuficiente ? 'evidencia_suficiente'
         : fontes.length ? 'fontes_insuficientes' : 'sem_fonte_aderente'
+    },
+    planoPesquisa: {
+      objetivo: spec.objective || null,
+      cobertura: spec.coverage || [],
+      estrategiaFontes: spec.sourceStrategy || 'diversas',
+      nivelRisco: spec.riskLevel || 'baixo',
+      minimoFontes
     },
     atualizadoEm: new Date().toISOString()
   };
@@ -428,16 +386,15 @@ function respostaWebDeterministica(resultados = [], evidenciaPreservada = '', op
   return [...(prefixo ? [prefixo, ''] : []),
     'As fontes encontradas não trouxeram evidência suficiente para eu concluir a resposta com segurança:', '',
     ...evidencias,
-    ...(opcoes.regulatoria && fontes.length < 2
-      ? ['', 'A cobertura oficial ficou limitada a uma fonte; confirme o caso com a área fiscal responsável, especialmente se houver regra estadual.']
+    ...(opcoes.riscoAlto && fontes.length < 2
+      ? ['', 'A cobertura ficou limitada a uma fonte; confirme a conclusão com a área ou profissional responsável antes de tomar uma decisão de alto impacto.']
       : []),
     '', 'Informe mais contexto — por exemplo, entidade, local, período ou indicador — para eu refazer a pesquisa de forma mais específica.'].join('\n');
 }
 
 module.exports = {
-  DOMINIOS_OFICIAIS_BRASIL, classificarIntencaoPesquisa, classificarIntencaoRegulatoria,
-  construirConsultaRegulatoriaOficial, criarOrcamentoPesquisa, criarTavilyWebSearchProvider, criarWebSearchProvider,
-  extrairAssuntoPesquisa, prepararSpecPesquisa, requisitosPesquisaFactual,
+  classificarIntencaoPesquisa, criarOrcamentoPesquisa, criarTavilyWebSearchProvider, criarWebSearchProvider,
+  extrairAssuntoPesquisa, normalizarPlanoPesquisa, prepararSpecPesquisa,
   extrairConsultaPublica, normalizarResultadoTavily, pedidoExplicitoPesquisaWeb,
   precisaPesquisaWeb, resolverModoWeb,
   respostaWebDeterministica, validarAderenciaConsulta, validarCitacoesWeb, validarConsultaExterna
