@@ -6,9 +6,11 @@ const path = require('node:path');
 const sharp = require('sharp');
 
 const {
-  classificarIntencaoPesquisa, criarOrcamentoPesquisa, criarTavilyWebSearchProvider,
+  DOMINIOS_OFICIAIS_BRASIL, classificarIntencaoPesquisa, classificarIntencaoRegulatoria,
+  construirConsultaRegulatoriaOficial, criarOrcamentoPesquisa, criarTavilyWebSearchProvider,
   extrairConsultaPublica, normalizarResultadoTavily, precisaPesquisaWeb, prepararSpecPesquisa,
-  respostaWebDeterministica, validarAderenciaConsulta, validarCitacoesWeb, validarConsultaExterna
+  requisitosPesquisaFactual, respostaWebDeterministica, validarAderenciaConsulta,
+  validarCitacoesWeb, validarConsultaExterna
 } = require('../agentes/web_search');
 const {
   classificarSensibilidade, precisaInterpretacaoVisual, processarImagemLocal, sanitizarImagem
@@ -46,11 +48,73 @@ test('politica web exige intencao de pesquisa e nao usa atualidade isolada', () 
 
 test('modo de fonte explicito e validado antes da execucao', () => {
   assert.equal(resolverModoFonte(), 'automatico');
+  assert.equal(resolverModoFonte('geral'), 'geral');
   assert.equal(resolverModoFonte('documentacao'), 'documentacao');
   assert.throws(() => resolverModoFonte('qualquer'), (erro) => {
     assert.equal(erro.codigo, 'MODO_FONTE_INVALIDO');
     return true;
   });
+});
+
+test('classifica duvida fiscal como pesquisa oficial sem vazar identificadores', () => {
+  const pergunta = 'Cliente João colocou o nome dele no CPF 123.456.789-00 de outro na nota fiscal. Na devolução, pode dar problema?';
+  const intencao = classificarIntencaoPesquisa(pergunta);
+  assert.equal(intencao.modo, 'delegada');
+  assert.equal(intencao.regulatoria, true);
+  assert.equal(intencao.consultaCorporativaExplicita, false);
+  assert.deepEqual(intencao.officialDomains, [...DOMINIOS_OFICIAIS_BRASIL]);
+  assert.doesNotMatch(intencao.consultaSugerida, /João|123|456|789/);
+  assert.match(construirConsultaRegulatoriaOficial(pergunta), /CPF.*nota fiscal eletrônica.*devolução/i);
+  assert.equal(classificarIntencaoRegulatoria(
+    'Consulte a nota 123 e verifique a regra fiscal aplicável.'
+  ).consultaCorporativaExplicita, true);
+});
+
+test('pesquisa factual eleitoral pede escopo antes de buscar indices ambiguos', () => {
+  const pergunta = 'Sobre as eleições, quais os índices de maior e menor aprovação entre os candidatos?';
+  const requisitos = requisitosPesquisaFactual(pergunta);
+  assert.equal(requisitos.precisaEsclarecer, true);
+  assert.deepEqual(requisitos.lacunas, ['local', 'cargo', 'periodo_ou_instituto']);
+  const intencao = classificarIntencaoPesquisa(pergunta);
+  assert.equal(intencao.modo, 'esclarecer');
+  assert.match(intencao.perguntaEsclarecimento, /país.*cargo.*ano|país.*cargo.*pesquisa/i);
+
+  const definida = classificarIntencaoPesquisa(
+    'Na eleição presidencial do Brasil em 2026, compare a pesquisa mais recente entre os candidatos.'
+  );
+  assert.equal(definida.modo, 'delegada');
+  assert.equal(definida.tipo, 'indicadores_eleitorais');
+  assert.ok(definida.requiredEvidenceGroups.length > 0);
+});
+
+test('contexto anterior pode completar o escopo de uma pesquisa eleitoral', () => {
+  const intencao = classificarIntencaoPesquisa('Quais têm maior e menor aprovação?', {
+    ultimaPergunta: 'Compare os candidatos à eleição presidencial do Brasil em 2026.',
+    ultimaResposta: 'Posso verificar a pesquisa mais recente.'
+  });
+  assert.equal(intencao.modo, 'delegada');
+});
+
+test('modo geral bloqueia fontes opcionais e orienta Consultar dados sem alegar falha', async () => {
+  let consultas = 0;
+  let buscas = 0;
+  const resultado = await executarAssistente('Quais foram minhas vendas hoje?', {
+    sourceMode: 'geral', memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: governancaFalsa(), webMode: 'v1', knowledgeMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar() { buscas += 1; return { status: 'empty', fontes: [] }; } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools, instrucoes }) {
+      assert.match(instrucoes, /Modo Conhecimento geral/);
+      assert.deepEqual(tools.map((item) => item.definicao.name), ['validar_politicas']);
+      return { texto: 'Não tenho acesso ao Sysemp nesta sessão.', provider: 'mock', modelo: 'mock' };
+    } },
+    executarAgenteCorporativo: async () => { consultas += 1; }
+  });
+  assert.equal(consultas, 0);
+  assert.equal(buscas, 0);
+  assert.match(resultado.texto, /Conhecimento geral/i);
+  assert.match(resultado.texto, /\+.*Consultar dados/i);
+  assert.doesNotMatch(resultado.texto, /indispon[ií]vel|falha t[eé]cnica/i);
+  assert.equal(resultado.politicaFonte.modoSelecionado, 'geral');
 });
 
 test('modo web selecionado oferece pesquisa mesmo sem palavras gatilho', async () => {
@@ -127,12 +191,41 @@ test('assistente nao oferece pesquisa por causa da palavra agora', async () => {
     webSearchProvider: { nome: 'mock', async pesquisar() { buscas += 1;
       return { status: 'empty', fontes: [] }; } },
     generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
-      assert.equal(tools.some((item) => item.definicao.name === 'pesquisar_web'), false);
+      assert.equal(tools.some((item) => item.definicao.name === 'pesquisar_web'), true);
       return { texto: 'Certo, vou tentar novamente.', provider: 'mock', modelo: 'mock' };
     } }
   });
   assert.equal(buscas, 0);
   assert.equal(resultado.proveniencia, 'conhecimento_geral');
+});
+
+test('automatico oferece web como tool de verificacao factual sem depender de palavra gatilho', async () => {
+  let buscas = 0;
+  const resultado = await executarAssistente(
+    'Explique os principais impactos da reforma tributária para o comércio eletrônico.', {
+      memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
+      webSearchProvider: { nome: 'mock', async pesquisar(spec) {
+        buscas += 1;
+        assert.match(spec.query, /reforma tributária.*comércio eletrônico/i);
+        return { status: 'complete', provider: 'tavily', profundidade: 'basic', creditos: 1,
+          atualizadoEm: new Date().toISOString(), fontes: [{ id: 'f1', titulo: 'Receita Federal',
+            url: 'https://www.gov.br/receitafederal/reforma', dominio: 'www.gov.br',
+            trecho: 'Informações oficiais sobre a reforma.' }] };
+      } },
+      generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
+        const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
+        assert.ok(pesquisar);
+        await pesquisar.executar({
+          query: 'reforma tributária impactos comércio eletrônico Brasil', searchDepth: 'basic'
+        });
+        return { texto: 'A reforma altera a tributação do consumo ' +
+          '[Receita Federal](https://www.gov.br/receitafederal/reforma).', provider: 'mock', modelo: 'mock' };
+      } }
+    }
+  );
+  assert.equal(buscas, 1);
+  assert.equal(resultado.proveniencia, 'web');
+  assert.equal(resultado.validacaoWeb.valida, true);
 });
 
 test('catalogo publico expande FID e rejeita fontes sem correspondencia da entidade', async () => {
@@ -176,13 +269,55 @@ test('Tavily normaliza fontes e audita um credito na busca basica', async () => 
   const provider = criarTavilyWebSearchProvider({ apiKey: 'teste', fetchImpl: async (_url, init) => {
     corpo = JSON.parse(init.body);
     return { ok: true, async json() { return { results: [{
-      title: 'PostgreSQL', url: 'https://www.postgresql.org/docs/', content: 'Documentação oficial', score: 0.9
+      title: 'PostgreSQL', url: 'https://www.postgresql.org/docs/', content: 'Documentação oficial',
+      raw_content: '# PostgreSQL\nConteúdo principal detalhado.', score: 0.9
     }] }; } };
   }});
   const resultado = await provider.pesquisar({ query: 'PostgreSQL documentação', maxResults: 20 });
   assert.equal(corpo.max_results, 8);
+  assert.equal(corpo.include_raw_content, 'markdown');
   assert.equal(resultado.creditos, 1);
   assert.equal(resultado.fontes[0].dominio, 'www.postgresql.org');
+  assert.match(resultado.fontes[0].conteudo, /Conteúdo principal detalhado/);
+});
+
+test('pesquisa de indicadores descarta pagina eleitoral generica sem numeros', () => {
+  const resultado = normalizarResultadoTavily({ results: [
+    { title: 'Como funcionam as eleições', url: 'https://example.com/eleicoes',
+      content: 'Entenda as regras gerais do processo eleitoral.', score: 0.9 },
+    { title: 'Pesquisa presidencial 2026', url: 'https://example.com/pesquisa',
+      content: 'Candidata A tem 41% das intenções de voto e candidato B registra 27%.', score: 0.8 }
+  ] }, {
+    query: 'eleição presidencial Brasil 2026 pesquisa candidatos percentuais',
+    requiredEvidenceGroups: [['%', 'percentual', 'intenção de voto']],
+    minimumEvidenceSources: 1
+  });
+  assert.deepEqual(resultado.fontes.map((item) => item.url), ['https://example.com/pesquisa']);
+  assert.equal(resultado.avaliacaoRelevancia.evidenciaSuficiente, true);
+  assert.equal(resultado.avaliacaoRelevancia.descartadas, 1);
+});
+
+test('conteudo principal remove links de navegacao antes de chegar ao modelo', async () => {
+  const provider = criarTavilyWebSearchProvider({ apiKey: 'teste', fetchImpl: async () => ({
+    ok: true, async json() { return { results: [{
+      title: 'Pesquisa', url: 'https://example.com/pesquisa', score: 0.9,
+      content: 'Pesquisa eleitoral aponta 41% para a candidata A.',
+      raw_content: '[Skip to Content](https://example.com/#main)\n[Entrar](https://example.com/login)\n# Resultado\nA candidata A tem 41%.'
+    }] }; }
+  }) });
+  const resultado = await provider.pesquisar({ query: 'pesquisa eleitoral candidata 41%' });
+  assert.doesNotMatch(resultado.fontes[0].conteudo, /Skip to Content|\/login/);
+  assert.match(resultado.fontes[0].conteudo, /candidata A tem 41%/);
+});
+
+test('pesquisa oficial descarta dominios fora da lista mesmo se o provider os devolver', () => {
+  const resultado = normalizarResultadoTavily({ results: [
+    { title: 'SEFAZ', url: 'https://www.fazenda.mg.gov.br/regra', content: 'Regra fiscal nota fiscal devolução', score: 0.9 },
+    { title: 'Blog', url: 'https://exemplo.com/regra', content: 'Regra fiscal nota fiscal devolução', score: 0.99 }
+  ] }, {
+    query: 'regra fiscal nota fiscal devolução', includeDomains: DOMINIOS_OFICIAIS_BRASIL
+  });
+  assert.deepEqual(resultado.fontes.map((item) => item.dominio), ['www.fazenda.mg.gov.br']);
 });
 
 test('normalizacao remove URL invalida e instrucoes maliciosas', () => {
@@ -208,6 +343,17 @@ test('fallback de citacoes preserva evidencia corporativa em resposta mista', ()
   }] }], 'Faturamento comprovado pelo Nexus: R$ 100,00.');
   assert.match(texto, /Faturamento comprovado pelo Nexus/);
   assert.match(texto, /\[Fonte pública\]\(https:\/\/example\.com\/fonte\)/);
+});
+
+test('fallback web prefere trecho curto e nao despeja pagina bruta', () => {
+  const texto = respostaWebDeterministica([{ fontes: [{
+    titulo: 'Pesquisa eleitoral', url: 'https://example.com/pesquisa',
+    trecho: 'A candidata A registra 41%.',
+    conteudo: 'Skip to Content Entrar Sair Minha conta ' + 'conteúdo '.repeat(100)
+  }] }]);
+  assert.match(texto, /A candidata A registra 41%/);
+  assert.doesNotMatch(texto, /Skip to Content|Minha conta/);
+  assert.match(texto, /não trouxeram evidência suficiente/i);
 });
 
 test('orcamento de busca limita medio a duas e extra-alto a tres', () => {
@@ -302,6 +448,117 @@ test('assistente delega pesquisa explícita ao modelo e preserva proveniencia we
   assert.equal(resultado.validacaoWeb.valida, true);
 });
 
+test('pesquisa posterior pede ao generalista para reformular e sintetizar as fontes', async () => {
+  let chamadasModelo = 0;
+  let buscas = 0;
+  const consultas = [];
+  const resultado = await executarAssistente('Pesquise as novidades do PostgreSQL', {
+    memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar(spec) {
+      buscas += 1;
+      consultas.push(spec.query);
+      return { status: 'complete', provider: 'tavily', profundidade: 'basic', creditos: 1,
+        atualizadoEm: new Date().toISOString(), fontes: [{ id: 'f1', titulo: 'PostgreSQL',
+          url: 'https://www.postgresql.org/about/news/', dominio: 'www.postgresql.org',
+          trecho: 'Nova versão publicada.', conteudo: 'A nova versão inclui melhorias de desempenho.' }] };
+    } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ stage, mensagens, tools }) {
+      chamadasModelo += 1;
+      if (chamadasModelo === 1) {
+        assert.equal(stage, 'generalist_response');
+        return { texto: 'Vou verificar.', provider: 'mock', modelo: 'mock' };
+      }
+      assert.equal(stage, 'web_query_refinement');
+      assert.match(mensagens.map((item) => item.content).join('\n'), /Reformule a intencao/);
+      const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
+      assert.ok(pesquisar);
+      const evidencia = JSON.parse(await pesquisar.executar({
+        query: 'PostgreSQL novidades melhorias desempenho versão recente', searchDepth: 'basic'
+      }));
+      assert.match(evidencia.fontes[0].conteudo, /melhorias de desempenho/);
+      return { texto: 'A atualização trouxe melhorias de desempenho ' +
+        '[PostgreSQL](https://www.postgresql.org/about/news/).', provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.equal(buscas, 1);
+  assert.equal(chamadasModelo, 2);
+  assert.equal(consultas[0], 'PostgreSQL novidades melhorias desempenho versão recente');
+  assert.match(resultado.texto, /melhorias de desempenho/);
+  assert.equal(resultado.validacaoWeb.valida, true);
+});
+
+test('automatico pesquisa regra fiscal em fontes oficiais sem chamar Sysemp nem vazar CPF', async () => {
+  let consultasCorporativas = 0;
+  const especificacoes = [];
+  const fontes = [
+    { id: 'f1', titulo: 'Portal oficial', url: 'https://www.gov.br/nfe/regra',
+      dominio: 'www.gov.br', trecho: 'Orientação oficial sobre nota fiscal e devolução.' },
+    { id: 'f2', titulo: 'SEFAZ MG', url: 'https://www.fazenda.mg.gov.br/nfe/devolucao',
+      dominio: 'www.fazenda.mg.gov.br', trecho: 'Procedimento fiscal estadual.' }
+  ];
+  const resultado = await executarAssistente(
+    'Cliente João colocou o nome dele no CPF 123.456.789-00 de outro na nota fiscal. Na devolução, pode dar problema?', {
+      memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
+      webSearchProvider: { nome: 'mock', async pesquisar(spec) {
+        especificacoes.push(spec);
+        return { status: 'complete', provider: 'tavily', profundidade: spec.searchDepth || 'basic',
+          creditos: 1, atualizadoEm: new Date().toISOString(), fontes };
+      } },
+      generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
+        const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
+        assert.ok(pesquisar);
+        const evidencia = JSON.parse(await pesquisar.executar({ query: 'texto que deve ser ignorado' }));
+        assert.equal(evidencia.fontes.length, 2);
+        return { texto: 'A divergência exige validação e possível correção fiscal ' +
+          '[Portal oficial](https://www.gov.br/nfe/regra) e ' +
+          '[SEFAZ MG](https://www.fazenda.mg.gov.br/nfe/devolucao).', provider: 'mock', modelo: 'mock' };
+      } },
+      executarAgenteCorporativo: async () => { consultasCorporativas += 1; }
+    }
+  );
+  assert.equal(consultasCorporativas, 0);
+  assert.equal(resultado.proveniencia, 'web');
+  assert.ok(especificacoes.length >= 1);
+  assert.deepEqual(especificacoes[0].includeDomains, [...DOMINIOS_OFICIAIS_BRASIL]);
+  assert.doesNotMatch(especificacoes[0].query, /João|123|456|789/);
+});
+
+test('pedido de localizar nota e verificar regra usa rota mista sanitizada', async () => {
+  let consultasCorporativas = 0;
+  const especificacoes = [];
+  const resultado = await executarAssistente('Consulte a nota 123 e verifique a regra fiscal aplicável.', {
+    memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar(spec) {
+      especificacoes.push(spec);
+      return { status: 'complete', provider: 'tavily', profundidade: spec.searchDepth || 'basic',
+        creditos: 1, atualizadoEm: new Date().toISOString(), fontes: [
+          { id: 'f1', titulo: 'Gov BR', url: 'https://www.gov.br/nfe/regra', dominio: 'www.gov.br', trecho: 'Regra oficial.' },
+          { id: 'f2', titulo: 'Confaz', url: 'https://confaz.fazenda.gov.br/nfe', dominio: 'confaz.fazenda.gov.br', trecho: 'Ajuste aplicável.' }
+        ] };
+    } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ mensagens, stage }) {
+      assert.equal(stage, 'web_synthesis');
+      assert.match(mensagens.map((item) => item.content).join('\n'), /Nota 123 localizada/);
+      return { texto: 'Nota 123 localizada no Sysemp. A regra deve ser validada nas fontes oficiais ' +
+        '[Gov BR](https://www.gov.br/nfe/regra) e ' +
+        '[Confaz](https://confaz.fazenda.gov.br/nfe).', provider: 'mock', modelo: 'mock' };
+    } },
+    executarAgenteCorporativo: async () => {
+      consultasCorporativas += 1;
+      return { texto: 'Nota 123 localizada no Sysemp.', roteamento: {
+        perfilInicial: 'notas', perfilEfetivo: 'notas',
+        ferramentasExecutadas: ['consultar_notas'], respostaPronta: true
+      } };
+    }
+  });
+  assert.equal(consultasCorporativas, 1);
+  assert.ok(especificacoes.length >= 1);
+  assert.doesNotMatch(especificacoes[0].query, /123/);
+  assert.equal(resultado.proveniencia, 'misto');
+  assert.match(resultado.texto, /Nota 123 localizada/);
+  assert.match(resultado.texto, /https:\/\/www\.gov\.br\/nfe\/regra/);
+});
+
 test('assistente pede o assunto antes de pesquisar um pedido vago', async () => {
   let buscas = 0;
   let chamadasModelo = 0;
@@ -315,6 +572,26 @@ test('assistente pede o assunto antes de pesquisar um pedido vago', async () => 
   assert.equal(buscas, 0);
   assert.equal(chamadasModelo, 0);
   assert.match(resultado.texto, /O que você gostaria que eu pesquisasse/);
+});
+
+test('assistente pede escopo eleitoral antes de consumir pesquisa ou modelo', async () => {
+  let buscas = 0;
+  let chamadasModelo = 0;
+  const resultado = await executarAssistente(
+    'Sobre as eleições, quais os índices de maior e menor aprovação entre os candidatos?', {
+      memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
+      webSearchProvider: { nome: 'mock', async pesquisar() {
+        buscas += 1; return { status: 'empty', fontes: [] };
+      } },
+      generalistProvider: { nome: 'mock', modelo: 'mock', async executar() {
+        chamadasModelo += 1; return { texto: 'não deveria chamar', provider: 'mock', modelo: 'mock' };
+      } }
+    }
+  );
+  assert.equal(buscas, 0);
+  assert.equal(chamadasModelo, 0);
+  assert.match(resultado.texto, /país.*cargo.*ano|país.*cargo.*pesquisa/i);
+  assert.equal(resultado.proveniencia, 'conhecimento_geral');
 });
 
 test('pesquisa web nao expoe consultar_nexus ao modelo de sintese', async () => {

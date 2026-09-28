@@ -61,6 +61,7 @@ test('mapeia fachadas para permissoes explicitas', () => {
   assert.equal(permissaoDaFerramenta('analisar_giro_estoque'), 'estoque.consultar');
   assert.equal(permissaoDaFerramenta('construir_sql'), 'sql.gerar');
   assert.equal(permissaoDaFerramenta('consultar_bronze'), 'bronze.auditar');
+  assert.equal(permissaoDaFerramenta('validar_politicas'), 'documentacao.consultar');
 });
 
 test('cruzamento de dataset combina permissao da IA com permissao do dominio', () => {
