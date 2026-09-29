@@ -152,11 +152,52 @@ function normalizarArgumentosPeloSchema(valor, schema) {
   return valor;
 }
 
+function tornarSchemaAnulavel(schema) {
+  if (!schema || typeof schema !== 'object' || aceitaNulo(schema)) return schema;
+  if (Array.isArray(schema.anyOf)) {
+    schema.anyOf.push({ type: 'null' });
+    return schema;
+  }
+  if (Array.isArray(schema.type)) schema.type = [...schema.type, 'null'];
+  else if (schema.type) schema.type = [schema.type, 'null'];
+  else schema.anyOf = [{ ...schema }, { type: 'null' }];
+  if (Array.isArray(schema.enum) && !schema.enum.includes(null)) schema.enum.push(null);
+  return schema;
+}
+
+// A Responses API exige que tools strict incluam em required todas as chaves
+// declaradas em properties. O envelope do provider torna anulaveis apenas os
+// campos opcionais do contrato interno, sem modificar a definicao original.
+function normalizarSchemaEstritoOpenAI(schema) {
+  const copia = structuredClone(schema);
+
+  function visitar(atual) {
+    if (!atual || typeof atual !== 'object') return;
+    if (atual.properties && typeof atual.properties === 'object') {
+      const obrigatoriosOriginais = new Set(atual.required || []);
+      for (const [nome, propriedade] of Object.entries(atual.properties)) {
+        visitar(propriedade);
+        if (!obrigatoriosOriginais.has(nome)) tornarSchemaAnulavel(propriedade);
+      }
+      atual.required = Object.keys(atual.properties);
+      atual.additionalProperties = false;
+    }
+    if (atual.items) visitar(atual.items);
+    for (const combinador of ['anyOf', 'oneOf', 'allOf']) {
+      (atual[combinador] || []).forEach(visitar);
+    }
+  }
+
+  visitar(copia);
+  return copia;
+}
+
 module.exports = {
   aceitaNulo,
   flexibilizarCamposNulos,
   flexibilizarEnumsNulos,
   flexibilizarTiposPrimitivos,
   removerNulosDoSchema,
+  normalizarSchemaEstritoOpenAI,
   normalizarArgumentosPeloSchema
 };

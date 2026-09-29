@@ -33,6 +33,22 @@ npm run nexus:hub
 O Hub usa `NEXUS_AUTHZ_MODE=enforce` na execucao das conversas mesmo que o CLI
 continue configurado em `audit`.
 
+## Modos por mensagem
+
+O menu `+` oferece `Automatico`, `Conhecimento geral`, `Consultar dados`,
+`Verificar documentacao`, `Pesquisar na web` e, quando habilitado, `Criar
+imagem`. O modo escolhido vale somente para a mensagem enviada e volta para
+`Automatico` em seguida. Uma nova tentativa reutiliza o modo e os anexos da
+tentativa original, mas nao inclui a resposta descartada no contexto ativo.
+
+O mesmo compositor recebe imagens, PDF, DOCX, XLS e XLSX. O card do anexo mostra
+nome, formato, tamanho e estado do processamento. Respostas podem entregar
+arquivos gerados, a fonte publicada de um documento ou projetos de imagem. Todos
+os downloads e previews voltam a validar conversa, usuario, setor e permissao.
+
+Consulte [ESTADO_ATUAL.md](ESTADO_ATUAL.md) para a matriz completa de
+capacidades e limitacoes.
+
 ## Railway
 
 Crie um ambiente de piloto separado com tres servicos apontando para o mesmo
@@ -59,18 +75,21 @@ Configure o cron do Worker como `15 * * * *`. O processo decide pelo fuso
 entre 08:00 e 22:00, ou encerrar sem processar. A API nao possui agendador
 embutido. Uma trava PostgreSQL impede duas atualizacoes simultaneas.
 
-Neste primeiro sprint, mantenha o Worker desativado e o lake local como fonte
-oficial. O Volume da API continua reservado aos anexos, Knowledge, datasets e
-artefatos; ele nao e substituido pelo Bucket. Os healthchecks sao:
+Antes do primeiro corte, mantenha o Worker desativado e o lake local como fonte
+oficial. Depois que migracao, validacao e execucoes manuais forem concluidas, o
+ambiente pode usar `NEXUS_LAKE_REQUIRE_DATA=1` e
+`NEXUS_LAKE_WORKER_ENABLED=1`. O Volume da API continua reservado aos anexos,
+Knowledge, datasets e artefatos; ele nao e substituido pelo Bucket. Os
+healthchecks sao:
 
 ```text
 GET /health/live
 GET /health/ready
 ```
 
-O frontend expõe `GET /health`. Configure esse caminho como healthcheck do
+O frontend expoe `GET /health`. Configure esse caminho como healthcheck do
 serviço público. Consulte [PRODUCAO_RAILWAY.md](PRODUCAO_RAILWAY.md) para as
-variáveis S3, o smoke test e o corte planejado para o Sprint Produção 2.
+variaveis S3, o smoke test e o procedimento de corte.
 
 ## Lake portatil
 

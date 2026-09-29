@@ -405,7 +405,16 @@ function criarProviderRoteador(dependencias = {}) {
     nome: dependencias.routerProviderNome || process.env.NEXUS_ROUTER_PROVIDER ||
       dependencias.providerNome || process.env.LLM_PROVIDER,
     modelo: dependencias.routerModelo || process.env.NEXUS_ROUTER_MODEL,
+    reasoningEffort: dependencias.routerReasoningEffort ||
+      process.env.NEXUS_ROUTER_REASONING_EFFORT || 'low',
+    fallbackNome: dependencias.routerFallbackProviderNome ||
+      process.env.NEXUS_ROUTER_FALLBACK_PROVIDER || undefined,
+    modeloFallback: dependencias.routerFallbackModelo ||
+      process.env.NEXUS_ROUTER_FALLBACK_MODEL || undefined,
+    reasoningEffortFallback: dependencias.routerFallbackReasoningEffort ||
+      process.env.NEXUS_ROUTER_FALLBACK_REASONING_EFFORT || undefined,
     cliente: dependencias.clienteRoteador,
+    clienteFallback: dependencias.clienteFallbackRoteador,
     semFallback: dependencias.semFallbackRoteador ?? false,
     timeoutMs: dependencias.timeoutMs
   });
@@ -420,6 +429,20 @@ function criarProviderRoteador(dependencias = {}) {
     );
     erro.codigo = 'PROVIDER_DATA_POLICY_DENIED';
     throw erro;
+  }
+  if (provider.fallback) {
+    const politicaFallback = validarProviderParaDados(
+      provider.fallback.nome,
+      'dados_corporativos',
+      dependencias
+    );
+    if (!politicaFallback.permitido) {
+      const erro = new Error(
+        `Provider de fallback ${provider.fallback.nome} bloqueado para roteamento corporativo: ${politicaFallback.motivo}.`
+      );
+      erro.codigo = 'PROVIDER_DATA_POLICY_DENIED';
+      throw erro;
+    }
   }
   return provider;
 }

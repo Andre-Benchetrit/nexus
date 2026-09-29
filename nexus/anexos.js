@@ -265,13 +265,34 @@ function criarServicoAnexos({ pool, storage, principalId, departmentId = null,
 
   async function abrir(conversationId, attachmentId) {
     const item = await obter(conversationId, attachmentId);
-    const [buffer, derivadoBuffer] = await Promise.all([
-      item.storage_key ? storage.abrir(item.storage_key)
-        : inteligencia?.abrirFonte?.(conversationId, attachmentId),
-      item.derived_storage_key ? storage.abrir(item.derived_storage_key) : Promise.resolve(null)
-    ]);
+    const chaveDerivadaOriginal = item.derived_storage_key;
+    let fonteLegadaAusente = false;
+    let derivadoLegadoAusente = false;
+    let buffer = null;
+    let derivadoBuffer = null;
+
+    if (item.storage_key) {
+      try { buffer = await storage.abrir(item.storage_key); }
+      catch (erro) {
+        if (!arquivoFisicoAusente(erro)) throw erro;
+        fonteLegadaAusente = true;
+      }
+    }
+    if (!Buffer.isBuffer(buffer) && inteligencia?.abrirFonte && item.asset_id) {
+      try { buffer = await inteligencia.abrirFonte(conversationId, attachmentId); }
+      catch (erro) { if (!arquivoFisicoAusente(erro)) throw erro; }
+    }
     if (!Buffer.isBuffer(buffer)) {
-      throw new ErroAnexo('FONTE_NAO_DISPONIVEL', 'A fonte validada do anexo está indisponível.', 500);
+      throw new ErroAnexo('FONTE_NAO_DISPONIVEL',
+        'O arquivo deste anexo não está mais disponível. Remova-o e envie o arquivo novamente.', 409);
+    }
+
+    if (item.derived_storage_key) {
+      try { derivadoBuffer = await storage.abrir(item.derived_storage_key); }
+      catch (erro) {
+        if (!arquivoFisicoAusente(erro)) throw erro;
+        derivadoLegadoAusente = true;
+      }
     }
     let extraido = null;
     if (derivadoBuffer) {
@@ -281,10 +302,68 @@ function criarServicoAnexos({ pool, storage, principalId, departmentId = null,
           : JSON.parse(derivadoBuffer.toString('utf8'));
       } catch (_) { throw new ErroAnexo('DERIVADO_INVALIDO', 'O conteúdo extraído do arquivo está indisponível.', 500); }
     } else if (inteligencia && item.asset_id) {
-      const representacao = await inteligencia.carregarRepresentacao(conversationId, attachmentId);
-      extraido = representacao.ir?.content || representacao.ir;
+      try {
+        const representacao = await inteligencia.carregarRepresentacao(conversationId, attachmentId);
+        extraido = representacao.ir?.content || representacao.ir;
+      } catch (erro) {
+        if (!arquivoFisicoAusente(erro)) throw erro;
+      }
+    }
+    if (!extraido) {
+      status('extraindo_conteudo', { attachmentId, recovery: true });
+      extraido = await reconstruirExtraido(item, buffer);
+      await persistirDerivadoRecuperado(item, extraido).catch(() => null);
+    }
+    if (fonteLegadaAusente || derivadoLegadoAusente) {
+      await limparReferenciasFisicasAusentes(item, {
+        fonte: fonteLegadaAusente,
+        derivado: derivadoLegadoAusente && item.derived_storage_key === chaveDerivadaOriginal
+      }).catch(() => null);
     }
     return { item, buffer, extraido };
+  }
+
+  function arquivoFisicoAusente(erro) {
+    return erro?.code === 'ENOENT' || erro?.codigo === 'ARQUIVO_NAO_ENCONTRADO';
+  }
+
+  async function reconstruirExtraido(item, buffer) {
+    if (item.kind === 'image') {
+      const local = await processarImagemLocal(buffer);
+      return {
+        tipo: 'image', format: item.format,
+        width: item.width || null, height: item.height || null,
+        texto: local?.texto || '', confiancaOcr: local?.confiancaOcr ?? null,
+        ocrFalhou: local?.ocrFalhou === true, codigos: local?.codigos || []
+      };
+    }
+    const processado = await processarArquivo({
+      buffer, fileName: item.file_name, mediaType: item.media_type
+    });
+    await completarVisuaisCanonicos(processado);
+    return processado.extraido;
+  }
+
+  async function persistirDerivadoRecuperado(item, extraido) {
+    const pacote = await compactarJson(extraido);
+    const derivado = await salvarFisico({ buffer: pacote.buffer, extensao: 'json' });
+    await pool.query(`UPDATE nexus.conversation_attachments
+      SET derived_storage_key=$2,atualizado_em=now()
+      WHERE id=$1 AND principal_id=$3`, [item.id, derivado.chave, principalId]);
+    item.derived_storage_key = derivado.chave;
+  }
+
+  async function limparReferenciasFisicasAusentes(item, ausentes) {
+    if (ausentes.fonte) {
+      await pool.query(`UPDATE nexus.conversation_attachments SET storage_key=NULL,atualizado_em=now()
+        WHERE id=$1 AND principal_id=$2`, [item.id, principalId]);
+      item.storage_key = null;
+    }
+    if (ausentes.derivado) {
+      await pool.query(`UPDATE nexus.conversation_attachments SET derived_storage_key=NULL,atualizado_em=now()
+        WHERE id=$1 AND principal_id=$2`, [item.id, principalId]);
+      item.derived_storage_key = null;
+    }
   }
 
   async function obterStatus(conversationId, attachmentId) {

@@ -384,11 +384,17 @@ function criarServicoHub(opcoes = {}) {
         ) ORDER BY a.criado_em,a.id) FROM nexus.conversation_attachments a
           WHERE a.turn_id=m.turn_id AND a.status='ready'), '[]'::jsonb) ELSE '[]'::jsonb END AS attachments,
         CASE WHEN m.papel='assistant' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object(
-          'id',ar.id,'format',ar.format,'mediaType',ar.media_type,'name',ar.file_name,
-          'title',ar.title,'bytes',ar.bytes,'classification',ar.classification,
-          'url','/api/nexus/conversations/' || ar.conversation_id || '/artifacts/' || ar.id
-        ) ORDER BY ar.criado_em,ar.id) FROM nexus.conversation_artifacts ar
-          WHERE ar.turn_id=m.turn_id AND ar.status='ready'), '[]'::jsonb) ELSE '[]'::jsonb END AS artifacts
+           'id',ar.id,'format',ar.format,'mediaType',ar.media_type,'name',ar.file_name,
+           'title',ar.title,'bytes',ar.bytes,'classification',ar.classification,
+           'kind',ar.artifact_kind,'parentArtifactId',ar.parent_artifact_id,
+           'version',ar.version_number,'brandMode',ip.brand_mode,
+           'draft',COALESCE((ar.safe_metadata->>'draft')::boolean,false),
+           'validation',ar.safe_metadata->'validation',
+           'previewUrl',CASE WHEN ar.artifact_kind='image' THEN '/api/nexus/conversations/' || ar.conversation_id || '/artifacts/' || ar.id || '?disposition=inline' ELSE NULL END,
+           'url','/api/nexus/conversations/' || ar.conversation_id || '/artifacts/' || ar.id
+         ) ORDER BY ar.criado_em,ar.id) FROM nexus.conversation_artifacts ar
+           LEFT JOIN nexus.conversation_image_projects ip ON ip.artifact_id=ar.id
+           WHERE ar.turn_id=m.turn_id AND ar.status='ready'), '[]'::jsonb) ELSE '[]'::jsonb END AS artifacts
       FROM nexus.conversation_messages m
       LEFT JOIN nexus.ai_turns t ON t.id=m.turn_id
       WHERE m.conversation_id=$1 AND ($2::timestamptz IS NULL OR m.criado_em<$2)
@@ -435,7 +441,7 @@ function criarServicoHub(opcoes = {}) {
       ), original AS (
         SELECT m.* FROM nexus.conversation_messages m JOIN escolhida e ON m.id=e.raiz
       )
-      SELECT original.id AS root_message_id,u.id AS user_message_id,u.conteudo,u.turn_id,
+      SELECT original.id AS root_message_id,u.id AS user_message_id,u.conteudo,u.turn_id,u.metadata,
         COALESCE((SELECT ae.metadados->>'source_mode' FROM nexus.audit_events ae
           WHERE ae.turn_id=original.turn_id AND ae.tipo='source_policy_decision'
           ORDER BY ae.criado_em DESC,ae.id DESC LIMIT 1),'automatico') AS source_mode
@@ -447,7 +453,9 @@ function criarServicoHub(opcoes = {}) {
       ORDER BY criado_em,id`, [conversationId, ator.principalId, resposta.turn_id])).rows.map((item) => item.id);
     return { message: resposta.conteudo, sourceMode: resposta.source_mode,
       rootMessageId: resposta.root_message_id, userMessageId: resposta.user_message_id,
-      originalTurnId: resposta.turn_id, attachmentIds };
+      originalTurnId: resposta.turn_id, attachmentIds,
+      imageContext: resposta.metadata?.imageContext || null,
+      imageOutputFormat: resposta.metadata?.imageOutputFormat || 'png' };
   }
 
   async function selecionarVariante(conversationId, messageId) {

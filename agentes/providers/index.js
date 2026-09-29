@@ -24,7 +24,8 @@ function criarProvider(opcoes = {}) {
   const primario = criarProviderBase(nome, opcoes);
   if (opcoes.semFallback) return primario;
 
-  const fallbackAutomatico = process.env.GROQ_API_KEY && nome !== 'groq' ? 'groq' : null;
+  const fallbackAutomatico = process.env.OPENAI_API_KEY && nome !== 'openai' ? 'openai'
+    : process.env.GROQ_API_KEY && nome !== 'groq' ? 'groq' : null;
   const nomeFallback = (
     opcoes.fallbackNome || process.env.LLM_FALLBACK_PROVIDER || fallbackAutomatico || ''
   ).toLowerCase();
@@ -39,7 +40,8 @@ function criarProvider(opcoes = {}) {
   const fallback = criarProviderBase(nomeFallback, {
     modelo: opcoes.modeloFallback,
     cliente: opcoes.clienteFallback,
-    timeoutMs: opcoes.timeoutMs
+    timeoutMs: opcoes.timeoutMs,
+    reasoningEffort: opcoes.reasoningEffortFallback || opcoes.reasoningEffort
   });
 
   return criarProviderResiliente(primario, fallback, {

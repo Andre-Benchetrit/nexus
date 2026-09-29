@@ -37,6 +37,7 @@ O PostgreSQL operacional não substitui o lake nem os bancos de origem. Ele guar
 - Processa imagens localmente para OCR, QR, códigos de barras e metadados seguros; visão externa é opcional e governada.
 - Converte PDF, DOCX, XLS, XLSX e imagens em uma representação canônica privada, reutiliza parsing/OCR por hash dentro do mesmo usuário e analisa a pergunta antes de decidir a rota.
 - Gera XLSX, DOCX e PDF privados no chat, com identidade visual configurável por implantação e linhagem para anexos e resultados corporativos usados.
+- Gera e edita imagens conversacionalmente em projetos versionados, com logo, textos e formas em camadas opcionais; esta capability permanece beta até o corte da Sprint 11 em produção.
 - Consulta procedimentos, políticas e manuais versionados, sempre limitados ao setor ativo e com citação de documento, versão e página.
 - Audita chamadas de IA, tokens, custos, tools, autorização, fallback e proveniência sem gravar prompts, SQL, credenciais ou resultados técnicos brutos.
 
@@ -112,7 +113,7 @@ npm run nexus:hub
 
 O Hub local abre em `http://localhost:3000`.
 
-Em cada mensagem, o usuário pode manter **Automático** ou escolher diretamente **Conhecimento geral**, **Consultar dados**, **Verificar documentação** ou **Pesquisar na web**. **Conhecimento geral** não consulta Sysemp, web nem documentação opcional, mas continua aplicando validações obrigatórias de políticas. A escolha vale por um turno; depois do envio o compositor volta para **Automático**. Permissões e guardas contra vazamento continuam sendo aplicadas pelo servidor.
+Em cada mensagem, o usuário pode manter **Automático** ou escolher diretamente **Conhecimento geral**, **Consultar dados**, **Verificar documentação**, **Pesquisar na web** ou **Criar imagem**. **Conhecimento geral** não consulta Sysemp, web nem documentação opcional, mas continua aplicando validações obrigatórias de políticas. A escolha vale por um turno; depois do envio o compositor volta para **Automático**. Permissões e guardas contra vazamento continuam sendo aplicadas pelo servidor.
 
 ## Configurações importantes
 
@@ -125,7 +126,8 @@ As variáveis completas e seus valores de exemplo ficam em [.env.example](.env.e
 | Generalista | `NEXUS_ASSISTANT_MODE`, `NEXUS_GENERALIST_PROVIDER`, `NEXUS_GENERALIST_MODEL` |
 | Fallback e aprendizado | `NEXUS_HANDOFF_MODE`, `NEXUS_MEMORY_AUTOMATION_MODE`, `NEXUS_PLAYBOOK_MODE` |
 | Pesquisa web | `NEXUS_WEB_MODE`, `NEXUS_WEB_PROVIDER`, `TAVILY_API_KEY` |
-| Imagens | `NEXUS_IMAGE_MODE`, `NEXUS_ATTACHMENTS_ROOT`, `NEXUS_VISION_PROVIDER`, `NEXUS_VISION_MODEL` |
+| Imagens recebidas | `NEXUS_IMAGE_MODE`, `NEXUS_ATTACHMENTS_ROOT`, `NEXUS_VISION_PROVIDER`, `NEXUS_VISION_MODEL` |
+| Imagens geradas | `NEXUS_IMAGE_GENERATION_MODE`, `NEXUS_IMAGE_GENERATION_PROVIDER`, `NEXUS_IMAGE_GENERATION_MODEL`, `NEXUS_IMAGE_EDIT_MODEL`, `NEXUS_BRAND_PROFILE_JSON`, `NEXUS_BRAND_LOGO` |
 | Arquivos, conjuntos e artefatos | `NEXUS_FILES_MODE`, `NEXUS_FILES_ROOT`, `NEXUS_ATTACHMENT_INTELLIGENCE_MODE`, `NEXUS_ATTACHMENT_EVIDENCE_MAX_BYTES`, `NEXUS_DATASETS_MODE`, `NEXUS_DATASETS_ROOT`, `NEXUS_ARTIFACTS_MODE`, `NEXUS_ARTIFACTS_ROOT`, `NEXUS_ARTIFACT_BRAND_JSON` |
 | Base de conhecimento | `NEXUS_KNOWLEDGE_MODE`, `NEXUS_KNOWLEDGE_ROOT`, `NEXUS_KNOWLEDGE_EMBEDDING_MODE`, `NEXUS_KNOWLEDGE_VISION_MODEL` |
 | Hub | `AUTH_SECRET`, `NEXUS_HUB_*`, `NEXUS_API_INTERNAL_URL` |
@@ -178,6 +180,7 @@ npm test
 
 ## Documentação
 
+- [Estado atual e capacidades do produto](docs/ESTADO_ATUAL.md)
 - [Arquitetura](docs/ARQUITETURA.md)
 - [Comandos completos](docs/COMANDOS.md)
 - [Hub, Microsoft Entra e Railway](docs/HUB.md)

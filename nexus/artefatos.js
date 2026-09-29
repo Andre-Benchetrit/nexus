@@ -143,11 +143,23 @@ function criarServicoArtefatos({ pool, storage, principalId, departmentId = null
   }
   async function excluir(conversationId, artifactId) {
     const item = await obter(conversationId, artifactId);
-    try { await storage.excluir(item.storage_key); await pool.query('DELETE FROM nexus.conversation_artifacts WHERE id=$1', [item.id]); return { deleted: true }; }
+    const projeto = item.artifact_kind === 'image' ? (await pool.query(
+      'SELECT base_storage_key FROM nexus.conversation_image_projects WHERE artifact_id=$1', [item.id]
+    )).rows[0] : null;
+    try {
+      await storage.excluir(item.storage_key);
+      if (projeto?.base_storage_key) await storage.excluir(projeto.base_storage_key);
+      await pool.query('DELETE FROM nexus.conversation_artifacts WHERE id=$1', [item.id]);
+      return { deleted: true };
+    }
     catch (erro) {
       const codigo = erro.code || erro.name || 'STORAGE_DELETE_ERROR';
       await pool.query(`UPDATE nexus.conversation_artifacts SET status='deleting',error_code=$2,atualizado_em=now() WHERE id=$1`, [item.id, codigo]);
       await pool.query('INSERT INTO nexus.artifact_cleanup_jobs(storage_key,last_error_code) VALUES ($1,$2)', [item.storage_key, codigo]);
+      if (projeto?.base_storage_key) await pool.query(
+        'INSERT INTO nexus.artifact_cleanup_jobs(storage_key,last_error_code) VALUES ($1,$2)',
+        [projeto.base_storage_key, codigo]
+      );
       throw new ErroArtefatoServico('ARTEFATO_EXCLUSAO_PENDENTE', 'O arquivo foi marcado para exclusão.', 503);
     }
   }
@@ -160,7 +172,10 @@ function criarServicoArtefatos({ pool, storage, principalId, departmentId = null
   async function chavesDaConversa(conversationId) {
     await conversaAutorizada(conversationId);
     return (await pool.query(`SELECT storage_key FROM nexus.conversation_artifacts
-      WHERE conversation_id=$1 AND principal_id=$2`, [conversationId, principalId])).rows.map((x) => x.storage_key);
+        WHERE conversation_id=$1 AND principal_id=$2
+      UNION
+      SELECT ip.base_storage_key AS storage_key FROM nexus.conversation_image_projects ip
+        WHERE ip.conversation_id=$1 AND ip.principal_id=$2`, [conversationId, principalId])).rows.map((x) => x.storage_key);
   }
   async function excluirChaves(chaves = []) {
     for (const chave of chaves) {

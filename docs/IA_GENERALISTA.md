@@ -12,15 +12,19 @@ usuario -> generalista -> resposta direta
 
 ## Ativacao
 
-O modo corporativo continua sendo o padrao durante a implantacao. Para testar:
+O Hub completo usa `NEXUS_ASSISTANT_MODE=generalist`; o modo `corporate` continua
+disponivel para diagnostico direto do consultor. Para testar pelo CLI:
 
 ```powershell
 npm run agente:nexus -- --assistant-mode generalist --sessao teste "Ola, quem e voce?"
 ```
 
-Configure `NEXUS_GENERALIST_PROVIDER`, `NEXUS_GENERALIST_MODEL` e a chave do
-provider. Anthropic nao possui modelo implicito: o ID exato deve ser informado.
-O provider e o modelo do roteador continuam independentes.
+Configure `NEXUS_GENERALIST_PROVIDER`, `NEXUS_GENERALIST_MODEL`,
+`NEXUS_GENERALIST_REASONING_EFFORT` e a chave do provider. O fallback usa
+`NEXUS_GENERALIST_FALLBACK_PROVIDER` e `NEXUS_GENERALIST_FALLBACK_MODEL`.
+Anthropic nao possui modelo implicito: o ID exato deve ser informado. O provider,
+modelo e esforco do roteador continuam independentes por meio de
+`NEXUS_ROUTER_*`.
 
 ## Fontes e capabilities
 
@@ -31,7 +35,8 @@ mutaveis. Ela nao escolhe tools. Respostas retornam `conhecimento_geral` ou
 `ia.conversar`, `ia.nexus.consultar` e `ia.memoria.revisar` formam a base. Web e
 imagens sao habilitadas somente pelos modos e permissoes descritos em
 [WEB_E_IMAGENS.md](WEB_E_IMAGENS.md). Atualizar um SDK nunca libera servicos do
-provider automaticamente. Geracao de imagens e planilhas continuam desativadas.
+provider automaticamente. Geracao de arquivos e imagens depende de suas
+capabilities, permissoes e modos proprios; habilitar o generalista nao as libera.
 
 ## Auditoria e custo
 
@@ -82,6 +87,8 @@ Complexidade de negocio nao usa o fallback tecnico como atalho. O Nexus
 classifica a consulta em faixa basica, assistida ou avancada e pode promover a
 sintese sem repetir tools. Consulte [ESCALONAMENTO_SEMANTICO.md](ESCALONAMENTO_SEMANTICO.md).
 
-O Gemini 3.5 Flash-Lite esta preparado, mas permanece bloqueado por padrao com
-`NEXUS_GEMINI_USAGE_MODE=disabled`. A composicao ativa inicial usa Groq nas
-consultas basicas e Claude nas faixas superiores.
+O Gemini permanece preparado, mas bloqueado por padrao com
+`NEXUS_GEMINI_USAGE_MODE=disabled`. A configuracao recomendada para o Hub usa
+OpenAI Luna no generalista e no roteador, com `medium` e `low` respectivamente,
+e Anthropic como fallback tecnico. As faixas semanticas continuam independentes
+e devem ser calibradas por avaliacao, latencia e custo observados.

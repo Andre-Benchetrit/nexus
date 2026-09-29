@@ -71,8 +71,16 @@ const CAPACIDADES_GENERALISTAS = Object.freeze({
     unidadesFaturaveis: ['artifacts', 'artifact_bytes']
   }),
   'ia.imagem.gerar': capacidade({
+    habilitada: String(process.env.NEXUS_IMAGE_GENERATION_MODE || 'off').toLowerCase() === 'v1',
     executor: 'nexus_local', permissao: 'ia.imagem.gerar', modalidades: ['texto', 'imagem'],
+    efeito: 'escrita', idempotencia: false, politicaReutilizacao: 'nunca',
     unidadesFaturaveis: ['image_generation_requests']
+  }),
+  'ia.imagem.editar': capacidade({
+    habilitada: String(process.env.NEXUS_IMAGE_GENERATION_MODE || 'off').toLowerCase() === 'v1',
+    executor: 'nexus_local', permissao: 'ia.imagem.editar', modalidades: ['texto', 'imagem'],
+    efeito: 'escrita', idempotencia: false, politicaReutilizacao: 'nunca',
+    unidadesFaturaveis: ['image_edit_requests']
   }),
   'ia.planilha.criar': capacidade({
     habilitada: String(process.env.NEXUS_ARTIFACTS_MODE || 'off').toLowerCase() === 'v1',

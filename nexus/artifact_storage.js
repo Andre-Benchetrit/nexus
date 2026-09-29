@@ -9,7 +9,7 @@ function raizArtefatos(valor = process.env.NEXUS_ARTIFACTS_ROOT) {
 
 function chaveSegura(chave) {
   const valor = String(chave || '');
-  if (!/^[a-f0-9-]{36}\.(?:xlsx|docx|pdf)$/i.test(valor)) throw new Error('Chave de artefato inválida.');
+  if (!/^[a-f0-9-]{36}\.(?:xlsx|docx|pdf|png|jpe?g|webp)$/i.test(valor)) throw new Error('Chave de artefato inválida.');
   return valor;
 }
 
@@ -19,7 +19,7 @@ function criarArtifactStorage(opcoes = {}) {
   async function garantirRaiz() { await fs.mkdir(raiz, { recursive: true }); }
   async function salvar({ buffer, extensao }) {
     const ext = String(extensao || '').replace(/^\./, '').toLowerCase();
-    if (!['xlsx', 'docx', 'pdf'].includes(ext)) throw new Error('Formato de artefato inválido.');
+    if (!['xlsx', 'docx', 'pdf', 'png', 'jpeg', 'jpg', 'webp'].includes(ext)) throw new Error('Formato de artefato inválido.');
     await garantirRaiz();
     const chave = `${randomUUID()}.${ext}`;
     const destino = path.join(raiz, chave); const temporario = `${destino}.${randomUUID()}.tmp`;
@@ -29,7 +29,7 @@ function criarArtifactStorage(opcoes = {}) {
   }
   async function salvarArquivo({ caminho, extensao }) {
     const ext = String(extensao || '').replace(/^\./, '').toLowerCase();
-    if (!['xlsx', 'docx', 'pdf'].includes(ext)) throw new Error('Formato de artefato inválido.');
+    if (!['xlsx', 'docx', 'pdf', 'png', 'jpeg', 'jpg', 'webp'].includes(ext)) throw new Error('Formato de artefato inválido.');
     await garantirRaiz();
     const chave = `${randomUUID()}.${ext}`;
     const destino = path.join(raiz, chave); const temporario = `${destino}.${randomUUID()}.tmp`;

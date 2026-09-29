@@ -1,7 +1,9 @@
 # Produção do Nexus no Railway
 
-Este guia prepara a fundação de produção. O lake local continua oficial até a
-migração do Sprint Produção 2.
+Este guia descreve a topologia atual e o procedimento seguro de implantacao. O
+lake local continua como rollback; o corte para S3 so deve ser considerado
+concluido no ambiente quando migracao, validacao e execucoes manuais tiverem
+passado.
 
 ## Topologia mínima
 
@@ -45,12 +47,15 @@ NEXUS_LAKE_WORKER_ENABLED=0
 Confirme na aba de credenciais do Bucket se a instância exige `virtual` ou
 `path`. Não copie os valores das credenciais para o repositório.
 
-Enquanto o Sprint 2 não for concluído:
+Antes do corte de um ambiente:
 
 - mantenha `NEXUS_LAKE_WORKER_ENABLED=0`;
 - mantenha `NEXUS_LAKE_REQUIRE_DATA=0`;
 - não exclua nem altere o lake local;
-- não execute `npm run lake:atualizar` no Railway.
+- nao execute `npm run lake:atualizar` dentro da API.
+
+Depois do corte validado, configure `NEXUS_LAKE_REQUIRE_DATA=1` e
+`NEXUS_LAKE_WORKER_ENABLED=1` somente no Worker. A API continua sem scheduler.
 
 ## Segredos e dados locais
 
@@ -84,7 +89,7 @@ grava dados corporativos.
 
 ## Migração do lake e corte de produção
 
-O Sprint 2 usa dry-run por padrão e mantém o lake local intacto:
+O migrador usa dry-run por padrao e mantem o lake local intacto:
 
 ```bash
 npm run lake:migrate -- --from ./lake
@@ -110,6 +115,50 @@ npm run lake:worker -- --run intraday
 Somente após as duas execuções manuais terminarem com sucesso, configure
 `NEXUS_LAKE_REQUIRE_DATA=1`, `NEXUS_LAKE_WORKER_ENABLED=1` e habilite o cron.
 
+## Volume persistente da API
+
+Monte o Volume no mesmo caminho em todos os deploys da API, por exemplo
+`/data/nexus-runtime`, e mantenha as raizes de arquivos abaixo dele. Um banco
+persistente com um volume efemero cria registros que apontam para arquivos
+inexistentes depois do redeploy.
+
+Exemplo:
+
+```env
+NEXUS_FILES_ROOT=/data/nexus-runtime/files
+NEXUS_KNOWLEDGE_ROOT=/data/nexus-runtime/knowledge
+NEXUS_DATASETS_ROOT=/data/nexus-runtime/datasets
+NEXUS_ARTIFACTS_ROOT=/data/nexus-runtime/artifacts
+```
+
+Nao monte o Volume apenas no Hub. O servico que abre e grava esses arquivos e o
+`nexus-api`. Enquanto esse armazenamento for filesystem, mantenha uma unica
+replica da API; replicas com discos independentes nao compartilham anexos.
+
+A leitura de anexos possui recuperacao por IR canonico e pode reconstruir um
+derivado ausente quando a fonte ainda existe. Se fonte e copia canonica tiverem
+sido perdidas, o usuario recebe orientacao para reenviar o arquivo; codigo nao
+consegue recriar bytes que desapareceram do volume.
+
+## Geracao de imagens
+
+Para liberar a Sprint 11, aplique a migration 021 e configure no servico API:
+
+```env
+OPENAI_API_KEY=...
+NEXUS_IMAGE_GENERATION_MODE=shadow
+NEXUS_IMAGE_GENERATION_PROVIDER=openai
+NEXUS_IMAGE_GENERATION_MODEL=...
+NEXUS_IMAGE_EDIT_MODEL=...
+NEXUS_IMAGE_REQUEST_TIMEOUT_MS=120000
+NEXUS_BRAND_PROFILE_JSON=...
+NEXUS_BRAND_LOGO=/data/nexus-runtime/brand/logo.png
+```
+
+Valide primeiro em `shadow`; somente depois altere para `v1`. A logo deve estar
+no Volume da API e nunca deve ser embutida no repositorio ou inventada pelo
+modelo.
+
 ## Limpeza dos chats de pré-produção
 
 Crie um backup verificado do PostgreSQL antes de executar:
@@ -129,7 +178,7 @@ Valide também:
 - `/health/ready` na API;
 - `GET /v1/admin/lake` por um administrador;
 - ausência de chaves, URLs de banco ou segredos nos logs;
-- Worker desativado até o corte do Sprint 2.
+- Worker desativado ate o corte validado do ambiente.
 
 ## Watermarks atuais
 
@@ -140,5 +189,5 @@ npm run lake:state:import -- --from "C:\caminho\lake\_controle\estado.json"
 npm run lake:state:import -- --from "C:\caminho\lake\_controle\estado.json" --apply
 ```
 
-A execução com `--apply` será feita somente no Sprint 2, imediatamente antes do
-corte para o Bucket.
+A execucao com `--apply` deve ocorrer imediatamente antes do primeiro corte de
+cada ambiente para o Bucket.

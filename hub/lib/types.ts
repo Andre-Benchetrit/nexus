@@ -34,7 +34,8 @@ export type MessageVariant = {
 export type AttachmentStatus = "processing" | "ready" | "error" | "deleting";
 export type FileProcessingStage =
   "validando_arquivo" | "extraindo_conteudo" | "indexando_anexo" | "analisando_anexo" |
-  "comparando_anexos" | "recuperando_analise" | "interpretando_paginas";
+  "comparando_anexos" | "recuperando_analise" | "interpretando_paginas" |
+  "planejando_imagem" | "gerando_imagem" | "compondo_marca" | "validando_marca" | "salvando_imagem";
 export type Attachment = {
   id: string; mediaType: string; bytes: number; width?: number | null; height?: number | null;
   url: string; name?: string; previewUrl?: string; kind?: "image" | "document";
@@ -48,12 +49,20 @@ export type TurnStageEvent = {
   attachmentId?: string; attachment?: AttachmentStatusEvent;
   attachments?: AttachmentStatusEvent[];
 };
-export type Artifact = { id: string; format: "xlsx" | "docx" | "pdf"; mediaType: string;
-  name: string; title: string; bytes: number; classification?: string; url: string };
+export type Artifact = { id: string; format: "xlsx" | "docx" | "pdf" | "png" | "jpeg" | "webp";
+  mediaType: string; name: string; title: string; bytes: number; classification?: string; url: string;
+  kind?: "file" | "image"; previewUrl?: string | null; parentArtifactId?: string | null;
+  version?: number; brandMode?: "none" | "visual_identity" | "full_brand"; draft?: boolean;
+  validation?: { width?: number; height?: number; layers?: number; brandCompliant?: boolean;
+    hasLogo?: boolean; hasText?: boolean } };
 export type KnowledgeSource = { kind: "knowledge-source"; documentId: string; title: string;
   version: number; format?: string | null; size?: number | null; url: string };
 export type CompositionLevel = "baixo" | "medio" | "alto" | "extra_alto";
-export type SourceMode = "automatico" | "geral" | "dados" | "documentacao" | "web";
+export type SourceMode = "automatico" | "geral" | "dados" | "documentacao" | "web" | "imagem";
+export type ImageContext = { artifactId: string; action: "edit" | "variation"; compositionPatch?: {
+  logoAnchor?: string; logoWidthPercent?: number; logoMarginPercent?: number;
+}; hasLogo?: boolean };
+export type ImageOutputFormat = "png" | "jpeg" | "webp";
 export type MemoryOffer = { id: string; statement: string; expiresAt?: string };
 export type TurnRequest = {
   id: string; traceId: string; turnId?: string | null;

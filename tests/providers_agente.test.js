@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { definicaoConsultarBronze } = require('../tools/consultar_bronze');
 const { definicaoAgregarBronze } = require('../tools/agregar_bronze');
 const { definicaoAnalisarVendas } = require('../tools/analisar_vendas');
-const { criarProviderOpenAI } = require('../agentes/providers/openai');
+const { criarProviderOpenAI, converterToolParaOpenAI } = require('../agentes/providers/openai');
 const {
   criarProviderGemini,
   converterToolParaGemini
@@ -17,6 +17,31 @@ function definicaoMinima(name) {
     parameters: { type: 'object', properties: {}, required: [], additionalProperties: false }
   };
 }
+
+test('OpenAI normaliza recursivamente schemas strict sem alterar o contrato interno', () => {
+  const original = {
+    type: 'function', name: 'teste', strict: true, description: 'teste',
+    parameters: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        consulta: { type: 'string' },
+        documento_id: { type: 'string' },
+        opcoes: { type: 'object', properties: {
+          limite: { type: 'integer' }, detalhe: { type: 'string' }
+        }, required: ['limite'] }
+      },
+      required: ['consulta', 'opcoes']
+    }
+  };
+  const convertido = converterToolParaOpenAI(original);
+  assert.deepEqual(convertido.parameters.required.sort(), ['consulta', 'documento_id', 'opcoes']);
+  assert.deepEqual(convertido.parameters.properties.documento_id.type, ['string', 'null']);
+  assert.deepEqual(convertido.parameters.properties.opcoes.required.sort(), ['detalhe', 'limite']);
+  assert.deepEqual(convertido.parameters.properties.opcoes.properties.detalhe.type, ['string', 'null']);
+  assert.equal(convertido.parameters.properties.opcoes.additionalProperties, false);
+  assert.deepEqual(original.parameters.required, ['consulta', 'opcoes']);
+  assert.equal(original.parameters.properties.documento_id.type, 'string');
+});
 
 test('provider OpenAI executa a tool e devolve o resultado ao modelo', async () => {
   const requisicoes = [];
@@ -63,10 +88,32 @@ test('provider OpenAI executa a tool e devolve o resultado ao modelo', async () 
   assert.equal(resultado.provider, 'openai');
   assert.deepEqual(chamadasTool, [{ operacao: 'listar_entidades' }]);
   assert.equal(requisicoes[0].tool_choice, 'auto');
+  assert.equal(requisicoes[0].reasoning.effort, 'low');
   assert.equal(requisicoes[1].tool_choice, 'none');
   assert.ok(requisicoes[1].input.some((item) => (
     item.type === 'function_call_output' && item.call_id === 'call_1'
   )));
+});
+
+test('provider OpenAI aceita esforco de raciocinio especifico por funcao', async () => {
+  const requisicoes = [];
+  const cliente = { responses: { async create(requisicao) {
+    requisicoes.push(requisicao);
+    return { id: 'resp_medium', output_text: 'ok', output: [], status: 'completed' };
+  } } };
+  const provider = criarProviderOpenAI({
+    cliente, modelo: 'openai-teste', reasoningEffort: 'medium'
+  });
+
+  const resultado = await provider.executar({
+    pergunta: 'Explique de forma completa.', instrucoes: 'Responda.', tools: [], maxRodadas: 1
+  });
+
+  assert.equal(resultado.texto, 'ok');
+  assert.equal(provider.reasoningEffort, 'medium');
+  assert.equal(requisicoes[0].reasoning.effort, 'medium');
+  assert.throws(() => criarProviderOpenAI({ cliente, reasoningEffort: 'invalido' }),
+    /OPENAI_REASONING_EFFORT invalido/);
 });
 
 test('provider Gemini devolve a resposta da tool com o ID correto', async () => {

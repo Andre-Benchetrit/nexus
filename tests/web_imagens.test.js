@@ -15,7 +15,9 @@ const {
   classificarSensibilidade, precisaInterpretacaoVisual, processarImagemLocal, sanitizarImagem
 } = require('../agentes/image_processing');
 const { criarFileSystemAttachmentStorage } = require('../nexus/attachment_storage');
-const { executarAssistente, resolverModoFonte } = require('../agentes/assistente_nexus');
+const {
+  definicaoPesquisarWeb, executarAssistente, resolverModoFonte
+} = require('../agentes/assistente_nexus');
 
 function memoriaFalsa() { return { obterTarefaAtiva: async () => null, listarPreferencias: async () => [], sessao: 'web-imagem' }; }
 function governancaFalsa() {
@@ -23,6 +25,12 @@ function governancaFalsa() {
     async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000099' }; },
     async concluirTool() {} };
 }
+
+test('schema estrito da pesquisa web exige todas as propriedades declaradas', () => {
+  const propriedades = Object.keys(definicaoPesquisarWeb.parameters.properties).sort();
+  const obrigatorias = [...definicaoPesquisarWeb.parameters.required].sort();
+  assert.deepEqual(obrigatorias, propriedades);
+});
 
 test('politica web deterministica reconhece apenas pedido explicito ou continuacao', () => {
   assert.equal(precisaPesquisaWeb('Pesquise as novidades do PostgreSQL'), true);
@@ -68,6 +76,35 @@ test('plano de pesquisa aceita cobertura e fontes definidas pelo agente sem cata
   assert.deepEqual(plano.coverage, ['texto legal', 'interpretação do tribunal', 'limites de aplicação']);
   assert.deepEqual(plano.includeDomains, ['planalto.gov.br', 'www.tst.jus.br']);
   assert.equal(plano.minimumEvidenceSources, 2);
+});
+
+test('automatico sempre oferece geracao de imagem para decisao semantica do agente', async () => {
+  let ferramentas = [];
+  await executarAssistente('Gere um golden retriever filhote para mim, por favor.', {
+    memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(),
+    sourceMode: 'automatico', imageGenerationMode: 'v1',
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
+      ferramentas = tools.map((item) => item.definicao.name);
+      return { texto: 'Pedido interpretado.', provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.ok(ferramentas.includes('gerar_imagem'));
+});
+
+test('modo Consultar dados não recebe geracao de imagem por acidente', async () => {
+  let ferramentas = [];
+  await executarAssistente('Consulte o faturamento de hoje.', {
+    memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(),
+    sourceMode: 'dados', imageGenerationMode: 'v1',
+    executarAgenteCorporativo: async () => ({ texto: 'Consulta concluída.', roteamento: {
+      perfilInicial: 'vendas', perfilEfetivo: 'vendas', ferramentasExecutadas: [], respostaPronta: false
+    } }),
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
+      ferramentas = tools.map((item) => item.definicao.name);
+      return { texto: 'Consulta concluída.', provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.equal(ferramentas.includes('gerar_imagem'), false);
 });
 
 test('materializa marcadores de fonte e remove links que nao vieram da pesquisa', () => {

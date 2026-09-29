@@ -58,3 +58,37 @@ O texto de OCR e os codigos encontrados existem somente no turno. A auditoria
 guarda contagens, megapixels, duracao e erros sanitizados, nunca o conteudo
 extraido. A exclusao do chat tambem remove seus anexos; falhas de storage entram
 na fila `attachment_cleanup_jobs`.
+
+## Criacao e edicao de imagens
+
+Geracao visual e uma capability diferente da interpretacao de imagens recebidas.
+Ela usa `NEXUS_IMAGE_GENERATION_MODE=off|shadow|v1` e um provider proprio. Na
+implementacao atual, `openai` e o provider suportado e a chave e lida de
+`OPENAI_API_KEY`. O tempo limite das chamadas visuais e configurado separadamente
+por `NEXUS_IMAGE_REQUEST_TIMEOUT_MS` (recomendado: `120000`), pois geracao e
+edicao de imagens normalmente demoram mais que respostas textuais.
+
+O resultado nao e apenas um bitmap solto. Cada versao possui uma imagem-base e
+uma composicao persistida com camadas opcionais de logo, texto e formas. Isso
+permite pedidos como "remova a logo", "mova para a esquerda" ou "troque este
+texto" sem regenerar o fundo quando a alteracao afeta somente uma camada.
+
+Os modos de marca sao:
+
+- `none`: sem logo e sem identidade corporativa obrigatoria;
+- `visual_identity`: estilo, cores e tipografia da implantacao, sem exigir logo;
+- `full_brand`: perfil visual com a logo oficial como camada.
+
+Imagens sem logo sao resultados validos. `NEXUS_BRAND_PROFILE_JSON` descreve o
+perfil da implantacao e `NEXUS_BRAND_LOGO` aponta para a logo aprovada. Os nomes
+`NEXUS_ARTIFACT_BRAND_JSON` e `NEXUS_ARTIFACT_BRAND_LOGO` continuam como fallback
+de compatibilidade.
+
+Toda criacao fica privada na conversa, recebe versao, preview autenticado,
+download e classificacao. A saida e marcada como rascunho e nao e publicada
+automaticamente. A Sprint 11 deve permanecer em `shadow` ou `off` em producao
+ate a migration `021_image_generation.sql`, a configuracao do provider e o
+smoke test terminarem com sucesso.
+
+O canvas de arrastar/redimensionar ainda e futuro. A estrutura proporcional das
+camadas ja foi preparada para esse editor.

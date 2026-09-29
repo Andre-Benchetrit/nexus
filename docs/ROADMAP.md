@@ -1,46 +1,47 @@
 # Roadmap do Nexus
 
-Este documento registra decisoes futuras para evitar que capacidades diferentes
-sejam antecipadas dentro da arquitetura do lake.
+O estado implementado esta em [ESTADO_ATUAL.md](ESTADO_ATUAL.md). Este arquivo
+registra somente os proximos marcos; pesquisa web, leitura de anexos e geracao de
+XLSX, DOCX e PDF ja nao sao itens futuros.
 
-## Agora: inteligencia sobre dados internos
+## Curto prazo
 
-Enquanto o foco for consultar Bronze, Silver e Gold, o Nexus deve manter o loop
-de agente proprio e os providers intercambiaveis. As tools de negocio continuam
-pequenas, somente leitura e validadas por contrato.
+- concluir rollout e smoke tests da geracao conversacional de imagens;
+- estabilizar armazenamento persistente de anexos e artefatos em producao;
+- medir custo, latencia, qualidade e uso por capability;
+- ampliar testes de recuperacao de volume, retry e continuidade de contexto;
+- revisar qualidade do roteamento automatico com traces reais, sem transformar
+  intencoes em listas rigidas de palavras-chave.
 
-Claude pode entrar nessa fase como mais um provider pela Messages API, usando as
-mesmas tools de Gemini, Groq e OpenAI. Nao e necessario adotar o Claude Agent SDK
-para consultar o lake.
+## Proximos produtos
 
-## Marco futuro: agente geral e automacoes
+- editor visual simples para mover, redimensionar, bloquear e reordenar camadas;
+- segmentacao, mascaras e inpainting para objetos dentro da imagem-base;
+- mais modelos de documentos e identidade visual por implantacao;
+- automacoes longas com retomada, aprovacao humana e notificacao;
+- integracoes via MCP quando houver demanda operacional validada;
+- avaliacao de um lakehouse somente quando volume, concorrencia, historico e
+  governanca justificarem a complexidade adicional.
 
-Reavaliar o **Claude Agent SDK** depois que o lake e a camada Gold estiverem
-estaveis e o Nexus comecar a executar tarefas como:
+## Possivel camada de orquestracao
 
-- pesquisa e consulta na web;
-- leitura e producao de documentos;
-- criacao e analise de planilhas e dashboards;
-- automacoes longas, com varias etapas e retomada de sessao;
-- integracoes via MCP;
-- agentes configuraveis por usuarios e subagentes especializados.
-
-Nesse momento, o Agent SDK deve ser uma camada de orquestracao geral acima das
-tools do Nexus, nao um substituto para os contratos de dados. Consultas ao lake
-continuam passando por tools seguras; acesso a arquivos, web e acoes externas
-recebe permissoes, hooks, auditoria e aprovacao humana conforme o risco.
+O Nexus deve manter suas tools pequenas, somente leitura e validadas por
+contrato. Um Agent SDK pode ser reavaliado quando automacoes longas, MCP,
+subagentes ou retomada de sessao tornarem o loop atual mais caro de manter. Esse
+SDK seria uma camada acima das tools governadas, nunca um substituto para
+permissoes, contratos de dados, DLP ou auditoria.
 
 ## Criterios para a decisao
 
-Adotar o Agent SDK quando pelo menos dois destes sinais forem recorrentes:
+Reavaliar uma nova camada de orquestracao quando pelo menos dois destes sinais
+forem recorrentes:
 
-1. tarefas precisam combinar lake, web e arquivos na mesma execucao;
-2. o loop atual exige controle complexo de sessao, retomada ou subagentes;
-3. MCP passa a ser uma integracao central, e nao apenas experimental;
-4. automacoes precisam de hooks antes e depois de cada acao;
-5. manter a orquestracao propria custa mais do que adaptar o SDK.
+1. tarefas longas exigem pausa e retomada fora do turno atual;
+2. MCP passa a ser uma integracao central, e nao apenas experimental;
+3. automacoes precisam de hooks e aprovacao antes e depois de cada acao;
+4. agentes configuraveis ou subagentes tornam-se requisito de produto;
+5. manter o loop proprio custa mais do que adaptar um SDK sem perder governanca.
 
-Antes da adocao, executar um piloto medindo qualidade, latencia, tokens e custo
-por tipo de tarefa. A assinatura do Claude nao deve ser confundida com creditos
-da API; o consumo precisa ser registrado por provider, modelo, tool e usuario.
-
+Antes de qualquer adocao, executar um piloto medindo qualidade, latencia, tokens
+e custo por tipo de tarefa. Assinaturas de produtos nao devem ser confundidas
+com creditos de API.

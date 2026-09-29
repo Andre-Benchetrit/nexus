@@ -1,5 +1,5 @@
 const OpenAI = require('openai');
-const { normalizarArgumentosPeloSchema } = require('./schema');
+const { normalizarArgumentosPeloSchema, normalizarSchemaEstritoOpenAI } = require('./schema');
 const { emitirCheckpoint } = require('./checkpoints');
 const {
   estimarComposicaoInput,
@@ -8,10 +8,22 @@ const {
 } = require('./telemetria');
 
 const MODELO_PADRAO_OPENAI = 'gpt-5.6-luna';
+const ESFORCOS_RACIOCINIO_OPENAI = new Set(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+function converterToolParaOpenAI(definicao) {
+  if (!definicao?.strict) return definicao;
+  return { ...definicao, parameters: normalizarSchemaEstritoOpenAI(definicao.parameters) };
+}
 
 function criarProviderOpenAI(opcoes = {}) {
   const modelo = opcoes.modelo || process.env.OPENAI_MODEL || MODELO_PADRAO_OPENAI;
   const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000);
+  const reasoningEffort = String(
+    opcoes.reasoningEffort || process.env.OPENAI_REASONING_EFFORT || 'low'
+  ).toLowerCase();
+  if (!ESFORCOS_RACIOCINIO_OPENAI.has(reasoningEffort)) {
+    throw new Error(`OPENAI_REASONING_EFFORT invalido: ${reasoningEffort}.`);
+  }
   let cliente = opcoes.cliente;
 
   function obterCliente() {
@@ -75,10 +87,10 @@ function criarProviderOpenAI(opcoes = {}) {
         }),
         executar: () => client.responses.create({
           model: modelo,
-          reasoning: { effort: 'low' },
+          reasoning: { effort: reasoningEffort },
           instructions: instrucoes,
           ...(ferramentas.length ? {
-            tools: ferramentas.map((ferramenta) => ferramenta.definicao),
+            tools: ferramentas.map((ferramenta) => converterToolParaOpenAI(ferramenta.definicao)),
             tool_choice: deveFinalizar ? 'none' : 'auto'
           } : {}),
           input,
@@ -171,10 +183,12 @@ function criarProviderOpenAI(opcoes = {}) {
     throw erro;
   }
 
-  return { nome: 'openai', modelo, executar };
+  return { nome: 'openai', modelo, reasoningEffort, executar };
 }
 
 module.exports = {
   criarProviderOpenAI,
+  converterToolParaOpenAI,
+  ESFORCOS_RACIOCINIO_OPENAI,
   MODELO_PADRAO_OPENAI
 };

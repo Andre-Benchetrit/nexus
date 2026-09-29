@@ -9,7 +9,7 @@ import { signOut } from "next-auth/react";
 import { MarkdownMessage } from "./markdown-message";
 import { NexusLogo } from "./nexus-logo";
 import {
-  Attachment, AttachmentStatusEvent, CompositionLevel, Conversation, FileProcessingStage, MemoryOffer,
+  Artifact, Attachment, AttachmentStatusEvent, CompositionLevel, Conversation, FileProcessingStage, ImageContext, ImageOutputFormat, MemoryOffer,
   Message, NexusProfile, SourceMode, TurnRequest, TurnStageEvent, nexusFetch
 } from "@/lib/types";
 
@@ -24,10 +24,11 @@ const SOURCE_MODES: Array<{ value: SourceMode; label: string; hint: string }> = 
   { value: "geral", label: "Conhecimento geral", hint: "Sem consultar Sysemp, documentos ou web" },
   { value: "dados", label: "Consultar dados", hint: "Indicadores e registros internos" },
   { value: "documentacao", label: "Verificar documentação", hint: "Procedimentos, políticas e manuais" },
-  { value: "web", label: "Pesquisar na web", hint: "Fontes públicas citadas" }
+  { value: "web", label: "Pesquisar na web", hint: "Fontes públicas citadas" },
+  { value: "imagem", label: "Criar imagem", hint: "Geração e edição visual por conversa" }
 ];
 const SOURCE_MODE_ICONS: Record<SourceMode, string> = {
-  automatico: "✦", geral: "●", dados: "◆", documentacao: "▤", web: "◇"
+  automatico: "✦", geral: "●", dados: "◆", documentacao: "▤", web: "◇", imagem: "▧"
 };
 const FILE_STAGE_LABELS: Record<FileProcessingStage, string> = {
   validando_arquivo: "Validando arquivo",
@@ -36,7 +37,10 @@ const FILE_STAGE_LABELS: Record<FileProcessingStage, string> = {
   analisando_anexo: "Analisando anexo",
   comparando_anexos: "Comparando anexos",
   recuperando_analise: "Recuperando análise anterior",
-  interpretando_paginas: "Interpretando páginas relevantes"
+  interpretando_paginas: "Interpretando páginas relevantes",
+  planejando_imagem: "Planejando imagem", gerando_imagem: "Gerando imagem-base",
+  compondo_marca: "Compondo camadas", validando_marca: "Validando identidade visual",
+  salvando_imagem: "Salvando imagem"
 };
 const FILE_STAGE_HINTS: Record<FileProcessingStage, string> = {
   validando_arquivo: "Verificando formato, integridade e segurança.",
@@ -45,7 +49,12 @@ const FILE_STAGE_HINTS: Record<FileProcessingStage, string> = {
   analisando_anexo: "Conferindo evidências exatas antes de responder.",
   comparando_anexos: "Cruzando os arquivos localmente.",
   recuperando_analise: "Reutilizando uma análise já validada.",
-  interpretando_paginas: "Analisando somente as páginas visuais necessárias."
+  interpretando_paginas: "Analisando somente as páginas visuais necessárias.",
+  planejando_imagem: "Preparando formato, composição e identidade visual.",
+  gerando_imagem: "Criando ou editando a imagem-base com segurança.",
+  compondo_marca: "Aplicando localmente logo, textos e elementos.",
+  validando_marca: "Conferindo dimensões, margens e regras da marca.",
+  salvando_imagem: "Guardando o rascunho somente nesta conversa."
 };
 const FILE_STAGE_CODES = new Set<string>(Object.keys(FILE_STAGE_LABELS));
 const NEW_CHAT_TURN_KEY = "__new_chat__";
@@ -56,6 +65,8 @@ type SendMessageOptions = {
   files?: PendingFile[];
   preserveComposer?: boolean;
   retryMessageId?: string;
+  imageContext?: ImageContext | null;
+  imageOutputFormat?: ImageOutputFormat;
 };
 
 function isImage(mediaType?: string) { return String(mediaType || "").startsWith("image/"); }
@@ -139,6 +150,49 @@ function AttachmentCard({ item }: { item: Attachment }) {
     : <div className={`file-card attachment-file ${state.status}`} role="status" aria-busy={state.status === "processing"}>{body}</div>;
 }
 
+function ImageArtifactCard({ item, conversationId, onEdit }: {
+  item: Artifact; conversationId: string; onEdit: (artifact: Artifact) => void;
+}) {
+  const [versions, setVersions] = useState<Artifact[]>([item]);
+  const [selectedId, setSelectedId] = useState(item.id);
+  const [imageState, setImageState] = useState<"loading" | "loaded" | "error">("loading");
+  useEffect(() => {
+    let active = true;
+    nexusFetch<Artifact[]>(`conversations/${conversationId}/artifacts/${item.id}/versions`)
+      .then((items) => { if (active && items.length) setVersions(items); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [conversationId, item.id]);
+  const selectedIndex = Math.max(0, versions.findIndex((version) => version.id === selectedId));
+  const selected = versions[selectedIndex] || item;
+  useEffect(() => { setImageState("loading"); }, [selected.id]);
+  return <figure className="generated-image-card">
+    <div className={`generated-image-preview ${imageState}`} aria-busy={imageState === "loading"}>
+      {imageState === "loading" && <div className="generated-image-loading" role="status">
+        <i aria-hidden="true" /><span>Carregando imagem…</span>
+      </div>}
+      {imageState === "error" && <div className="generated-image-loading error" role="alert">
+        <span>Não foi possível carregar a prévia.</span>
+      </div>}
+      <img key={selected.id} src={apiFileUrl(selected.previewUrl || selected.url)}
+        alt={selected.title || "Imagem criada pelo Nexus"}
+        onLoad={() => setImageState("loaded")} onError={() => setImageState("error")} />
+    </div>
+    <figcaption><div><strong>{selected.title || selected.name}</strong>
+      <small>Rascunho validado · v{selected.version || 1} · {selected.brandMode === "full_brand" ? "Marca completa" : selected.brandMode === "visual_identity" ? "Identidade sem logo" : "Sem logo"}</small></div>
+      {selected.validation && <small className="image-compliance">{selected.validation.width}×{selected.validation.height} · {selected.validation.layers || 0} camada(s) · {selected.validation.brandCompliant === false ? "Revisar marca" : "Conformidade básica aprovada"}</small>}
+      <div className="generated-image-actions">
+        {versions.length > 1 && <span className="image-version-switcher">
+          <button type="button" disabled={selectedIndex <= 0} onClick={() => setSelectedId(versions[selectedIndex - 1].id)} aria-label="Versão anterior">‹</button>
+          <i>{selectedIndex + 1}/{versions.length}</i>
+          <button type="button" disabled={selectedIndex >= versions.length - 1} onClick={() => setSelectedId(versions[selectedIndex + 1].id)} aria-label="Próxima versão">›</button>
+        </span>}
+        <button type="button" onClick={() => onEdit(selected)}>Editar esta imagem</button>
+        <a href={apiFileUrl(selected.url)} download>Baixar</a>
+      </div></figcaption>
+  </figure>;
+}
+
 function groupLabel(date?: string) {
   if (!date) return "Anteriores";
   const now = new Date();
@@ -192,6 +246,8 @@ export function HubShell({ profile, initialConversationId }: {
   const [departmentId, setDepartmentId] = useState(profile.setores[0]?.id || "");
   const [composition, setComposition] = useState<CompositionLevel>("medio");
   const [sourceMode, setSourceMode] = useState<SourceMode>("automatico");
+  const [imageContext, setImageContext] = useState<ImageContext | null>(null);
+  const [imageOutputFormat, setImageOutputFormat] = useState<ImageOutputFormat>("png");
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null);
   const messagesAreaRef = useRef<HTMLDivElement>(null);
@@ -312,6 +368,8 @@ export function HubShell({ profile, initialConversationId }: {
 
   useEffect(() => {
     activeIdRef.current = activeId;
+    setImageContext(null);
+    setImageOutputFormat("png");
   }, [activeId]);
 
   useEffect(() => {
@@ -375,7 +433,7 @@ export function HubShell({ profile, initialConversationId }: {
     selectConversation(null); setMessages([]); setMemoryOffer(null); setInput("");
     pendingFiles.forEach((item) => URL.revokeObjectURL(item.previewUrl));
     setPendingFiles([]); setDepartmentId(nextDepartment); setComposition("medio"); setSidebarOpen(false);
-    setSourceMode("automatico"); setComposerMenuOpen(false);
+    setSourceMode("automatico"); setImageContext(null); setImageOutputFormat("png"); setComposerMenuOpen(false);
     navigateChat("/");
   }
 
@@ -528,12 +586,15 @@ export function HubShell({ profile, initialConversationId }: {
   async function sendMessage(value = input, options: SendMessageOptions = {}) {
     const text = value.trim();
     const isRetry = Boolean(options.retryMessageId);
+    const turnImageContext = options.imageContext === undefined ? imageContext : options.imageContext;
+    const turnImageOutputFormat = options.imageOutputFormat || imageOutputFormat;
     const initialTurnKey = activeId || NEW_CHAT_TURN_KEY;
     const files = isRetry ? [] : options.files ? [...options.files] : [...pendingFiles];
-    if ((!text && !files.length) || turnProgressRef.current[initialTurnKey]) return;
+    if ((!text && !files.length && !turnImageContext) || turnProgressRef.current[initialTurnKey]) return;
     stickToBottomRef.current = true;
     setShowJumpToBottom(false);
-    const prompt = text || "Analise as imagens anexadas.";
+    const prompt = text || (turnImageContext ? "Aplique os ajustes de composição selecionados nesta imagem."
+      : "Analise as imagens anexadas.");
     const optimisticId = `optimistic-${crypto.randomUUID()}`;
     const localAttachments: Attachment[] = files.map((item, index) => ({
       id: `${optimisticId}-${index}`, mediaType: item.file.type, bytes: item.file.size,
@@ -547,7 +608,7 @@ export function HubShell({ profile, initialConversationId }: {
     let turnKey = initialTurnKey;
     let turnAccepted = false;
     if (!options.preserveComposer && !isRetry) {
-      setInput(""); setPendingFiles([]); setSourceMode("automatico");
+      setInput(""); setPendingFiles([]); setSourceMode("automatico"); setImageContext(null); setImageOutputFormat("png");
     }
     setError(null); setComposerMenuOpen(false);
     setTurnStage(turnKey, files.length ? "Preparando arquivos" : "Interpretando sua solicitação");
@@ -578,6 +639,8 @@ export function HubShell({ profile, initialConversationId }: {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ message: prompt, attachmentIds: uploaded.map((item) => item.id), compositionLevel: composition,
           sourceMode: turnSourceMode,
+          imageContext: turnImageContext || undefined,
+          imageOutputFormat: turnImageOutputFormat,
           retryMessageId: options.retryMessageId || undefined,
           clientRequestId: crypto.randomUUID() })
       });
@@ -666,6 +729,8 @@ export function HubShell({ profile, initialConversationId }: {
           setPendingFiles(files);
           setInput(text);
           setSourceMode(turnSourceMode);
+          setImageContext(turnImageContext || null);
+          setImageOutputFormat(turnImageOutputFormat);
         }
       } else if (conversationId && activeIdRef.current === conversationId) {
         await nexusFetch<Message[]>(`conversations/${conversationId}/messages`)
@@ -705,6 +770,17 @@ export function HubShell({ profile, initialConversationId }: {
     } finally {
       setRetryingMessageId(null);
     }
+  }
+
+  function editImageArtifact(artifact: Artifact) {
+    const hasLogo = artifact.validation?.hasLogo === true;
+    setImageContext({ artifactId: artifact.id, action: "edit", hasLogo,
+      compositionPatch: hasLogo ? {
+        logoAnchor: "bottom-right", logoWidthPercent: 12, logoMarginPercent: 4
+      } : undefined });
+    setSourceMode("imagem");
+    setInput("");
+    setTimeout(() => textareaRef.current?.focus(), 0);
   }
 
   async function selectResponseVariant(message: Message, direction: -1 | 1) {
@@ -861,8 +937,10 @@ export function HubShell({ profile, initialConversationId }: {
                     <AttachmentCard key={item.id} item={item} />)}</div> : null}
                   {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <p>{message.content}</p>}
                   {message.artifacts?.length ? <div className="response-files">{message.artifacts.map((item) =>
-                    <a className="file-card generated" href={apiFileUrl(item.url)} download key={item.id}><b>{fileBadge(item.mediaType, item.format)}</b>
-                      <span><strong>{item.title || item.name}</strong><small>{fileSize(item.bytes)} · Arquivo privado da conversa</small></span><i>Baixar</i></a>)}</div> : null}
+                    item.kind === "image" && activeId
+                      ? <ImageArtifactCard key={item.id} item={item} conversationId={activeId} onEdit={editImageArtifact} />
+                      : <a className="file-card generated" href={apiFileUrl(item.url)} download key={item.id}><b>{fileBadge(item.mediaType, item.format)}</b>
+                        <span><strong>{item.title || item.name}</strong><small>{fileSize(item.bytes)} · Arquivo privado da conversa</small></span><i>Baixar</i></a>)}</div> : null}
                   {message.knowledgeSources?.length ? <div className="response-files">{message.knowledgeSources.map((item) =>
                     <a className="file-card source" href={apiFileUrl(item.url)} download key={`${item.documentId}-${item.version}`}>
                       <b>{(item.format || "FONTE").toUpperCase()}</b><span><strong>{item.title}</strong><small>Versão {item.version} · Fonte publicada</small></span><i>Baixar</i></a>)}</div> : null}
@@ -870,7 +948,7 @@ export function HubShell({ profile, initialConversationId }: {
                 {message.role === "assistant" && <footer className="message-footer">
                   <div className="message-meta">
                     {message.provenance && <span className="source-chip">{{ dados_nexus: "◆ Dados do Sysemp", web: "◇ Fontes web",
-                      arquivo: "▧ Arquivo", misto: "✦ Fontes combinadas", conhecimento_geral: "◇ Conhecimento geral" }[message.provenance] || "◇ Conhecimento geral"}</span>}
+                      arquivo: "▧ Arquivo", imagem: "▧ Imagem", misto: "✦ Fontes combinadas", conhecimento_geral: "◇ Conhecimento geral" }[message.provenance] || "◇ Conhecimento geral"}</span>}
                     {message.traceId && <span title={message.traceId}>Trace {message.traceId.slice(0, 8)}</span>}
                   </div>
                   {variants.length > 1 && <div className="response-variant-switcher" aria-label="Versões da resposta">
@@ -909,6 +987,24 @@ export function HubShell({ profile, initialConversationId }: {
           {isImage(item.file.type) ? <img src={item.previewUrl} alt={item.file.name} /> : <div className="pending-file-icon">{fileBadge(item.file.type)}</div>}
           <button type="button" onClick={() => removePending(index)} aria-label="Remover arquivo">×</button>
           <figcaption>{item.file.name}</figcaption></figure>)}</div>}
+        {imageContext && <div className="image-edit-context"><div><strong>Editando imagem selecionada</strong><small>Descreva a mudança ou ajuste a composição.</small></div>
+          {imageContext.hasLogo && <><label>Logo<select value={imageContext.compositionPatch?.logoAnchor || "bottom-right"}
+            onChange={(event) => setImageContext((current) => current ? { ...current, compositionPatch: { ...current.compositionPatch, logoAnchor: event.target.value } } : current)}>
+            <option value="top-left">Superior esquerda</option><option value="top-right">Superior direita</option>
+            <option value="bottom-left">Inferior esquerda</option><option value="bottom-right">Inferior direita</option>
+            <option value="center">Centro</option></select></label>
+          <label>Tamanho<select value={imageContext.compositionPatch?.logoWidthPercent || 12}
+            onChange={(event) => setImageContext((current) => current ? { ...current, compositionPatch: { ...current.compositionPatch, logoWidthPercent: Number(event.target.value) } } : current)}>
+            <option value="8">Pequena</option><option value="12">Média</option><option value="18">Grande</option></select></label>
+          <label>Margem<select value={imageContext.compositionPatch?.logoMarginPercent || 4}
+            onChange={(event) => setImageContext((current) => current ? { ...current, compositionPatch: { ...current.compositionPatch, logoMarginPercent: Number(event.target.value) } } : current)}>
+            <option value="2">Compacta</option><option value="4">Padrão</option><option value="6">Ampla</option></select></label></>}
+          <button type="button" onClick={() => setImageContext(null)} aria-label="Cancelar edição">×</button></div>}
+        {(sourceMode === "imagem" || imageContext) && <div className="image-format-control">
+          <label>Formato da imagem<select value={imageOutputFormat}
+            onChange={(event) => setImageOutputFormat(event.target.value as ImageOutputFormat)}>
+            <option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option>
+          </select></label></div>}
         <form className="composer" onSubmit={(event: FormEvent) => { event.preventDefault(); sendMessage(); }}
           onDragOver={(event: DragEvent) => event.preventDefault()} onDrop={(event: DragEvent) => {
             event.preventDefault(); addFiles(Array.from(event.dataTransfer.files));
@@ -945,7 +1041,7 @@ export function HubShell({ profile, initialConversationId }: {
         <textarea ref={textareaRef} value={input} onChange={(e) => setInput(e.target.value)}
           onKeyDown={keyDown} onPaste={pasteFiles}
           placeholder="Pergunte ao Nexus..." rows={1} disabled={activeLoading} aria-label="Mensagem" />
-        <button className="send-button" type="submit" disabled={activeLoading || (!input.trim() && !pendingFiles.length)} aria-label="Enviar">↑</button>
+        <button className="send-button" type="submit" disabled={activeLoading || (!input.trim() && !pendingFiles.length && !imageContext)} aria-label="Enviar">↑</button>
       </form><small>O Nexus pode cometer erros. Respostas corporativas são validadas pelas fontes autorizadas.</small></footer>
     </section>
     {sidebarOpen && <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="Fechar menu" />}

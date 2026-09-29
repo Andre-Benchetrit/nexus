@@ -18,6 +18,7 @@ const { criarServicoAnexos, processarFilaLimpeza } = require('../../nexus/anexos
 const { criarServicoInteligenciaAnexos } = require('../../nexus/attachment_intelligence_store');
 const { criarArtifactStorage } = require('../../nexus/artifact_storage');
 const { criarServicoArtefatos, processarFilaLimpezaArtefatos } = require('../../nexus/artefatos');
+const { criarServicoImagens } = require('../../nexus/imagens');
 const { criarDatasetStorage } = require('../../nexus/dataset_storage');
 const { criarServicoDatasets, processarFilaLimpezaDatasets } = require('../../nexus/datasets');
 const { criarKnowledgeStorage } = require('../../nexus/knowledge_storage');
@@ -50,6 +51,11 @@ function statusDoCheckpoint(item = {}) {
   if (/extraindo_texto/.test(tipo)) return 'extraindo_texto';
   if (/arquivo_gerado_validado|artifact_validation/.test(tipo)) return 'validando_arquivo_gerado';
   if (/gerando_arquivo|artifact_generation/.test(tipo)) return 'gerando_arquivo';
+  if (/planejando_imagem|image_planning/.test(tipo)) return 'planejando_imagem';
+  if (/gerando_imagem|image_generation/.test(tipo)) return 'gerando_imagem';
+  if (/compondo_marca|image_composition/.test(tipo)) return 'compondo_marca';
+  if (/validando_marca|image_validation/.test(tipo)) return 'validando_marca';
+  if (/salvando_imagem/.test(tipo)) return 'salvando_imagem';
   if (/analisando_arquivo|file_analysis/.test(tipo)) return 'extraindo_conteudo';
   if (/ocr|imagem_local|anexo/.test(tipo)) return 'processando_imagem';
   if (/vision|visao/.test(tipo)) return 'interpretando_imagem';
@@ -93,7 +99,12 @@ function rotuloStatus(codigo) {
     comparando_anexos: 'Comparando os anexos',
     recuperando_analise: 'Recuperando a análise já validada',
     gerando_arquivo: 'Gerando o arquivo solicitado',
-    validando_arquivo_gerado: 'Validando o arquivo gerado'
+    validando_arquivo_gerado: 'Validando o arquivo gerado',
+    planejando_imagem: 'Planejando a imagem',
+    gerando_imagem: 'Gerando a imagem-base',
+    compondo_marca: 'Compondo as camadas visuais',
+    validando_marca: 'Validando a identidade visual',
+    salvando_imagem: 'Salvando a imagem na conversa'
   }[codigo] || 'Pensando';
 }
 
@@ -110,7 +121,7 @@ function validarResultadoTurno(resultado) {
 
 function validarModoFonte(valor) {
   const modo = String(valor || 'automatico').toLowerCase();
-  if (!['automatico', 'geral', 'dados', 'documentacao', 'web'].includes(modo)) {
+  if (!['automatico', 'geral', 'dados', 'documentacao', 'web', 'imagem'].includes(modo)) {
     throw new ErroHub('MODO_FONTE_INVALIDO', 'Selecione uma funcao valida para a mensagem.', 400);
   }
   return modo;
@@ -129,6 +140,17 @@ async function criarServidor(opcoes = {}) {
   const lakeStorage = opcoes.lakeStorage || criarLakeStorage();
   const attachmentStorage = opcoes.attachmentStorage || criarAttachmentStorage();
   const artifactStorage = opcoes.artifactStorage || criarArtifactStorage();
+  const imageGenerationMode = String(opcoes.imageGenerationMode ||
+    process.env.NEXUS_IMAGE_GENERATION_MODE || 'off').toLowerCase();
+  if (!['off', 'shadow', 'v1'].includes(imageGenerationMode)) {
+    throw new Error('NEXUS_IMAGE_GENERATION_MODE deve ser off, shadow ou v1.');
+  }
+  if (imageGenerationMode === 'v1' && !opcoes.imageGenerationProvider) {
+    if (String(process.env.NEXUS_IMAGE_GENERATION_PROVIDER || 'openai').toLowerCase() !== 'openai') {
+      throw new Error('NEXUS_IMAGE_GENERATION_PROVIDER deve ser openai nesta versão.');
+    }
+    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY é obrigatória para gerar imagens em v1.');
+  }
   const datasetStorage = opcoes.datasetStorage || criarDatasetStorage();
   const datasetsMode = String(opcoes.datasetsMode || process.env.NEXUS_DATASETS_MODE || 'off').toLowerCase();
   const knowledgeStorage = opcoes.knowledgeStorage || criarKnowledgeStorage();
@@ -218,6 +240,12 @@ async function criarServidor(opcoes = {}) {
 
   function artefatos(request) {
     return criarServicoArtefatos({ pool, storage: artifactStorage, principalId: request.ator.pid });
+  }
+
+  function imagens(request, departmentId = null) {
+    return criarServicoImagens({ pool, storage: artifactStorage,
+      principalId: request.ator.pid, departmentId,
+      provider: opcoes.imageGenerationProvider, brandProvider: opcoes.brandProvider });
   }
 
   function datasets(request, departmentId = null) {
@@ -378,13 +406,21 @@ async function criarServidor(opcoes = {}) {
   app.get('/v1/conversations/:id/artifacts/:artifactId', async (request, reply) => {
     const servicoArtefatos = artefatos(request);
     const metadados = await servicoArtefatos.obter(request.params.id, request.params.artifactId);
-    await exigirPermissao(request, 'ia.arquivo.gerar', metadados.department_id,
+    await exigirPermissao(request, metadados.artifact_kind === 'image' ? 'ia.imagem.gerar' : 'ia.arquivo.gerar', metadados.department_id,
       'Você não possui permissão para baixar este arquivo gerado.');
     const { item, buffer } = await servicoArtefatos.abrir(request.params.id, request.params.artifactId);
     reply.header('Content-Type', item.media_type);
     reply.header('Cache-Control', 'private, no-store');
-    reply.header('Content-Disposition', `attachment; filename="${nomeDownloadSeguro(item.file_name)}"`);
+    const inline = item.artifact_kind === 'image' && request.query?.disposition === 'inline';
+    reply.header('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${nomeDownloadSeguro(item.file_name)}"`);
+    reply.header('X-Content-Type-Options', 'nosniff');
     return reply.send(buffer);
+  });
+  app.get('/v1/conversations/:id/artifacts/:artifactId/versions', async (request) => {
+    const conversa = await servico(request).obterConversa(request.params.id);
+    await exigirPermissao(request, 'ia.imagem.gerar', conversa.department_id,
+      'Você não possui permissão para visualizar estas versões.');
+    return imagens(request, conversa.department_id).listarVersoes(request.params.id, request.params.artifactId);
   });
   app.delete('/v1/conversations/:id/artifacts/:artifactId', async (request) =>
     artefatos(request).excluir(request.params.id, request.params.artifactId));
@@ -404,7 +440,33 @@ async function criarServidor(opcoes = {}) {
       throw new ErroHub('MENSAGEM_INVALIDA', 'Informe uma mensagem de ate 20.000 caracteres.');
     }
     const sourceMode = validarModoFonte(retry?.sourceMode || request.body?.sourceMode);
+    const imageOutputFormatRaw = String(retry?.imageOutputFormat || request.body?.imageOutputFormat || 'png').toLowerCase();
+    const imageOutputFormat = ['png', 'jpeg', 'webp'].includes(imageOutputFormatRaw)
+      ? imageOutputFormatRaw : 'png';
     const conversaTurno = await hub.obterConversa(request.params.id);
+    const imageContextRaw = retry?.imageContext || request.body?.imageContext || null;
+    const imageContext = imageContextRaw?.artifactId ? {
+      artifactId: String(imageContextRaw.artifactId),
+      action: ['edit', 'variation'].includes(String(imageContextRaw.action))
+        ? String(imageContextRaw.action) : 'edit',
+      hasLogo: imageContextRaw.hasLogo === true,
+      compositionPatch: imageContextRaw.compositionPatch && typeof imageContextRaw.compositionPatch === 'object'
+        ? {
+            logoAnchor: ['top-left','top-center','top-right','center-left','center','center-right','bottom-left','bottom-center','bottom-right']
+              .includes(String(imageContextRaw.compositionPatch.logoAnchor))
+              ? String(imageContextRaw.compositionPatch.logoAnchor) : undefined,
+            logoWidthPercent: Number.isFinite(Number(imageContextRaw.compositionPatch.logoWidthPercent))
+              ? Math.min(30, Math.max(4, Number(imageContextRaw.compositionPatch.logoWidthPercent))) : undefined,
+            logoMarginPercent: Number.isFinite(Number(imageContextRaw.compositionPatch.logoMarginPercent))
+              ? Math.min(12, Math.max(1, Number(imageContextRaw.compositionPatch.logoMarginPercent))) : undefined
+          } : undefined
+    } : null;
+    if (imageContext) {
+      await exigirPermissao(request, 'ia.imagem.editar', conversaTurno.department_id,
+        'Você não possui permissão para editar esta imagem.');
+      await imagens(request, conversaTurno.department_id)
+        .projetoDoArtefato(request.params.id, imageContext.artifactId);
+    }
     const servicoAnexosTurno = anexos(request, conversaTurno.department_id);
     for (const attachmentId of attachmentIds) {
       const metadados = await servicoAnexosTurno.obter(request.params.id, attachmentId);
@@ -478,14 +540,18 @@ async function criarServidor(opcoes = {}) {
         semanticTier: faixaMinimaDaComposicao(composicao),
         compositionLevel: composicao,
         sourceMode,
+        imageContext,
+        imageOutputFormat,
         traceId: inicio.request.trace_id,
         anexos: anexosTurno,
         servicoAnexos: anexos(request),
         servicoInteligenciaAnexos: inteligenciaAnexos(request, inicio.conversation.department_id),
         servicoArtefatos: servicoArtefatosTurno,
+        servicoImagens: imagens(request, inicio.conversation.department_id),
         servicoDatasets: servicoDatasetsTurno,
         filesMode: process.env.NEXUS_FILES_MODE || 'off',
         artifactsMode: process.env.NEXUS_ARTIFACTS_MODE || 'off',
+        imageGenerationMode,
         datasetsMode,
         retryRootMessageId: retry?.rootMessageId || null,
         existingUserMessageId: retry?.userMessageId || null,

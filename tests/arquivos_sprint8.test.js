@@ -277,3 +277,57 @@ test('falha ao salvar derivado remove o arquivo original sem deixar orfao', asyn
     mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), /volume indisponível/);
   assert.deepEqual(removidos, ['44444444-4444-4444-8444-444444444444.xlsx']);
 });
+
+test('anexo legado com arquivos ausentes usa a fonte e o IR canônicos', async () => {
+  const principalId = '11111111-1111-4111-8111-111111111111';
+  const conversationId = '22222222-2222-4222-8222-222222222222';
+  const attachmentId = '33333333-3333-4333-8333-333333333333';
+  const fonte = Buffer.from('fonte canônica preservada');
+  const atualizacoes = [];
+  const item = {
+    id: attachmentId, conversation_id: conversationId, principal_id: principalId,
+    asset_id: '44444444-4444-4444-8444-444444444444', status: 'ready', kind: 'document',
+    file_name: 'dados.xlsx', format: 'xlsx', media_type:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    storage_key: 'fonte-antiga.xlsx', derived_storage_key: 'derivado-antigo.json'
+  };
+  const pool = { async query(sql, valores) {
+    if (/SELECT id FROM nexus\.conversations/.test(sql)) return { rows: [{ id: conversationId }] };
+    if (/SELECT \* FROM nexus\.conversation_attachments/.test(sql)) return { rows: [item] };
+    if (/UPDATE nexus\.conversation_attachments/.test(sql)) {
+      atualizacoes.push(String(sql)); return { rows: [], rowCount: 1 };
+    }
+    throw new Error(`SQL inesperado: ${sql}`);
+  } };
+  const storage = { async abrir() { const erro = new Error('ausente'); erro.code = 'ENOENT'; throw erro; } };
+  const inteligencia = {
+    async abrirFonte() { return fonte; },
+    async carregarRepresentacao() { return { ir: { content: { tipo: 'xlsx', abas: [] } } }; }
+  };
+  const servico = criarServicoAnexos({ pool, storage, principalId, inteligencia });
+
+  const aberto = await servico.abrir(conversationId, attachmentId);
+  assert.equal(aberto.buffer, fonte);
+  assert.deepEqual(aberto.extraido, { tipo: 'xlsx', abas: [] });
+  assert.ok(atualizacoes.some((sql) => /storage_key=NULL/.test(sql)));
+  assert.ok(atualizacoes.some((sql) => /derived_storage_key=NULL/.test(sql)));
+});
+
+test('fonte física perdida retorna conflito recuperável em vez de erro interno', async () => {
+  const principalId = '11111111-1111-4111-8111-111111111111';
+  const conversationId = '22222222-2222-4222-8222-222222222222';
+  const attachmentId = '33333333-3333-4333-8333-333333333333';
+  const pool = { async query(sql) {
+    if (/SELECT id FROM nexus\.conversations/.test(sql)) return { rows: [{ id: conversationId }] };
+    if (/SELECT \* FROM nexus\.conversation_attachments/.test(sql)) return { rows: [{
+      id: attachmentId, storage_key: 'arquivo-perdido.xlsx', derived_storage_key: null,
+      asset_id: null, status: 'ready', kind: 'document', file_name: 'dados.xlsx', format: 'xlsx'
+    }] };
+    return { rows: [] };
+  } };
+  const storage = { async abrir() { const erro = new Error('ausente'); erro.code = 'ENOENT'; throw erro; } };
+  const servico = criarServicoAnexos({ pool, storage, principalId });
+
+  await assert.rejects(() => servico.abrir(conversationId, attachmentId),
+    (erro) => erro.codigo === 'FONTE_NAO_DISPONIVEL' && erro.status === 409 && /envie o arquivo novamente/.test(erro.message));
+});

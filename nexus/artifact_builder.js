@@ -8,6 +8,7 @@ const {
   Packer, PageNumber, Paragraph, Table, TableCell, TableRow, TextRun, WidthType
 } = require('docx');
 const { extrairPdf, renderizarPaginaPdf } = require('./document_parser');
+const { criarBrandProfileProvider } = require('./brand_profile');
 
 class ErroArtefato extends Error {
   constructor(codigo, mensagem, status = 400) {
@@ -28,6 +29,10 @@ function texto(valor, maximo = 20000) {
 
 function carregarMarca(opcoes = {}) {
   let configurada = opcoes.brand || null;
+  if (!configurada && (process.env.NEXUS_BRAND_PROFILE_JSON || process.env.NEXUS_BRAND_LOGO)) {
+    try { configurada = criarBrandProfileProvider().obter(); }
+    catch (_) { /* preserva o fallback tolerante dos artefatos legados */ }
+  }
   if (!configurada && process.env.NEXUS_ARTIFACT_BRAND_JSON) {
     const jsonMarca = process.env.NEXUS_ARTIFACT_BRAND_JSON;
     try { configurada = JSON.parse(jsonMarca); }
@@ -41,7 +46,7 @@ function carregarMarca(opcoes = {}) {
   const cores = Object.fromEntries(Object.entries({ ...CORES_PADRAO, ...(configurada?.cores || {}) })
     .map(([chave, valor]) => [chave, /^#[0-9a-f]{6}$/i.test(String(valor || '')) ? String(valor) : CORES_PADRAO[chave]]));
   return { nome: texto(configurada?.nome || 'Nexus', 100), cores,
-    logo: opcoes.logo || process.env.NEXUS_ARTIFACT_BRAND_LOGO || configurada?.logo || null };
+    logo: opcoes.logo || process.env.NEXUS_BRAND_LOGO || process.env.NEXUS_ARTIFACT_BRAND_LOGO || configurada?.logo || null };
 }
 
 function protegerFormula(valor) {

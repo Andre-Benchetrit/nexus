@@ -21,6 +21,20 @@ consultor: ela responde conversas gerais ou chama `consultar_nexus`. O consultor
 o roteador e as tools abaixo dessa capability nao mudam de responsabilidade.
 Consulte [IA_GENERALISTA.md](IA_GENERALISTA.md).
 
+No Hub, a entrada tambem pode seguir por pipelines especializados antes da
+sintese:
+
+```text
+anexo -> validacao -> Attachment IR -> evidencias compactas -> roteamento
+web -> consulta formulada pelo agente -> fontes sanitizadas -> sintese citada
+imagem gerada -> ImageSpec -> provider -> composicao local em camadas -> artefato
+```
+
+O conteudo de anexos e da web entra como evidencia nao confiavel. Ele nao pode
+alterar a intencao autenticada, escolher permissoes ou iniciar tools. Imagens
+geradas, XLSX, DOCX e PDF sao artefatos privados vinculados a conversa e ao
+turno; nao sao publicados automaticamente.
+
 Entre o plano validado e o provider corporativo existe um seletor de faixa
 semantica. Ele usa dominio, intencao, confianca, tools, camadas e lacunas para
 recomendar ou aplicar uma faixa basica, assistida ou avancada. A decisao e
