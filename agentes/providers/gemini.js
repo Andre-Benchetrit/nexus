@@ -6,6 +6,7 @@ const {
   normalizarUsageGemini
 } = require('./telemetria');
 const { emitirCheckpoint } = require('./checkpoints');
+const { validarToolChoice } = require('./tool_choice');
 
 function converterSchemaGemini(schema) {
   if (!schema || typeof schema !== 'object') return schema;
@@ -98,12 +99,14 @@ function criarProviderGemini(opcoes = {}) {
     purpose = 'corporate_query',
     parentCallId = null,
     fallbackFromCallId = null,
-    returnAfterTerminalTool = false
+    returnAfterTerminalTool = false,
+    toolChoice = null
   }) {
     const client = await obterCliente();
     const ferramentas = Array.isArray(tools)
       ? tools
       : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
+    const toolEscolhida = validarToolChoice(toolChoice, ferramentas);
     const contents = mensagens?.length
       ? mensagens.map((item) => ({
           role: item.role === 'assistant' ? 'model' : 'user',
@@ -124,7 +127,10 @@ function criarProviderGemini(opcoes = {}) {
           converterToolParaGemini(ferramenta.definicao)
         )) }];
         config.toolConfig = {
-          functionCallingConfig: { mode: deveFinalizar ? 'NONE' : 'VALIDATED' }
+          functionCallingConfig: deveFinalizar ? { mode: 'NONE' }
+            : !houveTool && toolEscolhida
+              ? { mode: 'ANY', allowedFunctionNames: [toolEscolhida] }
+              : { mode: 'VALIDATED' }
         };
       } else {
         delete config.tools;

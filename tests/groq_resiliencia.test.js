@@ -64,14 +64,16 @@ test('provider Groq executa uma tool pelo Chat Completions', async () => {
       chamadasTool.push(args);
       return '[{"entidade":"cliente"}]';
     },
-    maxRodadas: 3
+    toolChoice: 'consultar_bronze', maxRodadas: 3
   });
 
   assert.equal(resultado.texto, 'Entidades disponíveis.');
   assert.equal(resultado.provider, 'groq');
   assert.deepEqual(chamadasTool, [{ operacao: 'listar_entidades' }]);
   assert.equal(requisicoes[0].tools[0].function.name, 'consultar_bronze');
-  assert.equal(requisicoes[0].tool_choice, 'auto');
+  assert.deepEqual(requisicoes[0].tool_choice, {
+    type: 'function', function: { name: 'consultar_bronze' }
+  });
   assert.equal(requisicoes[1].tool_choice, 'none');
   assert.equal(requisicoes[1].messages.at(-1).tool_call_id, 'call_groq_1');
 });

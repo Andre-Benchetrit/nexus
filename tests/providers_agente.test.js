@@ -4,7 +4,24 @@ const assert = require('node:assert/strict');
 const { definicaoConsultarBronze } = require('../tools/consultar_bronze');
 const { definicaoAgregarBronze } = require('../tools/agregar_bronze');
 const { definicaoAnalisarVendas } = require('../tools/analisar_vendas');
-const { criarProviderOpenAI, converterToolParaOpenAI } = require('../agentes/providers/openai');
+const { definicaoConsultarDocumentacao } = require('../tools/consultar_documentacao');
+const { definicaoAnalisarArquivo } = require('../tools/analisar_arquivo');
+const { definicaoConsultarEvidenciaAnexo } = require('../tools/consultar_evidencia_anexo');
+const { definicaoGerarArquivo } = require('../tools/gerar_arquivo');
+const { definicaoGerarImagem } = require('../tools/gerar_imagem');
+const { definicaoExportarResultado } = require('../tools/exportar_resultado');
+const { criarRegistroFerramentas } = require('../agentes/ferramentas');
+const {
+  definicaoConsultarNexus,
+  definicaoSolicitarRevisaoMemoria,
+  definicaoPesquisarWeb,
+  definicaoValidarPoliticas
+} = require('../agentes/assistente_nexus');
+const { definicaoRegistrarDecisaoRota } = require('../agentes/roteador_semantico');
+const { definicaoRegistrarAvaliacao } = require('../agentes/revisor_memoria');
+const { criarProviderOpenAI, converterToolParaOpenAI,
+  serializarSaidaToolOpenAI } = require('../agentes/providers/openai');
+const { auditarSchemaEstritoOpenAI } = require('../agentes/providers/schema');
 const {
   criarProviderGemini,
   converterToolParaGemini
@@ -41,6 +58,54 @@ test('OpenAI normaliza recursivamente schemas strict sem alterar o contrato inte
   assert.equal(convertido.parameters.properties.opcoes.additionalProperties, false);
   assert.deepEqual(original.parameters.required, ['consulta', 'opcoes']);
   assert.equal(original.parameters.properties.documento_id.type, 'string');
+});
+
+test('todas as tools do Nexus possuem contrato compativel com OpenAI strict', () => {
+  const definicoesRegistro = [...criarRegistroFerramentas().values()]
+    .map((ferramenta) => ferramenta.definicao);
+  const definicoesDiretas = [
+    definicaoConsultarNexus,
+    definicaoSolicitarRevisaoMemoria,
+    definicaoPesquisarWeb,
+    definicaoValidarPoliticas,
+    definicaoRegistrarDecisaoRota,
+    definicaoRegistrarAvaliacao,
+    definicaoAnalisarArquivo,
+    definicaoConsultarEvidenciaAnexo,
+    definicaoGerarArquivo,
+    definicaoGerarImagem,
+    definicaoExportarResultado
+  ];
+  const definicoes = [...new Map(
+    [...definicoesRegistro, ...definicoesDiretas].map((item) => [item.name, item])
+  ).values()];
+
+  assert.equal(definicoes.length, 35);
+  for (const definicao of definicoes) {
+    const convertida = converterToolParaOpenAI(definicao);
+    assert.deepEqual(
+      auditarSchemaEstritoOpenAI(convertida.parameters), [],
+      `Schema OpenAI invalido para ${definicao.name}`
+    );
+  }
+});
+
+test('OpenAI rejeita localmente schema livre antes de chamar a API', () => {
+  assert.throws(() => converterToolParaOpenAI({
+    type: 'function', name: 'schema_livre', description: 'invalida', strict: true,
+    parameters: {
+      type: 'object', properties: { valor: {} }, required: ['valor'],
+      additionalProperties: false
+    }
+  }), (erro) => erro.codigo === 'OPENAI_TOOL_SCHEMA_INVALID' && /schema_livre/.test(erro.message));
+  assert.throws(() => converterToolParaOpenAI({
+    type: 'function', name: 'schema_allof', description: 'invalida', strict: true,
+    parameters: {
+      type: 'object', properties: {
+        valor: { allOf: [{ type: 'string' }] }
+      }, required: ['valor'], additionalProperties: false
+    }
+  }), (erro) => erro.codigo === 'OPENAI_TOOL_SCHEMA_INVALID' && /allOf/.test(erro.message));
 });
 
 test('provider OpenAI executa a tool e devolve o resultado ao modelo', async () => {
@@ -95,6 +160,107 @@ test('provider OpenAI executa a tool e devolve o resultado ao modelo', async () 
   )));
 });
 
+test('provider OpenAI força uma tool nomeada somente na primeira rodada', async () => {
+  const requisicoes = [];
+  const respostas = [
+    { id: 'resp_forced_1', output_text: '', output: [{ type: 'function_call',
+      name: 'gerar_imagem', call_id: 'call_forced_1', arguments: '{}' }] },
+    { id: 'resp_forced_2', output_text: 'Imagem gerada.', output: [] }
+  ];
+  const provider = criarProviderOpenAI({ modelo: 'openai-teste', cliente: {
+    responses: { async create(requisicao) { requisicoes.push(requisicao); return respostas.shift(); } }
+  } });
+  await provider.executar({ pergunta: 'Gere a imagem.', instrucoes: 'Use a tool.',
+    tools: [{ definicao: definicaoMinima('gerar_imagem'), terminal: true,
+      executar: async () => ({ id: 'imagem-1' }) }],
+    toolChoice: 'gerar_imagem', maxRodadas: 3 });
+  assert.deepEqual(requisicoes[0].tool_choice, { type: 'function', name: 'gerar_imagem' });
+  assert.equal(requisicoes[1].tool_choice, 'none');
+});
+
+test('provider OpenAI rejeita escolha de tool que nao foi disponibilizada', async () => {
+  const provider = criarProviderOpenAI({ modelo: 'openai-teste', cliente: {
+    responses: { async create() { throw new Error('nao deveria chamar'); } }
+  } });
+  await assert.rejects(provider.executar({ pergunta: 'x', instrucoes: 'x', tools: [],
+    toolChoice: 'gerar_imagem' }), (erro) => erro.codigo === 'TOOL_CHOICE_INVALID');
+});
+
+test('provider OpenAI serializa resultados estruturados antes de devolvê-los à Responses API', async () => {
+  const requisicoes = [];
+  const respostas = [
+    { id: 'resp_obj_1', output_text: '', output: [{ type: 'function_call',
+      name: 'consulta_objeto', call_id: 'call_obj_1', arguments: '{}' }] },
+    { id: 'resp_obj_2', output_text: 'Documento encontrado.', output: [] }
+  ];
+  const cliente = { responses: { async create(requisicao) {
+    requisicoes.push(requisicao); return respostas.shift();
+  } } };
+  const provider = criarProviderOpenAI({ cliente, modelo: 'openai-teste' });
+  const resultado = await provider.executar({ pergunta: 'Consulte o documento.',
+    instrucoes: 'Use a tool.', tools: [{ definicao: definicaoMinima('consulta_objeto'),
+      terminal: true, executar: async () => ({ status: 'sucesso', resultados: [{ titulo: 'API' }] }) }],
+    maxRodadas: 3 });
+  const retornoTool = requisicoes[1].input.find((item) => item.type === 'function_call_output');
+  assert.equal(typeof retornoTool.output, 'string');
+  assert.deepEqual(JSON.parse(retornoTool.output), {
+    status: 'sucesso', resultados: [{ titulo: 'API' }]
+  });
+  assert.equal(resultado.texto, 'Documento encontrado.');
+  assert.equal(serializarSaidaToolOpenAI(undefined), 'null');
+  assert.equal(serializarSaidaToolOpenAI({ total: 12n }), '{"total":"12"}');
+});
+
+test('provider OpenAI remove null artificial de campo opcional antes de executar a tool', async () => {
+  const requisicoes = [];
+  const respostas = [
+    { id: 'resp_null_1', output_text: '', output: [{
+      type: 'function_call', name: 'consultar_documentacao', call_id: 'call_null_1',
+      arguments: JSON.stringify({
+        consulta: 'endpoint de etiquetas', documento_id: null, limite: 5,
+        analisar_visual: false
+      })
+    }] },
+    { id: 'resp_null_2', output_text: 'Endpoint encontrado.', output: [] }
+  ];
+  const cliente = { responses: { async create(requisicao) {
+    requisicoes.push(requisicao); return respostas.shift();
+  } } };
+  let argumentosExecutados;
+  const provider = criarProviderOpenAI({ cliente, modelo: 'openai-teste' });
+  await provider.executar({
+    pergunta: 'Consulte.', instrucoes: 'Use a tool.',
+    definicaoTool: definicaoConsultarDocumentacao,
+    executarTool: async (argumentos) => {
+      argumentosExecutados = argumentos;
+      return { status: 'sucesso' };
+    }
+  });
+
+  assert.deepEqual(argumentosExecutados, {
+    consulta: 'endpoint de etiquetas', limite: 5, analisar_visual: false
+  });
+  assert.ok(requisicoes[0].tools[0].parameters.required.includes('documento_id'));
+  assert.deepEqual(
+    requisicoes[0].tools[0].parameters.properties.documento_id.type,
+    ['string', 'null']
+  );
+});
+
+test('provider OpenAI funciona sem tools e usa limite padrao de rodadas', async () => {
+  const requisicoes = [];
+  const provider = criarProviderOpenAI({
+    cliente: { responses: { async create(requisicao) {
+      requisicoes.push(requisicao);
+      return { id: 'resp_sem_tools', output_text: 'Resposta direta.', output: [] };
+    } } },
+    modelo: 'openai-teste'
+  });
+  const resultado = await provider.executar({ pergunta: 'Oi', instrucoes: 'Responda.' });
+  assert.equal(resultado.texto, 'Resposta direta.');
+  assert.equal('tools' in requisicoes[0], false);
+});
+
 test('provider OpenAI aceita esforco de raciocinio especifico por funcao', async () => {
   const requisicoes = [];
   const cliente = { responses: { async create(requisicao) {
@@ -143,7 +309,7 @@ test('provider Gemini devolve a resposta da tool com o ID correto', async () => 
   const cliente = {
     models: {
       async generateContent(requisicao) {
-        requisicoes.push(requisicao);
+        requisicoes.push(structuredClone(requisicao));
         return respostas.shift();
       }
     }
@@ -155,11 +321,16 @@ test('provider Gemini devolve a resposta da tool com o ID correto', async () => 
     instrucoes: 'Use a tool.',
     definicaoTool: definicaoConsultarBronze,
     executarTool: async () => '[{"entidade":"cliente"}]',
-    maxRodadas: 3
+    toolChoice: 'consultar_bronze', maxRodadas: 3
   });
 
   assert.equal(resultado.texto, 'Entidades disponíveis.');
   assert.equal(resultado.provider, 'gemini');
+  assert.equal(requisicoes[0].config.toolConfig.functionCallingConfig.mode, 'ANY');
+  assert.deepEqual(
+    requisicoes[0].config.toolConfig.functionCallingConfig.allowedFunctionNames,
+    ['consultar_bronze']
+  );
   const respostaTool = requisicoes[1].contents
     .flatMap((content) => content.parts)
     .find((part) => part.functionResponse);

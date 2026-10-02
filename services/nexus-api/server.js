@@ -287,7 +287,8 @@ async function criarServidor(opcoes = {}) {
       lake: { healthy: lake.saudavel, type: lake.tipo, datasets: lake.camadas || {} },
       files: { healthy: arquivos.saudavel, type: arquivos.tipo },
       artifacts: { healthy: artefatosHealth.saudavel, type: artefatosHealth.tipo },
-      temporaryDatasets: { healthy: datasetsHealth.saudavel, type: datasetsHealth.tipo } };
+      temporaryDatasets: { healthy: datasetsHealth.saudavel, type: datasetsHealth.tipo },
+      capabilities: { imageGeneration: imageGenerationMode } };
   });
 
   app.post('/v1/auth/resolve', async (request) => resolverIdentidadeMicrosoft(pool, {

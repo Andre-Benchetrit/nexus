@@ -12,7 +12,12 @@ const definicaoGerarArquivo = Object.freeze({
         required: ['titulo', 'conteudo', 'itens'] } },
       tabelas: { type: 'array', maxItems: 30, items: { type: 'object', additionalProperties: false,
         properties: { titulo: { type: 'string' }, colunas: { type: 'array', items: { type: 'string' } },
-          linhas: { type: 'array', items: { type: 'array', items: {} } } }, required: ['titulo', 'colunas', 'linhas'] } },
+          linhas: { type: 'array', items: { type: 'array', items: {
+            anyOf: [
+              { type: 'string' }, { type: 'number' },
+              { type: 'boolean' }, { type: 'null' }
+            ]
+          } } } }, required: ['titulo', 'colunas', 'linhas'] } },
       graficos: { type: 'array', maxItems: 10, items: { type: 'object', additionalProperties: false,
         properties: { titulo: { type: 'string' }, tipo: { type: 'string', enum: ['barra', 'linha'] },
           categorias: { type: 'array', items: { type: 'string' } }, valores: { type: 'array', items: { type: 'number' } } },

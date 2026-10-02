@@ -237,6 +237,64 @@ test('fonte canônica pronta pode ser reaberta ao preparar o turno', async () =>
   assert.deepEqual(await servico.abrirFonte('conversation-1', 'attachment-1'), buffer);
 });
 
+test('asset com arquivo físico ausente é invalidado e reprocessado no próximo upload', async () => {
+  const consultas = [];
+  const hash = 'a'.repeat(64);
+  const pool = { async query(sql, params) {
+    consultas.push({ sql: String(sql), params });
+    if (/SELECT \* FROM nexus\.attachment_assets/.test(sql)) return { rows: [{
+      id: 'asset-stale', sha256: hash, status: 'ready', ir_version: 'attachment-ir-v3',
+      source_storage_key: 'source.xlsx', ir_storage_key: 'missing.json',
+      parquet_storage_key: null, ir_sha256: 'b'.repeat(64)
+    }] };
+    return { rows: [], rowCount: 1 };
+  } };
+  const removidos = [];
+  const storage = {
+    async salvar() { return { chave: 'nao-usado' }; },
+    async abrir() { const erro = new Error('ausente'); erro.code = 'ENOENT'; throw erro; },
+    async excluir(chave) { removidos.push(chave); return true; }
+  };
+  const servico = criarServicoInteligenciaAnexos({ pool, storage, principalId: 'principal-1' });
+
+  assert.equal(await servico.buscarAssetPorHash(hash), null);
+  assert.ok(consultas.some((item) => /DELETE FROM nexus\.attachment_assets/.test(item.sql)));
+  assert.deepEqual(removidos.sort(), ['missing.json', 'source.xlsx']);
+});
+
+test('cache de análise sem JSON físico vira cache miss em vez de propagar ENOENT', async () => {
+  const consultas = [];
+  const hash = 'c'.repeat(64);
+  const pool = { async query(sql, params) {
+    const texto = String(sql); consultas.push({ sql: texto, params });
+    if (/SELECT m\.id,m\.turn_id/.test(texto)) return { rows: [{ id: 'message-1', turn_id: 'turn-1' }] };
+    if (/SELECT a\.\*,c\.department_id/.test(texto)) return { rows: [{
+      id: 'attachment-1', resolved_asset_id: 'asset-1', asset_status: 'ready',
+      asset_sha256: hash, asset_classification: 'conversa_privada',
+      department_id: 'department-1', conversation_department_id: 'department-1'
+    }] };
+    if (/SELECT \* FROM nexus\.attachment_analysis_cache/.test(texto)) return { rows: [{
+      id: 'analysis-stale', result_storage_key: 'missing-analysis.json',
+      result_sha256: 'd'.repeat(64), status: 'ready'
+    }] };
+    return { rows: [], rowCount: 1 };
+  } };
+  const storage = {
+    async salvar() { return { chave: 'nao-usado' }; },
+    async abrir() { const erro = new Error('ausente'); erro.code = 'ENOENT'; throw erro; },
+    async excluir() { return true; }
+  };
+  const servico = criarServicoInteligenciaAnexos({ pool, storage,
+    principalId: 'principal-1', departmentId: 'department-1' });
+  const resultado = await servico.obterAnaliseEmCache({ conversationId: 'conversation-1',
+    messageId: 'message-1', attachmentIds: ['attachment-1'], pergunta: 'Analise o arquivo',
+    intent: 'local_file', profundidade: 'medio', analisarVisual: false });
+
+  assert.equal(resultado.cacheHit, false);
+  assert.equal(resultado.analysisRef, null);
+  assert.ok(consultas.some((item) => /DELETE FROM nexus\.attachment_analysis_cache/.test(item.sql)));
+});
+
 test('limitador falha fechado apenas quando o manifesto mínimo excede o orçamento', () => {
   const resultado = limitarEnvelope({ exactFacts: [{ value: 10 }], evidence: [
     { analysis: { trechos: Array.from({ length: 20 }, () => ({ texto: 'x'.repeat(1000) })) } }

@@ -19,6 +19,8 @@ const {
   executarAssistente,
   construirObjetivoCorporativo,
   corrigirAlegacaoMemoria,
+  continuacaoCriacaoImagem,
+  intencaoCriarImagem,
   orientarModoDadosSeConsultaNaoRoteada,
   normalizarHistoricoVisivel,
   possuiTextoResposta,
@@ -38,6 +40,19 @@ test('registro generalista habilita conversa, consulta corporativa e revisao gov
   );
   assert.equal(obterCapacidadeGeneralista('ia.imagem.analisar').habilitada, false);
   assert.equal(obterCapacidadeGeneralista('ia.planilha.criar').executor, 'nexus_local');
+});
+
+test('intencao visual reconhece anuncio e continuacao curta do pedido anterior', () => {
+  const anterior = 'Gere um anúncio base para a FID com essa máquina de lavar.';
+  assert.equal(intencaoCriarImagem(anterior), true);
+  assert.equal(continuacaoCriacaoImagem('Pode gerar agora.', { ultimaPergunta: anterior }), true);
+  assert.equal(continuacaoCriacaoImagem(
+    'Agora gere a imagem que pedi, por favor.', { ultimaPergunta: anterior }
+  ), true);
+  assert.equal(continuacaoCriacaoImagem(
+    'Agora gere um relatório em PDF.', { ultimaPergunta: anterior }
+  ), false);
+  assert.equal(continuacaoCriacaoImagem('Obrigado.', { ultimaPergunta: anterior }), false);
 });
 
 test('guarda de fonte exige Nexus para identificador, fato mutavel e tarefa ativa', () => {
@@ -228,6 +243,23 @@ test('provider Anthropic executa tool_use e devolve tool_result na rodada seguin
   assert.equal(retorno.tool_use_id, 'tool_1');
 });
 
+test('provider Anthropic força uma tool nomeada somente na primeira rodada', async () => {
+  const requisicoes = [];
+  const respostas = [{ id: 'msg_forced_1', stop_reason: 'tool_use', usage: {},
+    content: [{ type: 'tool_use', id: 'tool_forced_1', name: 'gerar_imagem', input: {} }] },
+  { id: 'msg_forced_2', stop_reason: 'end_turn', usage: {},
+    content: [{ type: 'text', text: 'Imagem gerada.' }] }];
+  const provider = criarProviderAnthropic({ modelo: 'claude-teste', cliente: {
+    messages: { async create(requisicao) { requisicoes.push(requisicao); return respostas.shift(); } }
+  } });
+  await provider.executar({ pergunta: 'Gere a imagem.', instrucoes: 'Use a tool.',
+    tools: [{ definicao: { name: 'gerar_imagem', description: 'gera imagem',
+      parameters: { type: 'object', properties: {}, required: [] } }, terminal: true,
+    executar: async () => ({ id: 'imagem-1' }) }], toolChoice: 'gerar_imagem', maxRodadas: 3 });
+  assert.deepEqual(requisicoes[0].tool_choice, { type: 'tool', name: 'gerar_imagem' });
+  assert.deepEqual(requisicoes[1].tool_choice, { type: 'none' });
+});
+
 test('provider Anthropic e selecionavel e exige modelo', async (t) => {
   assert.equal(criarProvider({ nome: 'anthropic', modelo: 'claude-teste', cliente: {}, semFallback: true }).nome, 'anthropic');
   const modeloAmbiente = process.env.ANTHROPIC_MODEL;
@@ -248,7 +280,7 @@ test('assistente responde conversa geral sem executar agente corporativo', async
       nome: 'mock', modelo: 'mock',
       async executar({ tools }) {
         assert.deepEqual(tools.map((item) => item.definicao.name),
-          ['pesquisar_web', 'consultar_documentacao', 'validar_politicas']);
+          ['pesquisar_web', 'consultar_documentacao', 'validar_politicas', 'gerar_imagem']);
         return { texto: 'EBITDA e um indicador.', provider: 'mock', modelo: 'mock' };
       }
     },
@@ -293,7 +325,7 @@ test('modo geral valida politica dinamicamente sem consultar fontes opcionais', 
   assert.equal(corporativo, false);
   assert.equal(consultaRecebida.consulta, 'compartilhamento de senha pelo WhatsApp');
   assert.equal(resultado.documentacaoConsultada, true);
-  assert.equal(resultado.proveniencia, 'dados_nexus');
+  assert.equal(resultado.proveniencia, 'documentacao');
 });
 
 test('guarda corporativa consulta o agente existente antes da resposta final', async () => {
@@ -310,7 +342,7 @@ test('guarda corporativa consulta o agente existente antes da resposta final', a
     generalistProvider: {
       nome: 'mock', modelo: 'mock',
       async executar({ tools, mensagens }) {
-        assert.deepEqual(tools.map((item) => item.definicao.name), ['validar_politicas']);
+        assert.deepEqual(tools.map((item) => item.definicao.name), ['validar_politicas', 'gerar_imagem']);
         assert.match(mensagens.at(-1).content, /Evidencia corporativa/);
         return { texto: 'O produto foi localizado.', provider: 'mock', modelo: 'mock' };
       }
@@ -431,7 +463,7 @@ test('fallback generalista reutiliza a consulta Nexus feita no turno', async () 
   const fallback = {
     nome: 'fallback', modelo: 'f',
     async executar(contexto) {
-      assert.deepEqual(contexto.tools.map((item) => item.definicao.name), ['validar_politicas']);
+      assert.deepEqual(contexto.tools.map((item) => item.definicao.name), ['validar_politicas', 'gerar_imagem']);
       assert.match(
         contexto.mensagens.map((item) => String(item.content)).join('\n'),
         /Evidencia corporativa|Nao repita tools concluidas/

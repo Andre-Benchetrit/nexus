@@ -313,6 +313,12 @@ function criarServicoAnexos({ pool, storage, principalId, departmentId = null,
       status('extraindo_conteudo', { attachmentId, recovery: true });
       extraido = await reconstruirExtraido(item, buffer);
       await persistirDerivadoRecuperado(item, extraido).catch(() => null);
+      if (inteligencia && item.asset_id) {
+        const ir = criarAttachmentIr({ item: { ...item, sha256: crypto.createHash('sha256')
+          .update(buffer).digest('hex') }, extraido });
+        await inteligencia.salvarRepresentacao({ conversationId, attachmentId: item.id, ir,
+          indexEntries: construirEntradasIndice(extraido), safeMetadata: item.safe_metadata || {} });
+      }
     }
     if (fonteLegadaAusente || derivadoLegadoAusente) {
       await limparReferenciasFisicasAusentes(item, {
@@ -324,7 +330,9 @@ function criarServicoAnexos({ pool, storage, principalId, departmentId = null,
   }
 
   function arquivoFisicoAusente(erro) {
-    return erro?.code === 'ENOENT' || erro?.codigo === 'ARQUIVO_NAO_ENCONTRADO';
+    return erro?.code === 'ENOENT' || [
+      'ARQUIVO_NAO_ENCONTRADO', 'IR_NAO_DISPONIVEL', 'FONTE_NAO_DISPONIVEL'
+    ].includes(erro?.codigo);
   }
 
   async function reconstruirExtraido(item, buffer) {
@@ -392,6 +400,55 @@ function criarServicoAnexos({ pool, storage, principalId, departmentId = null,
       createdAt: item.criado_em, updatedAt: item.atualizado_em };
   }
 
+  async function listarImagens(conversationId) {
+    await conversaAutorizada(conversationId);
+    const linhas = (await pool.query(`SELECT a.id,a.turn_id,a.file_name,a.media_type,a.width,a.height,
+        a.criado_em,a.asset_id,a.derived_storage_key,a.classification,
+        COALESCE(m.conteudo,'') AS user_message
+      FROM nexus.conversation_attachments a
+      LEFT JOIN LATERAL (
+        SELECT conteudo FROM nexus.conversation_messages
+        WHERE conversation_id=a.conversation_id AND turn_id=a.turn_id AND papel='user'
+        ORDER BY criado_em,id LIMIT 1
+      ) m ON true
+      WHERE a.conversation_id=$1 AND a.principal_id=$2 AND a.kind='image' AND a.status='ready'
+      ORDER BY a.criado_em,a.id`, [conversationId, principalId])).rows;
+    const descricoes = await Promise.all(linhas.map(async (item) => {
+      // Descrições são opcionais e vêm apenas da representação local já
+      // autorizada. Nenhuma chamada externa é feita para montar o catálogo.
+      // Conteúdo classificado como sensível nunca é copiado para o prompt.
+      if (item.classification === 'sensivel') return null;
+      try {
+        let extraido = null;
+        if (inteligencia && item.asset_id) {
+          const representacao = await inteligencia.carregarRepresentacao(conversationId, item.id);
+          extraido = representacao.ir?.content || representacao.ir;
+        } else if (item.derived_storage_key) {
+          const pacote = await storage.abrir(item.derived_storage_key);
+          extraido = pacote[0] === 0x1f && pacote[1] === 0x8b
+            ? await descompactarJson(pacote, { maxBytes: process.env.NEXUS_ATTACHMENT_IR_MAX_BYTES })
+            : JSON.parse(pacote.toString('utf8'));
+        }
+        const conteudo = extraido?.content || extraido;
+        const texto = String(conteudo?.texto || '').replace(/\s+/g, ' ').trim();
+        const codigos = (conteudo?.codigos || []).map((codigo) => codigo?.valor)
+          .filter(Boolean).slice(0, 4).join(', ');
+        const resumo = [texto, codigos].filter(Boolean).join(' · ').slice(0, 320);
+        return resumo || null;
+      } catch (_) { return null; }
+    }));
+    return linhas.map((item, indice) => ({
+      alias: `anexo-${indice + 1}`, source: 'attachment', attachmentId: String(item.id),
+      turnId: item.turn_id ? String(item.turn_id) : null,
+      name: item.file_name || `Imagem ${indice + 1}`, mediaType: item.media_type,
+      width: item.width == null ? null : Number(item.width),
+      height: item.height == null ? null : Number(item.height),
+      description: descricoes[indice],
+      message: String(item.user_message || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+      createdAt: item.criado_em
+    }));
+  }
+
   async function resolverParaTurno(conversationId, ids = []) {
     const unicos = [...new Set((ids || []).map(String))];
     const maximo = Number(process.env.NEXUS_FILES_MAX_FILES || process.env.NEXUS_IMAGE_MAX_FILES || 4);
@@ -451,7 +508,7 @@ function criarServicoAnexos({ pool, storage, principalId, departmentId = null,
   }
 
   return { abrir, chavesDaConversa, excluir, excluirChaves, finalizarExclusaoConversa,
-    obter, obterStatus, resolverParaTurno, salvar, vincularTurno };
+    listarImagens, obter, obterStatus, resolverParaTurno, salvar, vincularTurno };
 }
 
 async function processarFilaLimpeza({ pool, storage, limite = 20 }) {

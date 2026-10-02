@@ -8,13 +8,14 @@ const { criarArtifactStorage } = require('../nexus/artifact_storage');
 const { comporProjetoImagem, normalizarSpecImagem } = require('../nexus/image_project');
 const { criarProviderImagemOpenAI, resolverTimeoutImagem } = require('../agentes/providers/openai_image');
 const { executarGerarImagem } = require('../tools/gerar_imagem');
-const { possuiMudancaLocalEfetiva } = require('../nexus/imagens');
+const { possuiMudancaLocalEfetiva, decidirRegeneracaoBase,
+  herdarComposicaoDoProjeto } = require('../nexus/imagens');
 
 function spec(overrides = {}) {
   return {
     action: 'generate', title: 'Campanha', prompt: 'Uma composição abstrata verde',
     format: 'png', preset: 'square', quality: 'medium', brandMode: 'none', regenerateBase: true,
-    replaceTextLayers: false, sourceArtifactId: '',
+    replaceTextLayers: false, sourceArtifactId: '', referenceImageAliases: [],
     logo: { enabled: false, anchor: 'bottom-right', widthPercent: 12,
       marginPercent: 4, contrastTreatment: 'none' }, textBlocks: [], shapeBlocks: [], ...overrides
   };
@@ -76,6 +77,28 @@ test('provider OpenAI usa Responses com image_generation e recupera o binário',
   assert.deepEqual(resultado.buffer, imagem);
 });
 
+test('provider OpenAI envia múltiplas referências autorizadas como edição', async () => {
+  const saida = Buffer.from('imagem-gerada');
+  let payload;
+  const provider = criarProviderImagemOpenAI({ cliente: { responses: { create: async (body) => {
+    payload = body; return { id: 'resp-ref', output: [{ type: 'image_generation_call',
+      result: saida.toString('base64') }] };
+  } } }, mainlineModel: 'gpt-test', generationModel: 'gpt-image-generate',
+  editModel: 'gpt-image-edit' });
+  await provider.executar({ prompt: 'Crie um anúncio com o produto', action: 'generate',
+    inputImages: [
+      { buffer: Buffer.from('png-ref'), mediaType: 'image/png', alias: 'anexo-1' },
+      { buffer: Buffer.from('jpg-ref'), mediaType: 'image/jpeg', alias: 'anexo-2' }
+    ] });
+  assert.equal(payload.tools[0].action, 'edit');
+  assert.equal(payload.tools[0].model, 'gpt-image-edit');
+  assert.equal(payload.input[0].content.filter((item) => item.type === 'input_image').length, 2);
+  assert.match(payload.input[0].content[1].text, /anexo-1/);
+  assert.match(payload.input[0].content[2].image_url, /^data:image\/png;base64,/);
+  assert.match(payload.input[0].content[3].text, /anexo-2/);
+  assert.match(payload.input[0].content[4].image_url, /^data:image\/jpeg;base64,/);
+});
+
 test('provider de imagens possui timeout próprio e não fica limitado ao timeout textual', () => {
   assert.equal(resolverTimeoutImagem({ timeoutMs: 120_000 }), 120_000);
   assert.equal(resolverTimeoutImagem({ timeoutMs: 'invalido' }), 120_000);
@@ -86,16 +109,19 @@ test('provider de imagens possui timeout próprio e não fica limitado ao timeou
 });
 
 test('controles do Hub prevalecem sobre a proposta de composição do modelo', async () => {
-  let recebido;
-  const retorno = await executarGerarImagem(spec({ brandMode: 'full_brand', logo: {
+  let recebido; let opcoesRecebidas;
+  const retorno = await executarGerarImagem(spec({ brandMode: 'full_brand',
+    sourceArtifactId: 'id-sugerido-pelo-modelo', logo: {
     enabled: true, anchor: 'bottom-right', widthPercent: 12, marginPercent: 4,
     contrastTreatment: 'none' } }), {
     conversationId: 'conversation', turnoIA: { id: 'turn' },
     imageContext: { artifactId: 'artifact', compositionPatch: {
       logoAnchor: 'top-left', logoWidthPercent: 18, logoMarginPercent: 6
     } },
-    servicoImagens: { gerar: async (_conversation, _turn, entrada) => {
-      recebido = entrada; return { id: 'new-artifact' };
+    imageReferenceAttachments: [{ attachmentId: 'ref-1', buffer: Buffer.from('ref'),
+      mediaType: 'image/png' }],
+    servicoImagens: { gerar: async (_conversation, _turn, entrada, opcoes) => {
+      recebido = entrada; opcoesRecebidas = opcoes; return { id: 'new-artifact' };
     } }, imageOutputFormat: 'webp'
   });
   assert.equal(retorno.id, 'new-artifact');
@@ -103,6 +129,27 @@ test('controles do Hub prevalecem sobre a proposta de composição do modelo', a
   assert.equal(recebido.logo.widthPercent, 18);
   assert.equal(recebido.logo.marginPercent, 6);
   assert.equal(recebido.format, 'webp');
+  assert.equal(recebido.sourceArtifactId, '');
+  assert.equal(opcoesRecebidas.imageContext.artifactId, 'artifact');
+  assert.equal(opcoesRecebidas.referenceImages.length, 1);
+  assert.equal(opcoesRecebidas.referenceImages[0].attachmentId, 'ref-1');
+});
+
+test('anexo visual não é confundido com artifactId de projeto', async () => {
+  let recebido; let opcoesRecebidas;
+  await executarGerarImagem(spec({ action: 'edit',
+    sourceArtifactId: '68580996-d0dc-40b1-820a-125d2212adf1',
+    prompt: 'Troque o fundo da imagem anexada.' }), {
+    conversationId: 'conversation', turnoIA: { id: 'turn' },
+    imageReferenceAttachments: [{ attachmentId: 'attachment-1',
+      buffer: Buffer.from('imagem'), mediaType: 'image/png' }],
+    servicoImagens: { gerar: async (_conversation, _turn, entrada, opcoes) => {
+      recebido = entrada; opcoesRecebidas = opcoes; return { id: 'new-artifact' };
+    } }
+  });
+  assert.equal(recebido.sourceArtifactId, '');
+  assert.equal(opcoesRecebidas.imageContext, null);
+  assert.equal(opcoesRecebidas.referenceImages[0].attachmentId, 'attachment-1');
 });
 
 test('storage privado aceita imagens e valida a chave física', async () => {
@@ -173,6 +220,46 @@ test('preset incidental não transforma edição da cena em composição local',
   assert.equal(possuiMudancaLocalEfetiva(entrada, parent), false);
 });
 
+test('texto repetido pelo modelo não transforma adição de produto em composição local', () => {
+  const parent = { format: 'png', brand_mode: 'visual_identity', project: {
+    brandMode: 'visual_identity', preset: 'square', composition: {
+      logo: { enabled: false, anchor: 'top-left', widthPercent: 12,
+        marginPercent: 4, contrastTreatment: 'none' },
+      textBlocks: [{ id: 'headline', text: 'Oferta', anchor: 'bottom-center',
+        widthPercent: 70, fontSizePercent: 5, color: '#ffffff', align: 'center' }],
+      shapeBlocks: []
+    }
+  } };
+  const entrada = normalizarSpecImagem(spec({ action: 'edit', regenerateBase: false,
+    prompt: 'Adicione essa máquina lava e seca ao lado da Praxis.',
+    textBlocks: parent.project.composition.textBlocks }));
+  assert.equal(possuiMudancaLocalEfetiva(entrada, parent), false);
+  assert.equal(decidirRegeneracaoBase(entrada, parent, 1).regenerateBase, true);
+});
+
+test('edição local de frase herda canvas, marca e camadas do projeto anterior', () => {
+  const parent = { format: 'png', brand_mode: 'visual_identity', project: {
+    brandMode: 'visual_identity', preset: 'square', composition: {
+      logo: { enabled: false, anchor: 'top-left', widthPercent: 16,
+        marginPercent: 4, contrastTreatment: 'none' },
+      textBlocks: [{ id: 'antigo', text: 'Oferta', anchor: 'top-center',
+        widthPercent: 70, fontSizePercent: 5, color: '#ffffff', align: 'center' }],
+      shapeBlocks: []
+    }
+  } };
+  const entrada = normalizarSpecImagem(spec({ action: 'edit', regenerateBase: false,
+    prompt: 'Faltou escrever A FID cuida de suas roupas', preset: 'landscape',
+    brandMode: 'none', textBlocks: [{ id: 'novo', text: 'A FID cuida de suas roupas',
+      anchor: 'bottom-center', widthPercent: 80, fontSizePercent: 5,
+      color: '#ffffff', align: 'center' }] }));
+  const herdada = herdarComposicaoDoProjeto(entrada, parent);
+  assert.equal(herdada.preset, 'square');
+  assert.equal(herdada.brandMode, 'visual_identity');
+  assert.equal(herdada.logo.anchor, 'top-left');
+  assert.deepEqual(herdada.textBlocks.map((item) => item.id), ['antigo', 'novo']);
+  assert.equal(decidirRegeneracaoBase(herdada, parent, 0).regenerateBase, false);
+});
+
 test('mudança explicitamente solicitada para canvas continua local', () => {
   const parent = { format: 'png', brand_mode: 'none', project: {
     brandMode: 'none', preset: 'landscape', composition: {
@@ -197,8 +284,44 @@ test('movimento de logo continua sendo uma composicao local', () => {
   } };
   const entrada = normalizarSpecImagem(spec({
     action: 'edit', brandMode: 'full_brand', regenerateBase: false,
+    prompt: 'Mova a logo para o canto inferior esquerdo',
     logo: { enabled: true, anchor: 'bottom-left', widthPercent: 10,
       marginPercent: 4, contrastTreatment: 'none' }
   }));
   assert.equal(possuiMudancaLocalEfetiva(entrada, parent), true);
+});
+
+test('adicao exclusiva de logo preserva a imagem-base mesmo com referencia antiga selecionada', () => {
+  const parent = { format: 'png', brand_mode: 'none', project: {
+    brandMode: 'none', preset: 'square', composition: {
+      logo: { enabled: false, anchor: 'top-right', widthPercent: 10,
+        marginPercent: 4, contrastTreatment: 'none' },
+      textBlocks: [], shapeBlocks: []
+    }
+  } };
+  const entrada = normalizarSpecImagem(spec({
+    action: 'edit', brandMode: 'full_brand', regenerateBase: true,
+    prompt: 'Consegue colocar o logo da FID no canto inferior direito?',
+    logo: { enabled: true, anchor: 'bottom-right', widthPercent: 12,
+      marginPercent: 4, contrastTreatment: 'none' }
+  }));
+  assert.equal(possuiMudancaLocalEfetiva(entrada, parent), true);
+  assert.equal(decidirRegeneracaoBase(entrada, parent, 1).regenerateBase, false);
+});
+
+test('pedido misto de produto e logo ainda regenera a imagem-base', () => {
+  const parent = { format: 'png', brand_mode: 'none', project: {
+    brandMode: 'none', preset: 'square', composition: {
+      logo: { enabled: false, anchor: 'top-right', widthPercent: 10,
+        marginPercent: 4, contrastTreatment: 'none' },
+      textBlocks: [], shapeBlocks: []
+    }
+  } };
+  const entrada = normalizarSpecImagem(spec({
+    action: 'edit', brandMode: 'full_brand', regenerateBase: false,
+    prompt: 'Troque o produto pela lavadora anexada e coloque a logo da FID.',
+    logo: { enabled: true, anchor: 'bottom-right', widthPercent: 12,
+      marginPercent: 4, contrastTreatment: 'none' }
+  }));
+  assert.equal(decidirRegeneracaoBase(entrada, parent, 1).regenerateBase, true);
 });

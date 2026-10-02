@@ -331,3 +331,27 @@ test('fonte física perdida retorna conflito recuperável em vez de erro interno
   await assert.rejects(() => servico.abrir(conversationId, attachmentId),
     (erro) => erro.codigo === 'FONTE_NAO_DISPONIVEL' && erro.status === 409 && /envie o arquivo novamente/.test(erro.message));
 });
+
+test('catálogo de imagens usa descrição OCR local opcional sem nova chamada externa', async () => {
+  const principalId = '11111111-1111-4111-8111-111111111111';
+  const conversationId = '22222222-2222-4222-8222-222222222222';
+  const pool = { async query(sql) {
+    if (/SELECT id FROM nexus\.conversations/.test(sql)) return { rows: [{ id: conversationId }] };
+    if (/FROM nexus\.conversation_attachments a/.test(sql)) return { rows: [{
+      id: '33333333-3333-4333-8333-333333333333', turn_id: null,
+      file_name: 'produto.png', media_type: 'image/png', width: 800, height: 800,
+      asset_id: '44444444-4444-4444-8444-444444444444', classification: 'conversa_privada',
+      derived_storage_key: null, user_message: 'Use este produto', criado_em: new Date()
+    }] };
+    throw new Error(`SQL inesperado: ${sql}`);
+  } };
+  let leituras = 0;
+  const inteligencia = { async carregarRepresentacao() {
+    leituras += 1;
+    return { ir: { content: { tipo: 'image', texto: 'Lava e seca Praxis branca', codigos: [] } } };
+  } };
+  const servico = criarServicoAnexos({ pool, storage: {}, principalId, inteligencia });
+  const catalogo = await servico.listarImagens(conversationId);
+  assert.equal(leituras, 1);
+  assert.equal(catalogo[0].description, 'Lava e seca Praxis branca');
+});

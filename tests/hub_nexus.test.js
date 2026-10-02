@@ -149,7 +149,7 @@ test('API separa healthcheck publico de rotas autenticadas', async (t) => {
   };
   const agendador = { habilitado: false, iniciar() {}, parar() {} };
   const app = await criarServidor({
-    pool, agendador, logger: false,
+    pool, agendador, logger: false, imageGenerationMode: 'off',
     lakeStorage: { verificarSaude: async () => ({
       saudavel: true, tipo: 'filesystem', camadas: { bronze: 1, silver: 1, gold: 1 }
     }) }
@@ -160,6 +160,7 @@ test('API separa healthcheck publico de rotas autenticadas', async (t) => {
   const me = await app.inject({ method: 'GET', url: '/v1/me' });
   assert.equal(live.statusCode, 200);
   assert.equal(ready.statusCode, 200);
+  assert.equal(ready.json().capabilities.imageGeneration, 'off');
   assert.equal(me.statusCode, 401);
   assert.equal(me.json().error.code, 'NAO_AUTENTICADO');
 });

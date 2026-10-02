@@ -11,6 +11,7 @@ const {
   normalizarUsageOpenAI
 } = require('./telemetria');
 const { emitirCheckpoint } = require('./checkpoints');
+const { validarToolChoice } = require('./tool_choice');
 
 const MODELO_PADRAO = 'openai/gpt-oss-120b';
 
@@ -105,12 +106,14 @@ function criarProviderGroq(opcoes = {}) {
       purpose = 'corporate_query',
       parentCallId = null,
       fallbackFromCallId = null,
-      returnAfterTerminalTool = false
+      returnAfterTerminalTool = false,
+      toolChoice = null
     }) {
       const client = obterCliente();
       const ferramentas = Array.isArray(tools)
         ? tools
         : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
+      const toolEscolhida = validarToolChoice(toolChoice, ferramentas);
       const messages = [
         { role: 'system', content: instrucoes },
         ...(mensagens?.length ? mensagens.map((item) => ({ role: item.role, content: item.content })) : [
@@ -149,7 +152,10 @@ function criarProviderGroq(opcoes = {}) {
             ...(definicoes.length ? {
               tools: converterTools(definicoes),
               parallel_tool_calls: false,
-              tool_choice: deveFinalizar ? 'none' : 'auto'
+              tool_choice: deveFinalizar ? 'none'
+                : !houveTool && toolEscolhida
+                  ? { type: 'function', function: { name: toolEscolhida } }
+                  : 'auto'
             } : {}),
             temperature: 0.1
           }),

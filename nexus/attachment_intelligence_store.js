@@ -222,6 +222,17 @@ function classificacaoMaisRestrita(classificacoes = []) {
     (niveis.get(b) ?? 3) - (niveis.get(a) ?? 3))[0] || 'conversa_privada';
 }
 
+function arquivoFisicoAusente(erro) {
+  return erro?.code === 'ENOENT' || erro?.codigo === 'ARQUIVO_NAO_ENCONTRADO';
+}
+
+function derivadoPersistidoInvalido(erro) {
+  return arquivoFisicoAusente(erro) || [
+    'DERIVADO_INVALIDO', 'DERIVADO_EXPANSAO_EXCESSIVA',
+    'ANALISE_INTEGRIDADE_INVALIDA', 'ATTACHMENT_EVIDENCE_SCHEMA_INVALID'
+  ].includes(erro?.codigo);
+}
+
 async function emTransacao(pool, operacao) {
   if (typeof pool.connect !== 'function') return operacao(pool);
   const cliente = await pool.connect();
@@ -278,12 +289,24 @@ function criarServicoInteligenciaAnexos({ pool, storage, principalId, department
       WHERE principal_id=$1 AND sha256=$2 AND status='ready' AND ir_version=$3`,
     [principalId, hash, irVersion])).rows[0];
     if (!asset?.ir_storage_key) return null;
-    const buffer = await storage.abrir(asset.ir_storage_key);
-    if (hashSha256(buffer) !== String(asset.ir_sha256 || '')) {
-      throw new ErroInteligenciaAnexo('IR_INTEGRIDADE_INVALIDA', 'A integridade da representação não confere.', 500);
+    try {
+      // O banco pode sobreviver a uma limpeza de .runtime ou a um redeploy sem
+      // volume persistente. Só reutilize o cache se fonte e IR ainda existirem.
+      const [buffer, fonte] = await Promise.all([
+        storage.abrir(asset.ir_storage_key), storage.abrir(asset.source_storage_key)
+      ]);
+      if (hashSha256(buffer) !== String(asset.ir_sha256 || '') ||
+          hashSha256(fonte) !== String(asset.sha256 || '')) {
+        await invalidarAssetFisico(asset, { codigo: 'ASSET_INTEGRIDADE_INVALIDA' });
+        return null;
+      }
+      const ir = await descompactarJson(buffer, { maxBytes: process.env.NEXUS_ATTACHMENT_IR_MAX_BYTES });
+      return { asset, ir: validarAttachmentIr(ir) };
+    } catch (erro) {
+      if (!derivadoPersistidoInvalido(erro) && erro?.codigo !== 'ATTACHMENT_IR_SCHEMA_INVALID') throw erro;
+      await invalidarAssetFisico(asset, erro);
+      return null;
     }
-    const ir = await descompactarJson(buffer, { maxBytes: process.env.NEXUS_ATTACHMENT_IR_MAX_BYTES });
-    return { asset, ir: validarAttachmentIr(ir) };
   }
 
   async function validarMensagem(conversationId, messageId) {
@@ -307,6 +330,22 @@ function criarServicoInteligenciaAnexos({ pool, storage, principalId, department
     if (!chave || typeof storage.excluir !== 'function') return;
     try { await storage.excluir(chave); }
     catch (erro) { await enfileirarLimpeza(chave, erro); }
+  }
+
+  async function invalidarAssetFisico(asset) {
+    if (!asset?.id) return;
+    await pool.query(`DELETE FROM nexus.attachment_assets
+      WHERE id=$1 AND principal_id=$2`, [asset.id, principalId]);
+    await Promise.allSettled([
+      asset.source_storage_key, asset.ir_storage_key, asset.parquet_storage_key
+    ].filter(Boolean).map((chave) => excluirFisico(chave)));
+  }
+
+  async function invalidarAnaliseFisica(cache) {
+    if (!cache?.id) return;
+    await pool.query(`DELETE FROM nexus.attachment_analysis_cache
+      WHERE id=$1 AND principal_id=$2`, [cache.id, principalId]);
+    await excluirFisico(cache.result_storage_key);
   }
 
   async function registrarAsset({ conversationId, attachmentId, sourceBuffer, safeMetadata = {} }) {
@@ -460,13 +499,24 @@ function criarServicoInteligenciaAnexos({ pool, storage, principalId, department
     if (!anexo.resolved_asset_id || anexo.asset_status !== 'ready' || !anexo.ir_storage_key) {
       throw new ErroInteligenciaAnexo('IR_NAO_DISPONIVEL', 'A representação do anexo ainda não está pronta.', 409);
     }
-    const buffer = await storage.abrir(anexo.ir_storage_key);
-    if (hashSha256(buffer) !== String(anexo.ir_sha256 || '')) {
-      throw new ErroInteligenciaAnexo('IR_INTEGRIDADE_INVALIDA', 'A integridade da representação não confere.', 500);
+    try {
+      const buffer = await storage.abrir(anexo.ir_storage_key);
+      if (hashSha256(buffer) !== String(anexo.ir_sha256 || '')) {
+        throw new ErroInteligenciaAnexo('IR_INTEGRIDADE_INVALIDA', 'A integridade da representação não confere.', 500);
+      }
+      const ir = await descompactarJson(buffer, { maxBytes: process.env.NEXUS_ATTACHMENT_IR_MAX_BYTES });
+      return { assetId: anexo.resolved_asset_id, irVersion: anexo.ir_version,
+        ir: validarAttachmentIr(ir) };
+    } catch (erro) {
+      if (!derivadoPersistidoInvalido(erro) &&
+          !['IR_INTEGRIDADE_INVALIDA', 'ATTACHMENT_IR_SCHEMA_INVALID'].includes(erro?.codigo)) throw erro;
+      await pool.query(`UPDATE nexus.attachment_assets
+        SET ir_storage_key=NULL,ir_sha256=NULL,ir_version=NULL,status='processing',
+          error_code='IR_FISICO_AUSENTE',atualizado_em=now()
+        WHERE id=$1 AND principal_id=$2`, [anexo.resolved_asset_id, principalId]);
+      throw new ErroInteligenciaAnexo('IR_NAO_DISPONIVEL',
+        'A representação local do anexo será reconstruída a partir do arquivo original.', 409);
     }
-    const ir = await descompactarJson(buffer, { maxBytes: process.env.NEXUS_ATTACHMENT_IR_MAX_BYTES });
-    return { assetId: anexo.resolved_asset_id, irVersion: anexo.ir_version,
-      ir: validarAttachmentIr(ir) };
   }
 
   async function abrirFonte(conversationId, attachmentId) {
@@ -474,11 +524,20 @@ function criarServicoInteligenciaAnexos({ pool, storage, principalId, department
     if (!anexo.resolved_asset_id || anexo.asset_status !== 'ready' || !anexo.source_storage_key) {
       throw new ErroInteligenciaAnexo('FONTE_NAO_DISPONIVEL', 'A fonte validada do anexo ainda não está disponível.', 409);
     }
-    const buffer = await storage.abrir(anexo.source_storage_key);
-    if (hashSha256(buffer) !== String(anexo.asset_sha256 || '')) {
-      throw new ErroInteligenciaAnexo('FONTE_INTEGRIDADE_INVALIDA', 'A integridade da fonte do anexo não confere.', 500);
+    try {
+      const buffer = await storage.abrir(anexo.source_storage_key);
+      if (hashSha256(buffer) !== String(anexo.asset_sha256 || '')) {
+        throw new ErroInteligenciaAnexo('FONTE_INTEGRIDADE_INVALIDA', 'A integridade da fonte do anexo não confere.', 500);
+      }
+      return buffer;
+    } catch (erro) {
+      if (!arquivoFisicoAusente(erro)) throw erro;
+      await pool.query(`UPDATE nexus.attachment_assets
+        SET status='error',error_code='FONTE_FISICA_AUSENTE',atualizado_em=now()
+        WHERE id=$1 AND principal_id=$2`, [anexo.resolved_asset_id, principalId]);
+      throw new ErroInteligenciaAnexo('FONTE_NAO_DISPONIVEL',
+        'O arquivo original deste anexo não está mais disponível. Envie-o novamente.', 409);
     }
-    return buffer;
   }
 
   async function contextoAssinatura({ conversationId, messageId, attachmentIds, pergunta,
@@ -516,14 +575,20 @@ function criarServicoInteligenciaAnexos({ pool, storage, principalId, department
       WHERE principal_id=$1 AND signature=$2 AND status='ready'
         AND (expires_at IS NULL OR expires_at>now())`, [principalId, contexto.signature])).rows[0];
     if (!cache) return { cacheHit: false, analysisRef: null, contexto };
-    await emTransacao(pool, (cliente) => vincularAnalise(cliente, cache, contexto, opcoes));
-    const buffer = await storage.abrir(cache.result_storage_key);
-    if (hashSha256(buffer) !== String(cache.result_sha256 || '')) {
-      throw new ErroInteligenciaAnexo('ANALISE_INTEGRIDADE_INVALIDA', 'A integridade da análise em cache não confere.', 500);
+    try {
+      const buffer = await storage.abrir(cache.result_storage_key);
+      if (hashSha256(buffer) !== String(cache.result_sha256 || '')) {
+        throw new ErroInteligenciaAnexo('ANALISE_INTEGRIDADE_INVALIDA', 'A integridade da análise em cache não confere.', 500);
+      }
+      const resultado = await descompactarJson(buffer, { maxBytes: process.env.NEXUS_ATTACHMENT_ANALYSIS_MAX_BYTES });
+      const validado = validarAttachmentEvidence(resultado);
+      await emTransacao(pool, (cliente) => vincularAnalise(cliente, cache, contexto, opcoes));
+      return { cacheHit: true, analysisRef: cache.id, resultado: validado, contexto };
+    } catch (erro) {
+      if (!derivadoPersistidoInvalido(erro)) throw erro;
+      await invalidarAnaliseFisica(cache, erro);
+      return { cacheHit: false, analysisRef: null, contexto };
     }
-    const resultado = await descompactarJson(buffer, { maxBytes: process.env.NEXUS_ATTACHMENT_ANALYSIS_MAX_BYTES });
-    return { cacheHit: true, analysisRef: cache.id,
-      resultado: validarAttachmentEvidence(resultado), contexto };
   }
 
   async function salvarAnalise(opcoes) {
@@ -557,10 +622,23 @@ function criarServicoInteligenciaAnexos({ pool, storage, principalId, department
       if (!cache) throw new ErroInteligenciaAnexo('CACHE_CONCORRENCIA', 'A análise concorrente não pôde ser consolidada.', 409);
       await emTransacao(pool, (cliente) => vincularAnalise(cliente, cache, contexto, opcoes));
       if (cache.result_storage_key !== salvo.chave) {
-        const buffer = await storage.abrir(cache.result_storage_key);
-        const resultado = await descompactarJson(buffer, { maxBytes: process.env.NEXUS_ATTACHMENT_ANALYSIS_MAX_BYTES });
-        return { cacheHit: true, analysisRef: cache.id,
-          resultado: validarAttachmentEvidence(resultado), contexto };
+        try {
+          const buffer = await storage.abrir(cache.result_storage_key);
+          if (hashSha256(buffer) !== String(cache.result_sha256 || '')) {
+            throw new ErroInteligenciaAnexo('ANALISE_INTEGRIDADE_INVALIDA',
+              'A integridade da análise concorrente não confere.', 500);
+          }
+          const resultado = await descompactarJson(buffer, {
+            maxBytes: process.env.NEXUS_ATTACHMENT_ANALYSIS_MAX_BYTES
+          });
+          return { cacheHit: true, analysisRef: cache.id,
+            resultado: validarAttachmentEvidence(resultado), contexto };
+        } catch (erro) {
+          if (!derivadoPersistidoInvalido(erro)) throw erro;
+          await invalidarAnaliseFisica(cache, erro);
+          await excluirFisico(salvo.chave);
+          return salvarAnalise(opcoes);
+        }
       }
       return { cacheHit: false, analysisRef: cache.id, resultado: opcoes.resultado, contexto };
     } catch (erro) {
@@ -581,15 +659,22 @@ function criarServicoInteligenciaAnexos({ pool, storage, principalId, department
         AND c.principal_id=$3 AND caa.active=true AND ac.status='ready'${filtroMensagem}`,
     valores)).rows[0];
     if (!cache) throw new ErroInteligenciaAnexo('ANALISE_NAO_ENCONTRADA', 'A análise não pertence a esta conversa.', 404);
-    const buffer = await storage.abrir(cache.result_storage_key);
-    if (hashSha256(buffer) !== String(cache.result_sha256 || '')) {
-      throw new ErroInteligenciaAnexo('ANALISE_INTEGRIDADE_INVALIDA', 'A integridade da análise não confere.', 500);
+    try {
+      const buffer = await storage.abrir(cache.result_storage_key);
+      if (hashSha256(buffer) !== String(cache.result_sha256 || '')) {
+        throw new ErroInteligenciaAnexo('ANALISE_INTEGRIDADE_INVALIDA', 'A integridade da análise não confere.', 500);
+      }
+      const resultado = await descompactarJson(buffer, { maxBytes: process.env.NEXUS_ATTACHMENT_ANALYSIS_MAX_BYTES });
+      return { analysisRef: cache.id,
+        resultado: validarAttachmentEvidence(resultado),
+        metadados: { intent: cache.intent, depth: cache.depth, analyzeVisual: cache.analyze_visual,
+          analyzerVersion: cache.analyzer_version, classification: cache.classification } };
+    } catch (erro) {
+      if (!derivadoPersistidoInvalido(erro)) throw erro;
+      await invalidarAnaliseFisica(cache, erro);
+      throw new ErroInteligenciaAnexo('ANALISE_NAO_DISPONIVEL',
+        'A análise anterior não está mais disponível e será refeita quando o anexo for usado novamente.', 409);
     }
-    const resultado = await descompactarJson(buffer, { maxBytes: process.env.NEXUS_ATTACHMENT_ANALYSIS_MAX_BYTES });
-    return { analysisRef: cache.id,
-      resultado: validarAttachmentEvidence(resultado),
-      metadados: { intent: cache.intent, depth: cache.depth, analyzeVisual: cache.analyze_visual,
-        analyzerVersion: cache.analyzer_version, classification: cache.classification } };
   }
 
   async function atualizarAnalise({ conversationId, analysisRef, resultado }) {

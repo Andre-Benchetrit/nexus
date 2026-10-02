@@ -1,6 +1,12 @@
 const OpenAI = require('openai');
-const { normalizarArgumentosPeloSchema, normalizarSchemaEstritoOpenAI } = require('./schema');
+const {
+  normalizarArgumentosPeloSchema,
+  normalizarSchemaEstritoOpenAI,
+  removerNulosOpcionaisOpenAI,
+  auditarSchemaEstritoOpenAI
+} = require('./schema');
 const { emitirCheckpoint } = require('./checkpoints');
+const { validarToolChoice } = require('./tool_choice');
 const {
   estimarComposicaoInput,
   executarChamadaAuditada,
@@ -12,7 +18,37 @@ const ESFORCOS_RACIOCINIO_OPENAI = new Set(['none', 'low', 'medium', 'high', 'xh
 
 function converterToolParaOpenAI(definicao) {
   if (!definicao?.strict) return definicao;
-  return { ...definicao, parameters: normalizarSchemaEstritoOpenAI(definicao.parameters) };
+  if (definicao.type !== 'function' || !/^[A-Za-z0-9_-]{1,64}$/.test(definicao.name || '')) {
+    const erro = new Error(`Definicao de function tool invalida: ${definicao.name || 'sem_nome'}.`);
+    erro.codigo = 'OPENAI_TOOL_DEFINITION_INVALID';
+    throw erro;
+  }
+  const convertida = {
+    ...definicao,
+    parameters: normalizarSchemaEstritoOpenAI(definicao.parameters)
+  };
+  const erros = auditarSchemaEstritoOpenAI(convertida.parameters);
+  if (erros.length) {
+    const erro = new Error(
+      `Tool ${definicao.name || 'sem_nome'} incompativel com OpenAI strict: ${erros.join('; ')}`
+    );
+    erro.codigo = 'OPENAI_TOOL_SCHEMA_INVALID';
+    throw erro;
+  }
+  return convertida;
+}
+
+function serializarSaidaToolOpenAI(valor) {
+  if (typeof valor === 'string') return valor;
+  if (valor === undefined) return 'null';
+  try {
+    const serializado = JSON.stringify(valor, (_, item) => (
+      typeof item === 'bigint' ? item.toString() : item
+    ));
+    return typeof serializado === 'string' ? serializado : 'null';
+  } catch (_) {
+    return JSON.stringify({ erro: 'A tool retornou um resultado que não pôde ser serializado.' });
+  }
 }
 
 function criarProviderOpenAI(opcoes = {}) {
@@ -45,7 +81,7 @@ function criarProviderOpenAI(opcoes = {}) {
     tools,
     definicaoTool,
     executarTool,
-    maxRodadas,
+    maxRodadas = 8,
     onEvento,
     onCheckpoint,
     mensagens,
@@ -55,7 +91,8 @@ function criarProviderOpenAI(opcoes = {}) {
     purpose = 'corporate_query',
     parentCallId = null,
     fallbackFromCallId = null,
-    returnAfterTerminalTool = false
+    returnAfterTerminalTool = false,
+    toolChoice = null
   }) {
     const client = obterCliente();
     const input = mensagens?.length
@@ -63,7 +100,10 @@ function criarProviderOpenAI(opcoes = {}) {
       : [{ role: 'user', content: pergunta }];
     const ferramentas = Array.isArray(tools)
       ? tools
-      : [{ definicao: definicaoTool, executar: executarTool, terminal: true }];
+      : definicaoTool
+        ? [{ definicao: definicaoTool, executar: executarTool, terminal: true }]
+        : [];
+    const toolEscolhida = validarToolChoice(toolChoice, ferramentas);
     let deveFinalizar = false;
     let houveTool = false;
     const resultadosParaAuditoria = [];
@@ -91,7 +131,10 @@ function criarProviderOpenAI(opcoes = {}) {
           instructions: instrucoes,
           ...(ferramentas.length ? {
             tools: ferramentas.map((ferramenta) => converterToolParaOpenAI(ferramenta.definicao)),
-            tool_choice: deveFinalizar ? 'none' : 'auto'
+            tool_choice: deveFinalizar ? 'none'
+              : !houveTool && toolEscolhida
+                ? { type: 'function', name: toolEscolhida }
+                : 'auto'
           } : {}),
           input,
           store: false
@@ -138,8 +181,11 @@ function criarProviderOpenAI(opcoes = {}) {
         try {
           const ferramenta = ferramentasPorNome.get(chamada.name);
           if (!ferramenta) throw new Error(`Tool desconhecida: ${chamada.name}`);
-          const argumentos = normalizarArgumentosPeloSchema(
+          const argumentosRecebidos = removerNulosOpcionaisOpenAI(
             JSON.parse(chamada.arguments), ferramenta.definicao.parameters
+          );
+          const argumentos = normalizarArgumentosPeloSchema(
+            argumentosRecebidos, ferramenta.definicao.parameters
           );
           output = await ferramenta.executar(argumentos);
           emitirCheckpoint(onCheckpoint, 'tool_aceita', {
@@ -156,12 +202,13 @@ function criarProviderOpenAI(opcoes = {}) {
             codigo: erro.codigo || erro.code || erro.name || 'ERRO_TOOL'
           });
         }
+        const outputSerializado = serializarSaidaToolOpenAI(output);
         input.push({
           type: 'function_call_output',
           call_id: chamada.call_id,
-          output
+          output: outputSerializado
         });
-        resultadosParaAuditoria.push(output);
+        resultadosParaAuditoria.push(outputSerializado);
       }
       if (returnAfterTerminalTool && deveFinalizar) {
         emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
@@ -189,6 +236,7 @@ function criarProviderOpenAI(opcoes = {}) {
 module.exports = {
   criarProviderOpenAI,
   converterToolParaOpenAI,
+  serializarSaidaToolOpenAI,
   ESFORCOS_RACIOCINIO_OPENAI,
   MODELO_PADRAO_OPENAI
 };

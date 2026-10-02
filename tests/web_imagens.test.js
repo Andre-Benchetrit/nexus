@@ -16,7 +16,8 @@ const {
 } = require('../agentes/image_processing');
 const { criarFileSystemAttachmentStorage } = require('../nexus/attachment_storage');
 const {
-  definicaoPesquisarWeb, executarAssistente, resolverModoFonte
+  aliasesImagemInferidos, definicaoPesquisarWeb, executarAssistente,
+  resolverModoFonte, resolverReferenciasCatalogo
 } = require('../agentes/assistente_nexus');
 
 function memoriaFalsa() { return { obterTarefaAtiva: async () => null, listarPreferencias: async () => [], sessao: 'web-imagem' }; }
@@ -89,6 +90,217 @@ test('automatico sempre oferece geracao de imagem para decisao semantica do agen
     } }
   });
   assert.ok(ferramentas.includes('gerar_imagem'));
+});
+
+test('anexo visual e geracao usam a mesma referencia no mesmo turno', async () => {
+  const imagem = await sharp({ create: { width: 20, height: 20, channels: 3,
+    background: '#ffffff' } }).png().toBuffer();
+  let referencias = [];
+  const resultado = await executarAssistente(
+    'Gere um anúncio base para a FID com essa máquina de lavar.', {
+      memoria: { ...memoriaFalsa(), pool: {} }, governanca: governancaFalsa(),
+      auditoriaIA: {
+        async iniciarTurno() { return { id: 'turn-1', traceId: 'trace-1', iniciadoEm: new Date() }; },
+        paraTelemetria() { return null; },
+        async listarMensagens() { return []; },
+        async registrarMensagem(_turno, mensagem) { return { id: mensagem.papel === 'user' ? 'message-1' : 'message-2' }; },
+        async registrarEvento() {}, async registrarUsoServico() {},
+        async concluirTurno() { return null; }
+      },
+      sourceMode: 'automatico', imageMode: 'local', imageGenerationMode: 'v1',
+      attachmentIntelligenceMode: 'off', conversationId: 'conversation',
+      anexos: [{ item: { id: 'attachment-1', kind: 'image', format: 'png',
+        media_type: 'image/png', classification: 'conversa_privada', file_name: 'produto.png' },
+      buffer: imagem, extraido: { tipo: 'image', format: 'png', width: 20, height: 20,
+        texto: '', confiancaOcr: 100, ocrFalhou: false, codigos: [] } }],
+      servicoImagens: { async gerar(_conversationId, _turnId, _spec, opcoes) {
+        referencias = opcoes.referenceImages;
+        return { id: 'image-1', kind: 'image', provider: 'mock', model: 'mock-image',
+          bytes: 10, brandMode: 'visual_identity', validation: {} };
+      } },
+      generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools, mensagens, toolChoice }) {
+        assert.equal(toolChoice, 'gerar_imagem');
+        assert.match(mensagens.at(-1).content, /produto\.png|AUTHENTICATED_USER_MESSAGE/);
+        const gerar = tools.find((item) => item.definicao.name === 'gerar_imagem');
+        assert.ok(gerar);
+        await gerar.executar({ action: 'generate', title: 'Anúncio FID',
+          prompt: 'Crie um anúncio preservando a máquina de lavar da referência.', format: 'png',
+          preset: 'square', quality: 'medium', brandMode: 'visual_identity',
+          regenerateBase: true, replaceTextLayers: false, sourceArtifactId: '',
+          logo: { enabled: false, anchor: 'top-left', widthPercent: 12,
+            marginPercent: 4, contrastTreatment: 'none' }, textBlocks: [], shapeBlocks: [] });
+        return { texto: 'A imagem foi gerada.', provider: 'mock', modelo: 'mock' };
+      } }
+    });
+  assert.equal(referencias.length, 1);
+  assert.equal(referencias[0].attachmentId, 'attachment-1');
+  assert.deepEqual(referencias[0].buffer, imagem);
+  assert.equal(resultado.artefatos[0].id, 'image-1');
+});
+
+test('continuacao curta recupera a imagem de referencia sem repetir upload', async () => {
+  const imagem = await sharp({ create: { width: 20, height: 20, channels: 3,
+    background: '#eeeeee' } }).png().toBuffer();
+  const anexo = { item: { id: 'attachment-previous', asset_id: 'asset-1', kind: 'image',
+    format: 'png', media_type: 'image/png', classification: 'conversa_privada',
+    file_name: 'lavadora.png' }, buffer: imagem, extraido: { tipo: 'image', format: 'png',
+    width: 20, height: 20, texto: '', confiancaOcr: 100, ocrFalhou: false, codigos: [] } };
+  let referencias = [];
+  const chamadasReferencias = [];
+  let analiseRecuperada = 0;
+  let anexoAberto = 0;
+  const auditoria = {
+    async iniciarTurno() { return { id: 'turn-2', traceId: 'trace-2', iniciadoEm: new Date() }; },
+    paraTelemetria() { return null; },
+    async listarMensagens() { return [
+      { role: 'user', content: 'Gere um anúncio base para a FID com essa máquina de lavar.' },
+      { role: 'assistant', content: 'Não consigo gerar a imagem diretamente neste turno.' }
+    ]; },
+    async registrarMensagem(_turno, mensagem) { return { id: mensagem.papel === 'user' ? 'message-2' : 'message-3' }; },
+    async registrarEvento() {}, async registrarUsoServico() {}, async concluirTurno() { return null; }
+  };
+  const cache = { intent: { route: 'local_file' }, exactFacts: [], evidenceRefs: [], relations: [],
+    localOperations: [], routingSignals: {}, security: { highestClassification: 'conversa_privada' },
+    manifests: [{ attachmentId: 'attachment-previous', fileName: 'lavadora.png', format: 'png' }],
+    bytes: 128 };
+  await executarAssistente('Agora gere a imagem que pedi, por favor.', {
+    memoria: { ...memoriaFalsa(), pool: {} }, auditoriaIA: auditoria, governanca: governancaFalsa(),
+    sourceMode: 'automatico', imageMode: 'local', imageGenerationMode: 'v1',
+    attachmentIntelligenceMode: 'v1', filesMode: 'v1', conversationId: 'conversation',
+    servicoAnexos: { async abrir() { anexoAberto += 1; return anexo; } },
+    servicoInteligenciaAnexos: {
+      async carregarAnaliseRecente() { analiseRecuperada += 1; return { analysisRef: 'analysis-1' }; },
+      async carregarRepresentacoesDaAnalise() { return [{ item: anexo.item }]; },
+      async obterAnaliseEmCache() { return { cacheHit: true, analysisRef: 'analysis-1', resultado: cache }; }
+    },
+    servicoImagens: { async gerar(_conversationId, _turnId, _spec, opcoes) {
+      referencias = opcoes.referenceImages; chamadasReferencias.push(opcoes.referenceImages);
+      return { id: 'image-2', kind: 'image', provider: 'mock', model: 'mock-image',
+        bytes: 10, brandMode: 'visual_identity', validation: {} };
+    } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools, mensagens, toolChoice }) {
+      assert.equal(toolChoice, 'gerar_imagem');
+      assert.match(mensagens.at(-1).content, /AUTHORIZED_IMAGE_REQUEST_CONTEXT/);
+      const gerar = tools.find((item) => item.definicao.name === 'gerar_imagem');
+      assert.ok(gerar);
+      await gerar.executar({ action: 'generate', title: 'Anúncio FID',
+        prompt: 'Crie o anúncio solicitado com a lavadora da referência.', format: 'png',
+        preset: 'square', quality: 'medium', brandMode: 'visual_identity', regenerateBase: true,
+        replaceTextLayers: false, sourceArtifactId: '', logo: { enabled: false,
+          anchor: 'top-left', widthPercent: 12, marginPercent: 4, contrastTreatment: 'none' },
+        textBlocks: [], shapeBlocks: [] });
+      return { texto: 'A imagem foi gerada.', provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.equal(analiseRecuperada, 1);
+  assert.equal(anexoAberto, 1);
+  assert.deepEqual(chamadasReferencias.map((itens) => itens.length), [1]);
+  assert.equal(referencias.length, 1);
+  assert.equal(referencias[0].attachmentId, 'attachment-previous');
+});
+
+test('imagem original resolve o primeiro anexo autorizado da conversa', async () => {
+  const catalogo = [
+    { alias: 'anexo-1', source: 'attachment', attachmentId: 'original', mediaType: 'image/png',
+      description: 'Anúncio com lava e seca Praxis' },
+    { alias: 'anexo-2', source: 'attachment', attachmentId: 'produto', mediaType: 'image/png',
+      description: 'Lava e seca preta de outra marca' },
+    { alias: 'arte-1', source: 'artifact', artifactId: 'arte-atual', mediaType: 'image/png' }
+  ];
+  assert.deepEqual(aliasesImagemInferidos(
+    'Troque a lavadora branca pela Praxis da imagem original.', catalogo
+  ), ['anexo-1']);
+  let aberto = null;
+  const referencias = await resolverReferenciasCatalogo({
+    // Mesmo se o modelo selecionar imagens demais, a referência ordinal
+    // explícita do usuário deve prevalecer.
+    argumentos: { referenceImageAliases: ['anexo-1', 'anexo-2'] },
+    pergunta: 'Troque a lavadora branca pela Praxis da imagem original.',
+    catalogo, referenciasAtuais: [],
+    dependencias: {
+      conversationId: 'conversation', imageContext: { artifactId: 'arte-atual' },
+      servicoAnexos: { async abrir(_conversationId, attachmentId) {
+        aberto = attachmentId; return { item: { id: attachmentId, media_type: 'image/png',
+          file_name: 'original.png', classification: 'conversa_privada' }, buffer: Buffer.from('original') };
+      } },
+      servicoImagens: { async abrirReferencia() { throw new Error('não deveria abrir a arte atual'); } }
+    }
+  });
+  assert.equal(aberto, 'original');
+  assert.equal(referencias.length, 1);
+  assert.equal(referencias[0].alias, 'anexo-1');
+  assert.deepEqual(referencias[0].buffer, Buffer.from('original'));
+});
+
+test('descrição opcional permite localizar uma imagem original que não foi a primeira', () => {
+  const catalogo = [
+    { alias: 'anexo-1', source: 'attachment', description: 'Anúncio genérico com fundo verde' },
+    { alias: 'anexo-2', source: 'attachment', description: 'Lava e seca Praxis branca' }
+  ];
+  assert.deepEqual(aliasesImagemInferidos(
+    'Use a lava e seca Praxis da imagem original.', catalogo
+  ), ['anexo-2']);
+  assert.deepEqual(aliasesImagemInferidos('Use a imagem original.', catalogo), []);
+});
+
+test('catálogo permite ao agente selecionar uma imagem anterior sem expor IDs persistidos', async () => {
+  const original = Buffer.from('imagem-original');
+  let referencias = [];
+  const auditoria = {
+    async iniciarTurno() { return { id: 'turn-catalog', traceId: 'trace-catalog', iniciadoEm: new Date() }; },
+    paraTelemetria() { return null; },
+    async listarMensagens() { return [
+      { role: 'user', content: 'Usei duas imagens para criar este anúncio.' },
+      { role: 'assistant', content: 'O anúncio foi criado.' }
+    ]; },
+    async registrarMensagem(_turno, mensagem) { return { id: mensagem.papel === 'user' ? 'msg-user' : 'msg-assistant' }; },
+    async registrarEvento() {}, async registrarUsoServico() {}, async concluirTurno() { return null; }
+  };
+  await executarAssistente('Troque a lavadora branca pela Praxis da imagem original.', {
+    memoria: { ...memoriaFalsa(), pool: {} }, auditoriaIA: auditoria,
+    governanca: governancaFalsa(), sourceMode: 'automatico', imageGenerationMode: 'v1',
+    attachmentIntelligenceMode: 'off', conversationId: 'conversation',
+    imageContext: { artifactId: 'arte-atual', action: 'edit' },
+    servicoAnexos: {
+      async listarImagens() { return [
+        { alias: 'anexo-1', source: 'attachment', attachmentId: 'original',
+          name: 'original.png', message: 'Primeira imagem: anúncio com a Praxis.' },
+        { alias: 'anexo-2', source: 'attachment', attachmentId: 'produto',
+          name: 'produto.png', message: 'Segunda imagem: lava e seca preta.' }
+      ]; },
+      async abrir(_conversationId, attachmentId) {
+        assert.equal(attachmentId, 'original');
+        return { item: { id: attachmentId, media_type: 'image/png', file_name: 'original.png',
+          classification: 'conversa_privada' }, buffer: original };
+      }
+    },
+    servicoImagens: {
+      async listarCatalogo() { return [{ alias: 'arte-1', source: 'artifact',
+        artifactId: 'arte-atual', name: 'anuncio.png', version: 1 }]; },
+      async gerar(_conversationId, _turnId, _spec, opcoes) {
+        referencias = opcoes.referenceImages;
+        return { id: 'arte-nova', kind: 'image', provider: 'mock', model: 'mock-image',
+          bytes: 10, brandMode: 'none', validation: {} };
+      }
+    },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools, mensagens, toolChoice }) {
+      assert.equal(toolChoice, 'gerar_imagem');
+      assert.match(mensagens.at(-1).content, /AUTHORIZED_IMAGE_CATALOG/);
+      assert.match(mensagens.at(-1).content, /anexo-1/);
+      assert.doesNotMatch(mensagens.at(-1).content, /attachmentId|artifactId/);
+      const gerar = tools.find((item) => item.definicao.name === 'gerar_imagem');
+      await gerar.executar({ action: 'edit', title: 'Anúncio corrigido',
+        prompt: 'Substitua a lavadora branca pela Praxis da imagem original.', format: 'png',
+        preset: 'square', quality: 'medium', brandMode: 'none', regenerateBase: true,
+        replaceTextLayers: false, sourceArtifactId: '', referenceImageAliases: ['anexo-1'],
+        logo: { enabled: false, anchor: 'top-left', widthPercent: 12,
+          marginPercent: 4, contrastTreatment: 'none' }, textBlocks: [], shapeBlocks: [] });
+      return { texto: 'Imagem atualizada.', provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.equal(referencias.length, 1);
+  assert.equal(referencias[0].alias, 'anexo-1');
+  assert.deepEqual(referencias[0].buffer, original);
 });
 
 test('modo Consultar dados não recebe geracao de imagem por acidente', async () => {
@@ -180,6 +392,7 @@ test('modo documentacao força o perfil documental sem depender da frase', async
   });
   assert.equal(perfilRecebido, 'documentacao');
   assert.equal(resultado.texto, 'Abra o manual operacional publicado.');
+  assert.equal(resultado.proveniencia, 'documentacao');
   assert.equal(resultado.politicaFonte.modoSelecionado, 'documentacao');
 });
 

@@ -13,7 +13,13 @@ const definicaoGerarImagem = Object.freeze({
       brandMode: { type: 'string', enum: ['none', 'visual_identity', 'full_brand'] },
       regenerateBase: { type: 'boolean' },
       replaceTextLayers: { type: 'boolean' },
-      sourceArtifactId: { type: 'string' },
+      // O modelo nunca escolhe identificadores persistidos. Uma imagem anterior
+      // somente pode ser selecionada pelo Hub e chega em dependencias.imageContext.
+      sourceArtifactId: { type: 'string', enum: [''],
+        description: 'Deixe vazio; a fonte autorizada é vinculada pelo Nexus.' },
+      referenceImageAliases: { type: 'array', maxItems: 4,
+        description: 'Aliases do catálogo autorizado de imagens que precisam ser enviados como referências visuais. Use [] quando nenhuma imagem anterior for necessária.',
+        items: { type: 'string', minLength: 1, maxLength: 40 } },
       logo: { type: 'object', additionalProperties: false, properties: {
         enabled: { type: 'boolean' },
         anchor: { type: 'string', enum: ['top-left','top-center','top-right','center-left','center','center-right','bottom-left','bottom-center','bottom-right'] },
@@ -38,7 +44,7 @@ const definicaoGerarImagem = Object.freeze({
         required: ['id','shape','anchor','widthPercent','heightPercent','color','opacity','rotation'] } }
     },
     required: ['action','title','prompt','format','preset','quality','brandMode','regenerateBase','replaceTextLayers',
-      'sourceArtifactId','logo','textBlocks','shapeBlocks']
+      'sourceArtifactId','referenceImageAliases','logo','textBlocks','shapeBlocks']
   }
 });
 
@@ -49,6 +55,9 @@ async function executarGerarImagem(argumentos, dependencias = {}) {
   }
   const patch = dependencias.imageContext?.compositionPatch || {};
   const spec = { ...argumentos,
+    // Defesa em profundidade: descarte qualquer ID sugerido pelo modelo. O
+    // servico recebe o artifactId autorizado separadamente em imageContext.
+    sourceArtifactId: '',
     ...(dependencias.imageOutputFormat ? { format: dependencias.imageOutputFormat } : {}),
     logo: { ...argumentos.logo,
     ...(patch.logoAnchor ? { anchor: patch.logoAnchor } : {}),
@@ -61,6 +70,7 @@ async function executarGerarImagem(argumentos, dependencias = {}) {
       classification: dependencias.imageClassification || 'conversa_privada',
       mode: dependencias.imageGenerationMode,
       imageContext: dependencias.imageContext || null,
+      referenceImages: dependencias.imageReferenceAttachments || [],
       onStage: dependencias.onImageStage
     });
 }

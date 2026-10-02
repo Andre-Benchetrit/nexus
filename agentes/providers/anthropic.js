@@ -5,6 +5,7 @@ const {
 } = require('./telemetria');
 const { normalizarArgumentosPeloSchema } = require('./schema');
 const { emitirCheckpoint } = require('./checkpoints');
+const { validarToolChoice } = require('./tool_choice');
 
 function converterToolAnthropic(definicao) {
   return {
@@ -51,12 +52,14 @@ function criarProviderAnthropic(opcoes = {}) {
     purpose = 'corporate_query',
     parentCallId = null,
     fallbackFromCallId = null,
-    returnAfterTerminalTool = false
+    returnAfterTerminalTool = false,
+    toolChoice = null
   }) {
     const client = obterCliente();
     const ferramentas = tools?.length
       ? tools
       : definicaoTool ? [{ definicao: definicaoTool, executar: executarTool, terminal: true }] : [];
+    const toolEscolhida = validarToolChoice(toolChoice, ferramentas);
     const messages = mensagens?.length
       ? mensagens.map((item) => ({ role: item.role, content: item.content }))
       : [{ role: 'user', content: pergunta }];
@@ -94,7 +97,10 @@ function criarProviderAnthropic(opcoes = {}) {
           messages: structuredClone(messages),
           ...(definicoes.length ? {
             tools: definicoes,
-            tool_choice: deveFinalizar ? { type: 'none' } : { type: 'auto' }
+            tool_choice: deveFinalizar ? { type: 'none' }
+              : !houveTool && toolEscolhida
+                ? { type: 'tool', name: toolEscolhida }
+                : { type: 'auto' }
           } : {})
         }),
         normalizarResposta: (resposta) => ({

@@ -152,6 +152,36 @@ function normalizarArgumentosPeloSchema(valor, schema) {
   return valor;
 }
 
+// A Responses API exige que todos os campos de uma tool strict sejam enviados.
+// Para representar um campo opcional, o schema entregue ao provider o torna
+// anulavel. Antes de executar a tool interna, removemos somente esses nulls
+// artificiais, preservando null quando ele ja fazia parte do contrato original.
+function removerNulosOpcionaisOpenAI(valor, schema) {
+  if (valor == null || !schema || typeof schema !== 'object') return valor;
+
+  if (Array.isArray(valor)) {
+    return valor.map((item) => removerNulosOpcionaisOpenAI(item, schema.items));
+  }
+
+  if (typeof valor === 'object') {
+    const obrigatorios = new Set(schema.required || []);
+    const resultado = {};
+    for (const [chave, item] of Object.entries(valor)) {
+      const propriedade = schema.properties?.[chave];
+      if (
+        item === null && propriedade && !obrigatorios.has(chave) &&
+        !aceitaNulo(propriedade)
+      ) {
+        continue;
+      }
+      resultado[chave] = removerNulosOpcionaisOpenAI(item, propriedade);
+    }
+    return resultado;
+  }
+
+  return valor;
+}
+
 function tornarSchemaAnulavel(schema) {
   if (!schema || typeof schema !== 'object' || aceitaNulo(schema)) return schema;
   if (Array.isArray(schema.anyOf)) {
@@ -192,6 +222,65 @@ function normalizarSchemaEstritoOpenAI(schema) {
   return copia;
 }
 
+function auditarSchemaEstritoOpenAI(schema) {
+  const erros = [];
+  const palavrasPermitidas = new Set([
+    'type', 'description', 'enum', 'properties', 'required', 'additionalProperties',
+    'items', 'anyOf', 'minItems', 'maxItems', 'minLength', 'maxLength', 'minimum',
+    'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'pattern', 'format'
+  ]);
+
+  function visitar(atual, caminho) {
+    if (!atual || typeof atual !== 'object' || Array.isArray(atual)) {
+      erros.push(`${caminho}: schema ausente ou invalido`);
+      return;
+    }
+    if (Object.keys(atual).length === 0) {
+      erros.push(`${caminho}: schema livre nao e aceito em tools strict`);
+      return;
+    }
+    for (const palavra of Object.keys(atual)) {
+      if (!palavrasPermitidas.has(palavra)) {
+        erros.push(`${caminho}: palavra de schema nao suportada ${palavra}`);
+      }
+    }
+    if (atual.properties && typeof atual.properties === 'object') {
+      const propriedades = Object.keys(atual.properties);
+      const obrigatorios = Array.isArray(atual.required) ? atual.required : [];
+      if (atual.additionalProperties !== false) {
+        erros.push(`${caminho}: additionalProperties deve ser false`);
+      }
+      for (const nome of propriedades) {
+        if (!obrigatorios.includes(nome)) {
+          erros.push(`${caminho}: required nao inclui ${nome}`);
+        }
+        visitar(atual.properties[nome], `${caminho}.${nome}`);
+      }
+      for (const nome of obrigatorios) {
+        if (!Object.hasOwn(atual.properties, nome)) {
+          erros.push(`${caminho}: required referencia propriedade inexistente ${nome}`);
+        }
+      }
+    }
+    const tipos = Array.isArray(atual.type) ? atual.type : [atual.type].filter(Boolean);
+    if (tipos.includes('array') && !atual.items) {
+      erros.push(`${caminho}: array deve declarar items`);
+    }
+    if (atual.items) visitar(atual.items, `${caminho}[]`);
+    for (const combinador of ['anyOf']) {
+      (atual[combinador] || []).forEach((item, indice) => (
+        visitar(item, `${caminho}.${combinador}[${indice}]`)
+      ));
+    }
+  }
+
+  visitar(schema, '$');
+  if (!schema || schema.type !== 'object') {
+    erros.push('$: parameters de uma function tool deve ter type object');
+  }
+  return erros;
+}
+
 module.exports = {
   aceitaNulo,
   flexibilizarCamposNulos,
@@ -199,5 +288,7 @@ module.exports = {
   flexibilizarTiposPrimitivos,
   removerNulosDoSchema,
   normalizarSchemaEstritoOpenAI,
-  normalizarArgumentosPeloSchema
+  normalizarArgumentosPeloSchema,
+  removerNulosOpcionaisOpenAI,
+  auditarSchemaEstritoOpenAI
 };

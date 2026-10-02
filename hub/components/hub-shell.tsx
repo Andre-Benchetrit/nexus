@@ -947,7 +947,7 @@ export function HubShell({ profile, initialConversationId }: {
                 </>}
                 {message.role === "assistant" && <footer className="message-footer">
                   <div className="message-meta">
-                    {message.provenance && <span className="source-chip">{{ dados_nexus: "◆ Dados do Sysemp", web: "◇ Fontes web",
+                    {message.provenance && <span className="source-chip">{{ dados_nexus: "◆ Dados do Sysemp", documentacao: "▤ Documentação FID", web: "◇ Fontes web",
                       arquivo: "▧ Arquivo", imagem: "▧ Imagem", misto: "✦ Fontes combinadas", conhecimento_geral: "◇ Conhecimento geral" }[message.provenance] || "◇ Conhecimento geral"}</span>}
                     {message.traceId && <span title={message.traceId}>Trace {message.traceId.slice(0, 8)}</span>}
                   </div>
