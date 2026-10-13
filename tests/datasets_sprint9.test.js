@@ -107,6 +107,29 @@ test('pedido natural de planilha refaz o ranking quando o limite mudou antes de 
   ).fluxo, 'exportar_resultado');
 });
 
+test('continuação analítica transforma o result_ref sem depender do domínio da conversa', () => {
+  const referenciaAnterior = {
+    tipo: 'result_ref', quantidadeLinhas: 30,
+    origem: { ferramenta: 'consultar_bloqueios_sem_estoque', tabela: 'dados' }
+  };
+  for (const pergunta of [
+    'Pode fazer a listagem desses pedidos separando por produto?',
+    'Agrupe esse resultado por canal e conte os pedidos.',
+    'Quantos registros dessa lista existem por SKU?',
+    'Ordene esses dados por quantidade.'
+  ]) {
+    assert.equal(classificarFluxoDatasets(pergunta, {
+      possuiRefAnterior: true, referenciaAnterior
+    }).fluxo, 'transformar_resultado', pergunta);
+  }
+  assert.equal(classificarFluxoDatasets('Como você chegou nessa conclusão?', {
+    possuiRefAnterior: true, referenciaAnterior
+  }).fluxo, 'padrao');
+  assert.equal(classificarFluxoDatasets('Desses produtos, quais estão sem estoque agora?', {
+    possuiRefAnterior: true, referenciaAnterior
+  }).fluxo, 'padrao');
+});
+
 test('intenção de geração cobre pedidos naturais sem depender de uma consulta específica', () => {
   for (const pedido of [
     'Faça uma planilha com esses produtos',

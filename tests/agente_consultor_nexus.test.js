@@ -9,7 +9,8 @@ const {
 const {
   aplicarGarantiasResposta,
   corrigirAlegacaoAusenciaDocumental,
-  formatarDatasResposta
+  formatarDatasResposta,
+  formatarRespostaCorporativaDeterministica
 } = require('../agentes/resposta');
 const {
   FERRAMENTAS_NEGOCIO,
@@ -104,6 +105,58 @@ test('ranking de produto usa codigo auxiliar real e nunca renomeia id como SKU',
   assert.match(resposta, /Código auxiliar \(SKU\)/);
   assert.match(resposta, /PHPLS11A1/);
   assert.doesNotMatch(resposta, /SKU \(ID\)/);
+});
+
+test('fallback determinístico preserva evolução de produtos quando a síntese expira', async () => {
+  const resultadoTool = {
+    fonte: 'Dados do Sysemp',
+    periodo: { inicio: '2026-07-01', fim: '2026-09-30' },
+    metricas: ['pedidos', 'quantidade_faturada', 'faturamento_emitido'],
+    definicoes_metricas: {
+      pedidos: { rotulo: 'Pedidos distintos' },
+      quantidade_faturada: { rotulo: 'Unidades faturadas' },
+      faturamento_emitido: { rotulo: 'Faturamento emitido' }
+    },
+    cobertura_fontes: { comprova_integridade_da_carga: false },
+    dados: [{
+      periodo: '2026-07-01', descricao_produto: 'Produto A', sku: 'SKU-A',
+      pedidos: 46, quantidade_faturada: 43, faturamento_emitido: 1234.56
+    }],
+    atualizado_em: '2026-10-05T14:00:00Z'
+  };
+  const respostaDireta = formatarRespostaCorporativaDeterministica([{
+    nome: 'analisar_evolucao_produto', resultado: resultadoTool
+  }]);
+  assert.match(respostaDireta, /Pedidos distintos/);
+  assert.match(respostaDireta, /46/);
+  assert.match(respostaDireta, /R\$\s*1\.234,56/);
+  assert.doesNotMatch(respostaDireta, /indisponível/i);
+
+  const provider = {
+    nome: 'anthropic', modelo: 'claude-teste',
+    async executar({ tools }) {
+      await tools[0].executar({});
+      const erro = new Error('Request timed out after 20000ms');
+      erro.code = 'ETIMEDOUT';
+      throw erro;
+    }
+  };
+  const ferramenta = {
+    definicao: {
+      type: 'function', name: 'analisar_evolucao_produto', description: 'teste', strict: true,
+      parameters: { type: 'object', properties: {}, required: [], additionalProperties: false }
+    },
+    executar: async () => resultadoTool,
+    terminal: false
+  };
+  const resultado = await executarAgente('Compare os produtos entre julho e setembro.', {
+    provider, tools: [ferramenta], semanticEscalationMode: 'off'
+  });
+  assert.equal(resultado.provider, 'nexus');
+  assert.equal(resultado.fallbackDeterministico, true);
+  assert.equal(resultado.roteamento.fallbackDeterministico.aplicado, true);
+  assert.match(resultado.texto, /Produto A/);
+  assert.doesNotMatch(resultado.texto, /consulta corporativa.*indisponível/i);
 });
 
 test('delega a execução para um provider com contrato comum', async () => {

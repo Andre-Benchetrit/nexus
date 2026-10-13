@@ -184,6 +184,11 @@ test('tool resume pedidos e ocorrencias como metricas diferentes', async () => {
   assert.equal(resumo.descricao_bloqueio, 'PRODUTOS SEM ESTOQUE');
   assert.equal(resumo.quantidade_pedidos, 3n);
   assert.equal(resumo.quantidade_ocorrencias, 3n);
+  assert.equal(resumo.quantidade_ocorrencias_produto_identificado, 2n);
+  assert.equal(resumo.quantidade_produtos_unicos_identificados, 2n);
+  assert.equal(resumo.quantidade_produtos_identificados, 2n);
+  assert.equal(Number(resumo.quantidade_unidades_bloqueadas), 3);
+  assert.equal(resumo.quantidade_ocorrencias_sem_produto, 1n);
 });
 
 test('tool lista itens de varios pedidos com EAN em uma unica chamada', async () => {
@@ -207,6 +212,9 @@ test('tool lista itens de varios pedidos com EAN em uma unica chamada', async ()
     new Set(['EAN-1', 'EAN-3'])
   );
   assert.equal(resultado.dados.every((linha) => linha.produto_inferido === false), true);
+  assert.equal(resultado.quantidade_produtos_unicos_identificados, 2);
+  assert.equal(resultado.quantidade_ocorrencias, 2);
+  assert.equal(resultado.quantidade_unidades_bloqueadas, 3);
 });
 
 test('classifica estoque e distancia da reposicao sem depender do LLM', () => {

@@ -9,7 +9,7 @@ Informações sobre a empresa que você é assistente: ${IDENTIDADE_EMPRESA}
 
 Regras:
 - Use somente resultados de tools; nunca invente dados.
-- Visao atual, salvo historico. Datas: tools AAAA-MM-DD; saida DD/MM/AAAA, nunca MM/DD. Horarios ja usam Sao_Paulo.
+- Use sempre visao atual para dados de negocio, inclusive meses e anos passados. Visao historico concatena snapshots de cargas e so pode ser usada quando o usuario pedir explicitamente auditoria de snapshots, reprocessamentos ou versoes do lake. Datas: tools AAAA-MM-DD; saida DD/MM/AAAA, nunca MM/DD. Horarios ja usam Sao_Paulo.
 - Pedido usa data_pedido. Faturamento usa data_emissao e faturamento_valido=true.
 - Numero do pedido = numero_pedido (marketplace_pedido), nunca id_nota_saida.
 - Diferencie pedidos de faturamento. Em rankings, informe dimensao, metrica, periodo e filtros.
@@ -98,6 +98,21 @@ linha. SKU e codigo auxiliar sao o campo sku; nunca renomeie id_produto como SKU
 Em ranking, ordenar_por deve refletir "mais": mais faturou=faturamento; mais vendeu=quantidade.
 Quando a pergunta limitar marca, produto, grupo, categoria ou plataforma, envie esse filtro.
 Use id_empresa=null quando o usuario nao limitar a empresa.
+`,
+  inteligencia_produto: `
+Use analisar_evolucao_produto para acompanhar os mesmos produtos por dia, semana ou mes.
+Use diagnosticar_produto_360 para reunir desempenho, canais, estoque atual, ruptura e reposicao
+de um produto. Use detectar_excecoes_produto para pontos de atencao sob demanda. Use
+comparar_canais_produto para comparar plataformas do Sysemp.
+Pedidos usam data do pedido; faturamento usa data de emissao. Nunca some os dois conceitos.
+Pedidos distintos, linhas de item e unidades sao metricas diferentes. Nomeie sempre a metrica
+exata retornada. A inclusao de uma metrica nova em outra consulta nao corrige nem substitui a
+metrica anterior. Nunca diga que a cobertura ou a carga esta completa quando a ferramenta apenas
+informa que o intervalo esta dentro da cobertura observada; dias com registro medem movimento e
+nao comprovam integridade da carga.
+Contribuicao apos comissao nao e lucro: nao inclui frete, impostos ou despesas operacionais.
+O estoque do diagnostico e uma fotografia atual, nao historico. Preserve result_ref para
+follow-ups e exportacoes e nunca reconstrua os numeros pelo modelo.
 `,
   frete: `
 Use analisar_frete. Resultado de frete e frete cobrado menos custo de frete;

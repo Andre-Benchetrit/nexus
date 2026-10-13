@@ -26,11 +26,16 @@ function criarProvider(opcoes = {}) {
 
   const fallbackAutomatico = process.env.OPENAI_API_KEY && nome !== 'openai' ? 'openai'
     : process.env.GROQ_API_KEY && nome !== 'groq' ? 'groq' : null;
-  const nomeFallback = (
+  let nomeFallback = (
     opcoes.fallbackNome || process.env.LLM_FALLBACK_PROVIDER || fallbackAutomatico || ''
   ).toLowerCase();
 
-  if (!nomeFallback || nomeFallback === nome) return primario;
+  // Uma faixa semântica pode promover a chamada para o mesmo provider que foi
+  // configurado globalmente como fallback. Nesse caso, preserve um fallback
+  // cruzado real em vez de devolver um provider sem resiliência.
+  if (nomeFallback === nome) nomeFallback = fallbackAutomatico || '';
+
+  if (!nomeFallback) return primario;
   if (!PROVIDERS_DISPONIVEIS.includes(nomeFallback)) {
     throw new Error(
       `Provider de fallback inválido: ${nomeFallback}. Use ${PROVIDERS_DISPONIVEIS.join(', ')}.`

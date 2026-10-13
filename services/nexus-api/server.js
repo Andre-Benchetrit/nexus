@@ -407,7 +407,8 @@ async function criarServidor(opcoes = {}) {
   app.get('/v1/conversations/:id/artifacts/:artifactId', async (request, reply) => {
     const servicoArtefatos = artefatos(request);
     const metadados = await servicoArtefatos.obter(request.params.id, request.params.artifactId);
-    await exigirPermissao(request, metadados.artifact_kind === 'image' ? 'ia.imagem.gerar' : 'ia.arquivo.gerar', metadados.department_id,
+    const grafico = metadados.safe_metadata?.chart === true;
+    await exigirPermissao(request, metadados.artifact_kind === 'image' && !grafico ? 'ia.imagem.gerar' : 'ia.arquivo.gerar', metadados.department_id,
       'Você não possui permissão para baixar este arquivo gerado.');
     const { item, buffer } = await servicoArtefatos.abrir(request.params.id, request.params.artifactId);
     reply.header('Content-Type', item.media_type);
@@ -698,6 +699,14 @@ async function criarServidor(opcoes = {}) {
   app.patch('/v1/admin/departments/:id', async (request) =>
     servico(request).atualizarSetor(request.params.id, request.body || {}));
   app.get('/v1/admin/usage', async (request) => servico(request).relatorioCustos(request.query || {}));
+  app.get('/v1/admin/audit/overview', async (request) =>
+    servico(request).auditoriaOverview(request.query || {}));
+  app.get('/v1/admin/audit/activity', async (request) =>
+    servico(request).auditoriaAtividade(request.query || {}));
+  app.get('/v1/admin/audit/glossary', async (request) =>
+    servico(request).auditoriaGlossario());
+  app.get('/v1/admin/audit/traces/:traceId', async (request) =>
+    servico(request).obterTrace(request.params.traceId));
   app.get('/v1/admin/audit', async (request) => servico(request).listarAuditoria(request.query || {}));
   app.get('/v1/admin/audit/:traceId', async (request) => servico(request).obterTrace(request.params.traceId));
   app.get('/v1/admin/memory-candidates', async (request) =>
@@ -705,7 +714,7 @@ async function criarServidor(opcoes = {}) {
   app.post('/v1/admin/memory-candidates/:id/review', async (request) =>
     servico(request).revisarCandidaturaMemoria(request.params.id, request.body || {}));
   app.get('/v1/admin/lake', async (request) => {
-    await servico(request).listarAuditoria({ limite: 1 });
+    await servico(request).consultarLake();
     const health = await lakeStorage.verificarSaude();
     const eventos = (await pool.query(`SELECT resultado,metadados,criado_em FROM nexus.audit_events
       WHERE tipo='lake_scheduler' ORDER BY criado_em DESC LIMIT 10`)).rows;

@@ -94,6 +94,26 @@ const {
   definicaoConsultarConjuntoNexus,
   executarConsultarConjuntoNexus
 } = require('../tools/consultar_conjunto_nexus');
+const {
+  definicaoConsultarResultadoNexus,
+  executarConsultarResultadoNexus
+} = require('../tools/consultar_resultado_nexus');
+const {
+  definicaoAnalisarEvolucaoProduto,
+  executarAnalisarEvolucaoProduto
+} = require('../tools/analisar_evolucao_produto');
+const {
+  definicaoDiagnosticarProduto360,
+  executarDiagnosticarProduto360
+} = require('../tools/diagnosticar_produto_360');
+const {
+  definicaoDetectarExcecoesProduto,
+  executarDetectarExcecoesProduto
+} = require('../tools/detectar_excecoes_produto');
+const {
+  definicaoCompararCanaisProduto,
+  executarCompararCanaisProduto
+} = require('../tools/comparar_canais_produto');
 
 const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_indicadores',
@@ -107,6 +127,10 @@ const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_vendas',
   'analisar_catalogo',
   'analisar_pessoas',
+  'analisar_evolucao_produto',
+  'diagnosticar_produto_360',
+  'detectar_excecoes_produto',
+  'comparar_canais_produto',
   'consultar_documentacao',
   'consultar_bloqueios_sem_estoque',
   'diagnosticar_bloqueio_sem_estoque',
@@ -125,6 +149,10 @@ const PERFIL_POR_FERRAMENTA = Object.freeze({
   analisar_vendas: 'vendas',
   analisar_catalogo: 'catalogo',
   analisar_pessoas: 'pessoas',
+  analisar_evolucao_produto: 'inteligencia_produto',
+  diagnosticar_produto_360: 'inteligencia_produto',
+  detectar_excecoes_produto: 'inteligencia_produto',
+  comparar_canais_produto: 'inteligencia_produto',
   consultar_documentacao: 'documentacao',
   consultar_bloqueios_sem_estoque: 'bloqueios_estoque',
   diagnosticar_bloqueio_sem_estoque: 'bloqueios_estoque',
@@ -140,6 +168,12 @@ const PERFIL_POR_FERRAMENTA = Object.freeze({
 
 const PERFIS_TOOLS = Object.freeze({
   produto: ['resolver_produto'],
+  inteligencia_produto: [
+    'analisar_evolucao_produto',
+    'diagnosticar_produto_360',
+    'detectar_excecoes_produto',
+    'comparar_canais_produto'
+  ],
   indicadores: ['analisar_indicadores'],
   influencias: ['analisar_influencias'],
   estoque: ['resolver_produto', 'analisar_rupturas', 'analisar_giro_estoque'],
@@ -260,6 +294,30 @@ function criarRegistroFerramentas(dependencias = {}) {
       terminal: true,
       executar: dependencias.executarAnalisarPessoasTool || executarAnalisarPessoas
     }],
+    ['analisar_evolucao_produto', {
+      definicao: definicaoAnalisarEvolucaoProduto,
+      terminal: true,
+      executar: dependencias.executarAnalisarEvolucaoProdutoTool || ((argumentos) =>
+        executarAnalisarEvolucaoProduto(argumentos, dependencias))
+    }],
+    ['diagnosticar_produto_360', {
+      definicao: definicaoDiagnosticarProduto360,
+      terminal: true,
+      executar: dependencias.executarDiagnosticarProduto360Tool || ((argumentos) =>
+        executarDiagnosticarProduto360(argumentos, dependencias))
+    }],
+    ['detectar_excecoes_produto', {
+      definicao: definicaoDetectarExcecoesProduto,
+      terminal: true,
+      executar: dependencias.executarDetectarExcecoesProdutoTool || ((argumentos) =>
+        executarDetectarExcecoesProduto(argumentos, dependencias))
+    }],
+    ['comparar_canais_produto', {
+      definicao: definicaoCompararCanaisProduto,
+      terminal: true,
+      executar: dependencias.executarCompararCanaisProdutoTool || ((argumentos) =>
+        executarCompararCanaisProduto(argumentos, dependencias))
+    }],
     ['consultar_documentacao', {
       definicao: definicaoConsultarDocumentacao,
       terminal: true,
@@ -271,6 +329,12 @@ function criarRegistroFerramentas(dependencias = {}) {
       terminal: true,
       executar: dependencias.executarConsultarConjuntoNexusTool || ((argumentos) =>
         executarConsultarConjuntoNexus(argumentos, dependencias))
+    }],
+    ['consultar_resultado_nexus', {
+      definicao: definicaoConsultarResultadoNexus,
+      terminal: false,
+      executar: dependencias.executarConsultarResultadoNexusTool || ((argumentos) =>
+        executarConsultarResultadoNexus(argumentos, dependencias))
     }],
     ['consultar_silver', {
       definicao: definicaoConsultarSilver,
@@ -366,20 +430,29 @@ function instrumentarFerramentas(ferramentas, onEvento, opcoes = {}) {
       const argumentosPolitica = opcoes.normalizarArgumentos
         ? opcoes.normalizarArgumentos(ferramenta.definicao.name, argumentos)
         : argumentos;
+      const ajustesPolitica = ['visao'].filter((campo) =>
+        argumentos?.[campo] !== argumentosPolitica?.[campo]
+      ).map((campo) => ({
+        campo,
+        recebido: argumentos?.[campo] ?? null,
+        aplicado: argumentosPolitica?.[campo] ?? null,
+        motivo: 'politica_de_consulta'
+      }));
       const normalizacaoVolume = normalizarControlesVolume(
         argumentosPolitica,
         ferramenta.definicao.parameters || {}
       );
       const argumentosEfetivos = normalizacaoVolume.argumentos;
+      const ajustesArgumentos = [...ajustesPolitica, ...normalizacaoVolume.ajustes];
       try {
-        if (normalizacaoVolume.ajustes.length) {
-          onEvento?.(`Argumentos de volume normalizados para ${ferramenta.definicao.name}: ${JSON.stringify(normalizacaoVolume.ajustes)}.`);
+        if (ajustesArgumentos.length) {
+          onEvento?.(`Argumentos normalizados para ${ferramenta.definicao.name}: ${JSON.stringify(ajustesArgumentos)}.`);
           opcoes.estadoExecucao?.checkpoint('tool_arguments_normalized', {
-            dados: { nome: ferramenta.definicao.name, ajustes: normalizacaoVolume.ajustes }
+            dados: { nome: ferramenta.definicao.name, ajustes: ajustesArgumentos }
           });
           await opcoes.onArgumentosNormalizados?.(
             ferramenta.definicao.name,
-            normalizacaoVolume.ajustes
+            ajustesArgumentos
           );
         }
         const politica = {

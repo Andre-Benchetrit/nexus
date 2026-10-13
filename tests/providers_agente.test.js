@@ -8,6 +8,7 @@ const { definicaoConsultarDocumentacao } = require('../tools/consultar_documenta
 const { definicaoAnalisarArquivo } = require('../tools/analisar_arquivo');
 const { definicaoConsultarEvidenciaAnexo } = require('../tools/consultar_evidencia_anexo');
 const { definicaoGerarArquivo } = require('../tools/gerar_arquivo');
+const { definicaoGerarGrafico } = require('../tools/gerar_grafico');
 const { definicaoGerarImagem } = require('../tools/gerar_imagem');
 const { definicaoExportarResultado } = require('../tools/exportar_resultado');
 const { criarRegistroFerramentas } = require('../agentes/ferramentas');
@@ -21,6 +22,7 @@ const { definicaoRegistrarDecisaoRota } = require('../agentes/roteador_semantico
 const { definicaoRegistrarAvaliacao } = require('../agentes/revisor_memoria');
 const { criarProviderOpenAI, converterToolParaOpenAI,
   serializarSaidaToolOpenAI } = require('../agentes/providers/openai');
+const { criarProviderAnthropic } = require('../agentes/providers/anthropic');
 const { auditarSchemaEstritoOpenAI } = require('../agentes/providers/schema');
 const {
   criarProviderGemini,
@@ -73,6 +75,7 @@ test('todas as tools do Nexus possuem contrato compativel com OpenAI strict', ()
     definicaoAnalisarArquivo,
     definicaoConsultarEvidenciaAnexo,
     definicaoGerarArquivo,
+    definicaoGerarGrafico,
     definicaoGerarImagem,
     definicaoExportarResultado
   ];
@@ -80,7 +83,7 @@ test('todas as tools do Nexus possuem contrato compativel com OpenAI strict', ()
     [...definicoesRegistro, ...definicoesDiretas].map((item) => [item.name, item])
   ).values()];
 
-  assert.equal(definicoes.length, 35);
+  assert.equal(definicoes.length, 41);
   for (const definicao of definicoes) {
     const convertida = converterToolParaOpenAI(definicao);
     assert.deepEqual(
@@ -259,6 +262,44 @@ test('provider OpenAI funciona sem tools e usa limite padrao de rodadas', async 
   const resultado = await provider.executar({ pergunta: 'Oi', instrucoes: 'Responda.' });
   assert.equal(resultado.texto, 'Resposta direta.');
   assert.equal('tools' in requisicoes[0], false);
+});
+
+test('provider Anthropic usa teto padrao de 8192 tokens', async () => {
+  const anterior = process.env.ANTHROPIC_MAX_OUTPUT_TOKENS;
+  delete process.env.ANTHROPIC_MAX_OUTPUT_TOKENS;
+  const requisicoes = [];
+  try {
+    const provider = criarProviderAnthropic({ modelo: 'claude-teste', cliente: {
+      messages: { async create(requisicao) {
+        requisicoes.push(requisicao);
+        return { id: 'msg_anthropic_ok', stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'Resposta completa.' }], usage: {} };
+      } }
+    } });
+
+    const resultado = await provider.executar({
+      pergunta: 'Responda.', instrucoes: 'Seja objetivo.', tools: [], maxRodadas: 1
+    });
+
+    assert.equal(resultado.texto, 'Resposta completa.');
+    assert.equal(requisicoes[0].max_tokens, 8192);
+  } finally {
+    if (anterior == null) delete process.env.ANTHROPIC_MAX_OUTPUT_TOKENS;
+    else process.env.ANTHROPIC_MAX_OUTPUT_TOKENS = anterior;
+  }
+});
+
+test('provider Anthropic rejeita resposta interrompida por max_tokens', async () => {
+  const provider = criarProviderAnthropic({ modelo: 'claude-teste', maxTokens: 8192, cliente: {
+    messages: { async create() {
+      return { id: 'msg_anthropic_truncada', stop_reason: 'max_tokens',
+        content: [{ type: 'text', text: 'Resposta parcial' }], usage: {} };
+    } }
+  } });
+
+  await assert.rejects(provider.executar({
+    pergunta: 'Liste tudo.', instrucoes: 'Responda.', tools: [], maxRodadas: 1
+  }), (erro) => erro.codigo === 'LLM_OUTPUT_TRUNCATED' && erro.maxTokens === 8192);
 });
 
 test('provider OpenAI aceita esforco de raciocinio especifico por funcao', async () => {
@@ -462,4 +503,29 @@ test('seleciona provider explicitamente e rejeita nome desconhecido', () => {
   assert.equal(criarProvider({ nome: 'gemini', cliente: {} }).nome, 'gemini');
   assert.equal(criarProvider({ nome: 'openai', cliente: {} }).nome, 'openai');
   assert.throws(() => criarProvider({ nome: 'outro' }), /LLM_PROVIDER inválido/);
+});
+
+test('provider promovido usa fallback cruzado quando coincide com o fallback global', () => {
+  const anteriores = {
+    chave: process.env.OPENAI_API_KEY,
+    modelo: process.env.OPENAI_MODEL,
+    fallback: process.env.LLM_FALLBACK_PROVIDER
+  };
+  process.env.OPENAI_API_KEY = 'teste';
+  process.env.OPENAI_MODEL = 'gpt-teste';
+  process.env.LLM_FALLBACK_PROVIDER = 'anthropic';
+  try {
+    const provider = criarProvider({
+      nome: 'anthropic', modelo: 'claude-teste', cliente: {}, clienteFallback: {}
+    });
+    assert.equal(provider.nome, 'anthropic');
+    assert.equal(provider.fallback.nome, 'openai');
+  } finally {
+    if (anteriores.chave == null) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = anteriores.chave;
+    if (anteriores.modelo == null) delete process.env.OPENAI_MODEL;
+    else process.env.OPENAI_MODEL = anteriores.modelo;
+    if (anteriores.fallback == null) delete process.env.LLM_FALLBACK_PROVIDER;
+    else process.env.LLM_FALLBACK_PROVIDER = anteriores.fallback;
+  }
 });

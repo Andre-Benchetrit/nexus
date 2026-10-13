@@ -58,6 +58,46 @@ test('resolve mes por extenso sem permitir que o modelo invente o ano', () => {
   );
 });
 
+test('resolve todos os meses nomeados como uma unica faixa inclusiva', () => {
+  assert.deepEqual(
+    extrairContextoTemporal(
+      'Compare o produto nos meses de julho, agosto e setembro',
+      '2026-10-02'
+    ),
+    {
+      tipo: 'periodo_explicito', origem: 'meses_nomeados_mais_recentes',
+      inicio: '2026-07-01', fim: '2026-09-30'
+    }
+  );
+  assert.deepEqual(
+    extrairContextoTemporal(
+      'Compare julho, agosto e setembro de 2026',
+      '2026-10-02'
+    ),
+    {
+      tipo: 'periodo_explicito', origem: 'meses_nomeados_com_ano',
+      inicio: '2026-07-01', fim: '2026-09-30'
+    }
+  );
+});
+
+test('resolve sequencias de meses que atravessam a virada do ano', () => {
+  assert.deepEqual(
+    extrairContextoTemporal('Compare dezembro, janeiro e fevereiro', '2026-03-05'),
+    {
+      tipo: 'periodo_explicito', origem: 'meses_nomeados_mais_recentes',
+      inicio: '2025-12-01', fim: '2026-02-28'
+    }
+  );
+  assert.deepEqual(
+    extrairContextoTemporal('Compare dezembro de 2025, janeiro e fevereiro', '2026-03-05'),
+    {
+      tipo: 'periodo_explicito', origem: 'meses_nomeados_com_ano',
+      inicio: '2025-12-01', fim: '2026-02-28'
+    }
+  );
+});
+
 test('converte timestamps tecnicos para Sao Paulo sem alterar datas comerciais', () => {
   assert.equal(
     converterInstanteParaFuso('2026-08-03T12:32:29.487Z'),

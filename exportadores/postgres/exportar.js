@@ -10,7 +10,8 @@ const {
   runDuckDB,
   allDuckDB,
   prepararPostgresDuckDB,
-  conectarPostgresNoDuckDB
+  conectarPostgresNoDuckDB,
+  desconectarPostgresNoDuckDB
 } = require('../../duckdb/connections');
 const { operacaoArquivoComRetentativas } = require('../core/arquivos');
 const { criarCaminhosExportacao, caminhoParaDuckDB } = require('../core/caminhos');
@@ -77,6 +78,7 @@ async function exportarPostgres(entidade, opcoes = {}) {
   const con = criarConexaoDuckDB();
   let erroExportacao = null;
   let conexaoFechada = false;
+  let postgresAnexado = false;
   const arquivoTemporario = path.join(caminhos.diretorio, 'dados.csv.tmp');
   const arquivoChavesTemporario = caminhos.csvChavesAtuaisTemporario;
   let reconciliacaoExclusoes = null;
@@ -90,6 +92,7 @@ async function exportarPostgres(entidade, opcoes = {}) {
       // O protocolo textual faz o PostgreSQL aplicar a conversão para UTF-8.
       await runDuckDB(con, 'SET pg_use_binary_copy=false;');
       await conectarPostgresNoDuckDB(con);
+      postgresAnexado = true;
     }
 
     const arquivoDestino = caminhoParaDuckDB(caminhos.parquet);
@@ -162,6 +165,10 @@ async function exportarPostgres(entidade, opcoes = {}) {
 
     // O manifest.json é o marcador de commit. O leitor ignora qualquer Parquet
     // que tenha sido escrito sem um manifesto de sucesso.
+    if (postgresAnexado) {
+      await desconectarPostgresNoDuckDB(con);
+      postgresAnexado = false;
+    }
     await fecharConexaoDuckDB(con);
     conexaoFechada = true;
 
@@ -208,6 +215,10 @@ async function exportarPostgres(entidade, opcoes = {}) {
     throw error;
   } finally {
     if (!conexaoFechada) {
+      if (postgresAnexado) {
+        try { await desconectarPostgresNoDuckDB(con); } catch (_) { /* preserva erro original */ }
+        postgresAnexado = false;
+      }
       await fecharConexaoDuckDB(con);
       conexaoFechada = true;
     }

@@ -98,20 +98,22 @@ function criarServicoAuditoriaIA(opcoes = {}) {
     return { allowed: true, mode: modo };
   }
 
-  async function iniciarTurno({ finalidade = 'corporate_query', traceId = randomUUID() } = {}) {
+  async function iniciarTurno({ finalidade = 'corporate_query', traceId = randomUUID(),
+    sourceMode = 'automatico' } = {}) {
     const base = await contexto();
     const turno = (await pool.query(`
       INSERT INTO nexus.ai_turns
-        (trace_id, principal_id, conversation_id, department_id, finalidade)
-      VALUES ($1,$2,$3,$4,$5)
+        (trace_id, principal_id, conversation_id, department_id, finalidade, source_mode)
+      VALUES ($1,$2,$3,$4,$5,$6)
       RETURNING id, trace_id, criado_em
-    `, [traceId, base.principalId, base.conversationId, base.departamentoId, finalidade])).rows[0];
+    `, [traceId, base.principalId, base.conversationId, base.departamentoId, finalidade,
+      sourceMode])).rows[0];
     return {
       id: turno.id,
       traceId: turno.trace_id,
       iniciadoEm: turno.criado_em,
       ...base,
-      finalidade
+      finalidade, sourceMode
     };
   }
 

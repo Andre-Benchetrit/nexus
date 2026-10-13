@@ -3,6 +3,7 @@ const PERFIS = Object.freeze([
   'bloqueios_estoque',
   'desempenho', 'frete', 'operacao', 'reposicoes',
   'vendas', 'catalogo', 'pessoas', 'produto',
+  'inteligencia_produto',
   'documentacao',
   'sql', 'negocio', 'hibrido', 'gold', 'silver', 'bronze', 'completo'
 ]);
@@ -53,6 +54,14 @@ function classificarPorRegras(pergunta) {
 
   const influencias = /influenci|contribui|fatores?.{0,45}(respons|explic|caus|por tras|levar|motiv|origin|gerar|provoc)|(?:caus|levou|levaram|motiv).{0,30}(queda|alta|crescimento|variacao|diferenca)|respons.vel.{0,25}(queda|alta|crescimento|variacao|diferenca)/.test(texto);
   if (influencias) return 'influencias';
+
+  const inteligenciaProduto =
+    /diagnostico.{0,8}360|visao.{0,8}360|saude.{0,20}produto/.test(texto) ||
+    /(?:evolucao|historico|trajetoria|tendencia).{0,35}(?:produto|sku)/.test(texto) ||
+    /(?:produto|sku).{0,35}(?:evolucao|historico|trajetoria|tendencia)/.test(texto) ||
+    /(?:compare|comparacao).{0,40}(?:canal|canais|plataforma).{0,30}(?:produto|sku)|(?:produto|sku).{0,40}(?:canal|canais|plataforma)/.test(texto) ||
+    /(?:alertas?|excecoes?|precisam? de atencao|pontos? de atencao).{0,45}(?:produto|estoque|venda|faturamento)/.test(texto);
+  if (inteligenciaProduto) return 'inteligencia_produto';
 
   if (/frete|custo de entrega|custo logistico/.test(texto)) return 'frete';
 

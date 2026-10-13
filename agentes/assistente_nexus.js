@@ -9,8 +9,11 @@ const { criarServicoMemoriaGovernada } = require('../nexus/memoria_governada');
 const { revisarAprendizado } = require('./revisor_memoria');
 const { obterCapacidade } = require('./capacidades');
 const { validarProviderParaDados } = require('./escalonamento_semantico');
-const { validarSinteseCorporativa } = require('./resposta');
-const { consultaDocumentalAncorada } = require('./politicas_tools');
+const {
+  formatarRespostaCorporativaDeterministica,
+  validarSinteseCorporativa
+} = require('./resposta');
+const { consultaDocumentalAncorada, continuacaoDocumental } = require('./politicas_tools');
 const {
   classificarIntencaoPesquisa, criarOrcamentoPesquisa,
   criarWebSearchProvider, extrairConsultaPublica,
@@ -28,11 +31,20 @@ const {
   definicaoConsultarEvidenciaAnexo, executarConsultarEvidenciaAnexo
 } = require('../tools/consultar_evidencia_anexo');
 const { definicaoGerarArquivo, executarGerarArquivo } = require('../tools/gerar_arquivo');
+const { definicaoGerarGrafico, executarGerarGrafico } = require('../tools/gerar_grafico');
 const { definicaoGerarImagem, executarGerarImagem } = require('../tools/gerar_imagem');
 const { executarConsultarConjuntoNexus } = require('../tools/consultar_conjunto_nexus');
+const {
+  definicaoConsultarResultadoNexus,
+  executarConsultarResultadoNexus
+} = require('../tools/consultar_resultado_nexus');
 const { executarExportarResultado } = require('../tools/exportar_resultado');
 const { classificarFluxoDatasets, intencaoExportar } = require('./fluxo_datasets');
 const { ErroDataset, resolverModoDatasets } = require('../nexus/datasets');
+const {
+  extrairSelecaoProdutosDasLinhas,
+  referenciaCoorteProdutos
+} = require('./continuidade_analitica');
 const { classificacaoMaisRestrita } = require('../nexus/attachment_intelligence_store');
 const { obterFerramentaPorNome } = require('./ferramentas');
 const {
@@ -117,6 +129,21 @@ quando houver AUTHORIZED_IMAGE_CATALOG, resolva referencias como "imagem origina
 "arte anterior" semanticamente e informe em referenceImageAliases apenas os aliases realmente necessarios.
 Nao invente aliases, nao diga que nao consegue usar imagens catalogadas e nao solicite novo upload sem uma falha explicita. Uma operacao gera
 apenas uma imagem; variacoes sao novos pedidos.`;
+
+const INSTRUCOES_GRAFICOS = `Quando gerar_grafico estiver disponivel, use-o para pedidos de grafico,
+visualizacao de tendencia ou comparacao visual dos dados corporativos ja consultados. Essa capability
+usa o result_ref autorizado mais recente e calcula agregacoes localmente; nunca envie os numeros para
+gerar_imagem e nunca reconstrua series no prompt. Se nao existir result_ref, explique que primeiro e
+necessario executar uma consulta tabular. Um grafico e uma visualizacao dos dados do Sysemp, nao uma
+imagem criativa nem uma estimativa do modelo.`;
+
+const INSTRUCOES_RESULT_REF = `Quando consultar_resultado_nexus estiver disponivel, ele e a fonte exata
+para continuar trabalhando sobre dados estruturados ja consultados nesta conversa. Use-o sempre que o usuario
+pedir para listar, filtrar, ordenar, agrupar, recontar, resumir ou reorganizar o resultado anterior. Escolha
+semanticamente as colunas adequadas a partir do esquema autorizado; nao dependa de frases fixas. Para contar
+entidades como pedidos ou produtos, prefira contar_distintos sobre o identificador correspondente em vez de
+contar linhas. Os calculos sao executados localmente: nunca reconstrua totais a partir do texto visivel do
+historico. Depois da capability, explique o resultado com linguagem de negocio, sem alterar os numeros.`;
 
 const definicaoConsultarNexus = Object.freeze({
   type: 'function',
@@ -219,6 +246,19 @@ function intencaoCriarImagem(pergunta = '') {
   const texto = String(pergunta).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   return /\b(?:crie|criar|gere|gerar|faca|produza|edite|editar|altere|remova|adicione|mova|aumente|reduza)\b[\s\S]{0,140}\b(?:imagem|banner|post|arte|logo|foto|ilustracao|story|stories|fundo|anuncio|campanha|criativo|peca publicitaria)\b/.test(texto) ||
     /\b(?:imagem|banner|post|arte|logo|foto|ilustracao|story|stories|anuncio|campanha|criativo|peca publicitaria)\b[\s\S]{0,100}\b(?:nova|novo|maior|menor|esquerda|direita|canto|fundo|fid|produto)\b/.test(texto);
+}
+
+function intencaoGerarGrafico(pergunta = '') {
+  const texto = String(pergunta).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return /\b(?:grafico|chart|visualizacao|plote|plotar)\b/.test(texto) &&
+    /\b(?:gere|gerar|crie|criar|faca|mostrar|mostre|compare|evolucao|tendencia|variacao|linha|barra)\b/.test(texto);
+}
+
+function resultadoAnteriorDisponivelParaGrafico({ pergunta = '', modoFonte = 'automatico',
+  modoDatasets = 'off', referencia = null } = {}) {
+  return modoFonte === 'automatico' && modoDatasets === 'v1' &&
+    intencaoGerarGrafico(pergunta) && referencia?.tipo === 'result_ref' &&
+    referencia?.status === 'ready';
 }
 
 function continuacaoCriacaoImagem(pergunta = '', contexto = {}) {
@@ -405,6 +445,18 @@ function formatarResultadoConjunto(resultado) {
   return texto.join('\n');
 }
 
+function contextoResultRef(referencia) {
+  if (!referencia?.id || referencia.status !== 'ready') return '';
+  const colunas = (referencia.colunas || []).map((item) => item.nome || item).filter(Boolean);
+  return `<AUTHORIZED_RESULT_REF>\n${JSON.stringify({
+    id: referencia.id,
+    quantidadeLinhas: referencia.quantidadeLinhas,
+    colunas,
+    origem: referencia.origem || null,
+    regra: 'Use consultar_resultado_nexus para qualquer nova conta ou reorganizacao destes dados.'
+  })}\n</AUTHORIZED_RESULT_REF>\n\n`;
+}
+
 function formatoExportacao(pergunta) {
   const texto = String(pergunta || '').toLowerCase();
   if (/\bpdf\b/.test(texto)) return 'pdf';
@@ -520,7 +572,10 @@ function exigeEntregaCorporativaDireta(resultado) {
     resultado.roteamento?.respostaPronta === true;
 }
 
-function envelopeCorporativo(resultado, { omitirRespostaTecnica = false } = {}) {
+function envelopeCorporativo(resultado, {
+  omitirRespostaTecnica = false,
+  fallbackAnswer = null
+} = {}) {
   const status = resultado.interacao?.status === 'precisa_esclarecimento'
     ? 'precisa_esclarecimento'
     : resultado.interacao?.status === 'nao_suportado' ? 'nao_suportado' : 'sucesso';
@@ -538,6 +593,7 @@ function envelopeCorporativo(resultado, { omitirRespostaTecnica = false } = {}) 
   return {
     status,
     answer: resultado.texto,
+    fallbackAnswer: possuiTextoResposta(fallbackAnswer) ? fallbackAnswer : null,
     directDelivery: omitirRespostaTecnica,
     evidence: {
       status: resultado.roteamento?.evidenciaFactual?.status ||
@@ -668,7 +724,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
   }) : null);
   const turno = auditoria ? await auditoria.iniciarTurno({
     finalidade: 'general_chat',
-    traceId: dependencias.traceId
+    traceId: dependencias.traceId,
+    sourceMode: resolverModoFonte(dependencias.sourceMode)
   }) : {
     id: null, traceId: null, conversationId: null, finalidade: 'general_chat', iniciadoEm: new Date()
   };
@@ -940,13 +997,47 @@ async function executarAssistente(pergunta, dependencias = {}) {
       catch (erro) { dependencias.onEvento?.(`Referências temporárias indisponíveis: ${erro.codigo || erro.message}`); }
     }
     const referenciaResultadoAnterior = referenciasDadosRecentes.find((item) => item.tipo === 'result_ref') || null;
+    const referenciaGraficoAnterior = referenciasDadosRecentes.find((item) =>
+      item.tipo === 'result_ref' && item.status === 'ready') || null;
+    const pedidoGrafico = intencaoGerarGrafico(pergunta);
+    const graficoComResultadoAnterior = resultadoAnteriorDisponivelParaGrafico({
+      pergunta, modoFonte, modoDatasets, referencia: referenciaGraficoAnterior
+    });
+    let selecaoProdutosAnterior = null;
+    if (modoDatasets === 'v1' && referenciaCoorteProdutos(pergunta) &&
+        dependencias.servicoDatasets?.lerLinhas) {
+      const referenciaProdutos = referenciasDadosRecentes.find((item) => {
+        if (item.tipo !== 'result_ref' || item.status !== 'ready') return false;
+        const colunas = new Set((item.colunas || []).map((coluna) => coluna.nome || coluna));
+        return colunas.has('id_produto') || colunas.has('sku') || colunas.has('codigo_auxiliar');
+      });
+      if (referenciaProdutos) {
+        try {
+          const lido = await dependencias.servicoDatasets.lerLinhas(
+            dependencias.conversationId, referenciaProdutos.id, 21
+          );
+          const produtos = extrairSelecaoProdutosDasLinhas(lido.linhas || []);
+          if (produtos?.length) {
+            selecaoProdutosAnterior = {
+              produtos,
+              resultRefId: referenciaProdutos.id
+            };
+          }
+        } catch (erro) {
+          dependencias.onEvento?.(
+            `A seleção estruturada anterior não pôde ser reutilizada: ${erro.codigo || erro.message}`
+          );
+        }
+      }
+    }
     const fluxoDatasetsDetectado = classificarFluxoDatasets(pergunta, {
       possuiXlsx,
       possuiRefAnterior: Boolean(referenciaResultadoAnterior),
       referenciaAnterior: referenciaResultadoAnterior
     });
     const fluxoDatasets = modoFonte === 'geral' &&
-      ['misto', 'misto_e_exportar', 'consultar_e_exportar', 'enriquecer_resultado'].includes(fluxoDatasetsDetectado.fluxo)
+      ['misto', 'misto_e_exportar', 'consultar_e_exportar', 'enriquecer_resultado',
+        'transformar_resultado'].includes(fluxoDatasetsDetectado.fluxo)
       ? { fluxo: possuiXlsx ? 'somente_arquivo' : 'padrao', exportar: fluxoDatasetsDetectado.exportar === true }
       : fluxoDatasetsDetectado;
     const politicaInferida = exigeFonteCorporativa(pergunta, {
@@ -960,14 +1051,20 @@ async function executarAssistente(pergunta, dependencias = {}) {
       ultimaPergunta: ultimaPergunta?.content || null,
       ultimaResposta: ultimaResposta?.content || null
     };
+    const continuacaoDocumentalAtiva = modoFonte === 'automatico' &&
+      contextoFonte.ultimaProveniencia === 'documentacao' && continuacaoDocumental(pergunta);
     const intencaoRoteamentoAnexo = modoInteligenciaAnexos === 'v1' ? intencaoAnexos : null;
     const politica = ['geral', 'imagem'].includes(modoFonte)
       ? { obrigatoria: false, motivo: 'modo_fonte_geral' }
       : ['dados', 'documentacao'].includes(modoFonte)
       ? { obrigatoria: true, motivo: `modo_fonte_${modoFonte}` }
-      : modoFonte === 'web'
-        ? { obrigatoria: false, motivo: 'modo_fonte_web' }
-        : intencaoRoteamentoAnexo?.route === 'mixed_corporate'
+       : modoFonte === 'web'
+         ? { obrigatoria: false, motivo: 'modo_fonte_web' }
+         : continuacaoDocumentalAtiva
+           ? { obrigatoria: true, motivo: 'continuacao_documental' }
+         : graficoComResultadoAnterior
+          ? { obrigatoria: false, motivo: 'grafico_resultado_autorizado_anterior' }
+         : intencaoRoteamentoAnexo?.route === 'mixed_corporate'
           ? { obrigatoria: true, motivo: 'intencao_anexo_cruzamento_corporativo' }
         : modoDatasets === 'v1' && ['misto', 'misto_e_exportar'].includes(fluxoDatasets.fluxo)
           ? { obrigatoria: true, motivo: 'arquivo_cruzado_com_dados' }
@@ -992,7 +1089,9 @@ async function executarAssistente(pergunta, dependencias = {}) {
       : modoDatasets === 'v1' && ['misto', 'misto_e_exportar'].includes(fluxoDatasets.fluxo) ? 'misto'
         : modoDatasets === 'v1' && fluxoDatasets.fluxo === 'consultar_e_exportar' ? 'dados_nexus'
         : modoDatasets === 'v1' && ['exportar_resultado', 'enriquecer_resultado'].includes(fluxoDatasets.fluxo) && ultimaResposta?.provenance === 'dados_nexus' ? 'dados_nexus'
-      : modoFonte === 'documentacao' ? 'documentacao'
+      : graficoComResultadoAnterior ? 'dados_nexus'
+      : modoFonte === 'documentacao' || ['documentacao_corporativa', 'continuacao_documental'].includes(politica.motivo)
+        ? 'documentacao'
       : politica.obrigatoria ? 'dados_nexus'
         : possuiArquivoDocumento ? 'arquivo'
       : modoFonte === 'imagem' ? 'imagem' : intencaoWeb ? 'web' : 'conhecimento_geral';
@@ -1003,8 +1102,10 @@ async function executarAssistente(pergunta, dependencias = {}) {
         web_required: intencaoWeb,
         web_decision: decisaoWeb.modo,
         source_mode: modoFonte,
-        reason_code: politica.obrigatoria ? politica.motivo
-          : intencaoWeb ? 'pedido_ou_contexto_web' : 'general_chat'
+        reason_code: politica.motivo === 'grafico_resultado_autorizado_anterior'
+          ? politica.motivo
+          : politica.obrigatoria ? politica.motivo
+            : intencaoWeb ? 'pedido_ou_contexto_web' : 'general_chat'
       }
     });
     if (modoDatasets !== 'off') {
@@ -1032,7 +1133,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
         usageSummary: resumo || null };
     }
     const classificacaoDadosProvider = classificacaoMaisRestrita([
-      politica.obrigatoria ? 'dados_corporativos' : null,
+      politica.obrigatoria || graficoComResultadoAnterior ||
+        fluxoDatasets.fluxo === 'transformar_resultado' ? 'dados_corporativos' : null,
       contextoAnexos?.security?.highestClassification,
       intencaoWeb ? 'publico' : !politica.obrigatoria && !contextoAnexos ? 'conhecimento_geral' : null
     ]);
@@ -1063,6 +1165,22 @@ async function executarAssistente(pergunta, dependencias = {}) {
     const provider = criarProviderGeneralista(dependencias, {
       permitirFallback: politicaFallback.permitido
     });
+    // A resposta corporativa ja foi calculada e validada pelo consultor. A
+    // segunda chamada serve apenas para apresenta-la melhor, portanto usa um
+    // timeout proprio, sem cadeia de retries/fallback capaz de ultrapassar o
+    // limite HTTP do Hub. Se ela falhar, a evidencia comprovada e preservada
+    // localmente mais abaixo.
+    const timeoutSinteseCorporativa = Number(
+      dependencias.corporateTimeoutMs || process.env.NEXUS_CORPORATE_LLM_TIMEOUT_MS ||
+      dependencias.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000
+    );
+    const providerSinteseCorporativa = politica.obrigatoria && !dependencias.generalistProvider
+      ? criarProviderGeneralista({
+          ...dependencias,
+          timeoutMs: Number.isFinite(timeoutSinteseCorporativa) && timeoutSinteseCorporativa > 0
+            ? timeoutSinteseCorporativa : 20_000
+        }, { permitirFallback: false })
+      : provider;
     await auditoria?.registrarEvento(turno, {
       tipo: 'provider_data_policy', recurso: provider.nome, resultado: 'allowed',
       metadados: { classificacao: classificacaoDadosProvider, motivo: politicaProvider.motivo,
@@ -1071,6 +1189,7 @@ async function executarAssistente(pergunta, dependencias = {}) {
     });
     let consultaCache = null;
     let respostaCorporativaDireta = null;
+    let respostaCorporativaFallback = null;
     let sinalRevisao = null;
     async function solicitarRevisao(sinal) {
       if (sinalRevisao) return JSON.stringify({ sinal_recebido: false, motivo: 'limite_turno' });
@@ -1213,6 +1332,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
     const referenciasDadosTurno = [];
     let respostaDiretaDataset = null;
     let resultadoConjunto = null;
+    const referenciaResultadoAtiva = referenciasDadosRecentes.find((item) =>
+      item.tipo === 'result_ref' && item.status === 'ready') || null;
 
     async function consultarConjuntoDataset(datasetRef, especificacao = fluxoDatasets) {
       const argumentos = { dataset_ref: datasetRef, dominio: especificacao.dominio,
@@ -1233,6 +1354,56 @@ async function executarAssistente(pergunta, dependencias = {}) {
         return retorno;
       } catch (erro) {
         await governanca?.concluirTool(contexto, { sucesso: false, duracaoMs: Date.now() - inicio, erro });
+        throw erro;
+      }
+    }
+
+    async function consultarResultadoAnterior(argumentos) {
+      if (!referenciaResultadoAtiva) {
+        const erro = new ErroDataset('RESULT_REF_NOT_AVAILABLE',
+          'Não existe um resultado estruturado ativo nesta conversa.', 410);
+        throw erro;
+      }
+      const argumentosEfetivos = {
+        ...argumentos,
+        result_ref: referenciaResultadoAtiva.id
+      };
+      const contexto = await governanca?.iniciarTool('consultar_resultado_nexus', {
+        result_ref: referenciaResultadoAtiva.id,
+        operacao: argumentosEfetivos.operacao,
+        agrupar_por: argumentosEfetivos.agrupar_por,
+        metricas: argumentosEfetivos.metricas
+      }, {
+        provider: 'nexus', modelo: 'duckdb', traceId: turno.traceId, turnId: turno.id,
+        stage: 'result_ref_query', purpose: 'corporate_result_continuation',
+        departamentoSlug: dependencias.departamentoSlug || null
+      });
+      const inicio = Date.now();
+      estadoExecucao.checkpoint('consultando_resultado_anterior', { etapa: 'result_ref_query' });
+      try {
+        const executar = dependencias.executarConsultarResultadoNexusTool ||
+          executarConsultarResultadoNexus;
+        const retorno = await executar(argumentosEfetivos, {
+          ...dependencias, turnoIA: turno
+        });
+        resultadoConjunto = retorno;
+        if (retorno.result_ref) referenciasDadosTurno.push(retorno.result_ref);
+        await governanca?.concluirTool(contexto, {
+          sucesso: true, duracaoMs: Date.now() - inicio
+        });
+        await auditoria?.registrarEvento(turno, {
+          tipo: 'result_ref_query', recurso: argumentosEfetivos.operacao,
+          resultado: 'success', metadados: {
+            linhas: retorno.quantidade_linhas,
+            parent_result_ref: referenciaResultadoAtiva.id,
+            result_ref: retorno.result_ref?.id || null
+          }
+        });
+        return JSON.stringify(retorno);
+      } catch (erro) {
+        await governanca?.concluirTool(contexto, {
+          sucesso: false, duracaoMs: Date.now() - inicio, erro
+        });
         throw erro;
       }
     }
@@ -1289,6 +1460,43 @@ async function executarAssistente(pergunta, dependencias = {}) {
           return novo;
         } catch (erro) {
           await governanca?.concluirTool(autorizacao, { sucesso: false, duracaoMs: Date.now() - inicio, erro });
+          throw erro;
+        }
+      }
+      if (manifesto.tipo === 'result_ref_query' && manifesto.parentDatasetId &&
+          manifesto.especificacao) {
+        const pai = await dependencias.servicoDatasets.obter(
+          dependencias.conversationId, manifesto.parentDatasetId, { aceitarExpirado: true }
+        );
+        const paiAtivo = await restaurarReferenciaExpirada(pai.descriptor, profundidade + 1);
+        const argumentos = {
+          ...manifesto.especificacao,
+          result_ref: paiAtivo.id
+        };
+        const contexto = await governanca?.iniciarTool('consultar_resultado_nexus', {
+          result_ref: paiAtivo.id,
+          operacao: argumentos.operacao,
+          agrupar_por: argumentos.agrupar_por,
+          metricas: argumentos.metricas
+        }, {
+          provider: 'nexus', modelo: 'duckdb', traceId: turno.traceId, turnId: turno.id,
+          stage: 'result_ref_query', purpose: 'restore_result_ref',
+          departamentoSlug: dependencias.departamentoSlug || null
+        });
+        const inicio = Date.now();
+        try {
+          const retorno = await executarConsultarResultadoNexus(argumentos, {
+            ...dependencias, turnoIA: turno
+          });
+          await governanca?.concluirTool(contexto, {
+            sucesso: true, duracaoMs: Date.now() - inicio
+          });
+          if (retorno.result_ref) referenciasDadosTurno.push(retorno.result_ref);
+          return retorno.result_ref;
+        } catch (erro) {
+          await governanca?.concluirTool(contexto, {
+            sucesso: false, duracaoMs: Date.now() - inicio, erro
+          });
           throw erro;
         }
       }
@@ -1508,6 +1716,34 @@ async function executarAssistente(pergunta, dependencias = {}) {
         return JSON.stringify(retorno);
       } catch (erro) { await governanca?.concluirTool(contexto, { sucesso: false, duracaoMs: Date.now() - inicio, erro }); throw erro; }
     }
+    async function gerarGrafico(argumentos) {
+      const ref = [...referenciasDadosTurno].reverse().find((item) =>
+        item.tipo === 'result_ref' && item.status === 'ready') ||
+        referenciasDadosRecentes.find((item) => item.tipo === 'result_ref' && item.status === 'ready');
+      const contexto = await governanca?.iniciarTool('gerar_grafico', {
+        tipo: argumentos.tipo, metrica: argumentos.metrica, result_ref: ref?.id || null
+      }, { provider: 'nexus', modelo: 'local', traceId: turno.traceId, turnId: turno.id,
+        stage: 'artifact_generation', purpose: 'artifact_generation',
+        departamentoSlug: dependencias.departamentoSlug || null });
+      const inicio = Date.now(); estadoExecucao.checkpoint('gerando_arquivo', { etapa: 'chart_generation' });
+      try {
+        const retorno = await executarGerarGrafico(argumentos, {
+          ...dependencias, turnoIA: turno, resultRef: ref
+        });
+        if (!retorno.shadow) artefatosGerados.push(retorno);
+        if (ref && !referenciasDadosTurno.some((item) => item.id === ref.id)) {
+          referenciasDadosTurno.push(ref);
+        }
+        await governanca?.concluirTool(contexto, { sucesso: true, duracaoMs: Date.now() - inicio });
+        await auditoria?.registrarUsoServico?.(turno, { callId: contexto?.callId, provider: 'nexus',
+          servico: 'chart_generation', modelo: 'local', metrica: 'artifacts', quantidade: 1 });
+        return JSON.stringify({ status: retorno.shadow ? 'shadow' : 'sucesso', artifactId: retorno.id || null,
+          chart: true, validation: retorno.validation || retorno.validacao || null });
+      } catch (erro) {
+        await governanca?.concluirTool(contexto, { sucesso: false, duracaoMs: Date.now() - inicio, erro });
+        throw erro;
+      }
+    }
     async function gerarImagem(argumentos) {
       const edicao = argumentos.action !== 'generate';
       const nomeTool = edicao ? 'editar_imagem' : 'gerar_imagem';
@@ -1591,6 +1827,19 @@ async function executarAssistente(pergunta, dependencias = {}) {
     const toolGeracao = modoArtefatos === 'v1' && intencaoGerarArquivo ? [{
       definicao: definicaoGerarArquivo, terminal: false, executar: gerarArquivo
     }] : [];
+    const toolGrafico = modoArtefatos === 'v1' && modoDatasets === 'v1' && pedidoGrafico &&
+      (graficoComResultadoAnterior || politica.obrigatoria) ? [{
+        definicao: definicaoGerarGrafico, terminal: false, executar: gerarGrafico
+      }] : [];
+    const graficoObrigatorio = toolGrafico.length > 0;
+    const toolResultado = modoDatasets === 'v1' && referenciaResultadoAtiva &&
+      !['geral', 'imagem', 'web', 'documentacao'].includes(modoFonte) ? [{
+        definicao: definicaoConsultarResultadoNexus,
+        terminal: false,
+        executar: consultarResultadoAnterior
+      }] : [];
+    const transformacaoResultadoObrigatoria = toolResultado.length > 0 &&
+      fluxoDatasets.fluxo === 'transformar_resultado';
     // No modo automatico a capacidade fica sempre visivel para o generalista decidir
     // semanticamente. Isso cobre pedidos como "gere um golden retriever" sem exigir
     // palavras-gatilho como imagem, foto ou arte. Modos explicitos continuam isolados.
@@ -1898,7 +2147,9 @@ async function executarAssistente(pergunta, dependencias = {}) {
         const objetivoCorporativo = construirObjetivoCorporativo(pergunta, objetivo, historico);
         const resultado = await executarAgente(objetivoCorporativo, {
           ...dependencias,
-          ...(modoFonte === 'documentacao' ? { perfilTools: 'documentacao' } : {}),
+          ...((modoFonte === 'documentacao' ||
+            ['documentacao_corporativa', 'continuacao_documental'].includes(politica.motivo))
+            ? { perfilTools: 'documentacao' } : {}),
           perguntaAtual: pergunta,
           memoria,
           governanca,
@@ -1906,7 +2157,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
           telemetria: telemetriaCorporativa,
           turnoIA: turno,
           auditoriaIA: auditoria,
-          purpose: 'corporate_query'
+          purpose: 'corporate_query',
+          continuationProductSelection: selecaoProdutosAnterior
         });
         let resultRef = null;
         if (modoDatasets === 'v1' && dependencias.servicoDatasets && resultado._resultadosTools?.length) {
@@ -1921,7 +2173,13 @@ async function executarAssistente(pergunta, dependencias = {}) {
         const entregaDireta = exigeEntregaCorporativaDireta(resultado);
         const podeEntregarDireto = entregaDireta && !resultadosWeb.length && !resultadosImagem.length;
         respostaCorporativaDireta = podeEntregarDireto ? resultado.texto : null;
-        consultaCache = envelopeCorporativo(resultado, { omitirRespostaTecnica: podeEntregarDireto });
+        respostaCorporativaFallback =
+          formatarRespostaCorporativaDeterministica(resultado._resultadosTools || []) ||
+          (possuiTextoResposta(resultado.texto) ? resultado.texto : null);
+        consultaCache = envelopeCorporativo(resultado, {
+          omitirRespostaTecnica: podeEntregarDireto,
+          fallbackAnswer: respostaCorporativaFallback
+        });
         if (resultRef) consultaCache.dataRef = resultRef;
         delete resultado._resultadosTools;
         estadoExecucao.concluirTool('consultar_nexus', { objetivo }, consultaCache, {
@@ -1979,10 +2237,12 @@ async function executarAssistente(pergunta, dependencias = {}) {
       ? '<AUTHORIZED_IMAGE_REQUEST_CONTEXT>A mensagem atual continua o pedido visual imediatamente anterior. A capacidade gerar_imagem esta disponivel neste turno. Execute a tool e nao repita uma recusa anterior. As imagens de referencia autorizadas foram recuperadas automaticamente.</AUTHORIZED_IMAGE_REQUEST_CONTEXT>\n\n'
       : '';
     const contextoCatalogoImagens = formatarCatalogoImagens(catalogoImagens);
+    const contextoResultadoAutorizado = toolResultado.length
+      ? contextoResultRef(referenciaResultadoAtiva) : '';
     const mensagemAutenticada = evidenciasAnexoPrompt.length
       ? `<UNTRUSTED_ATTACHMENT_EVIDENCE>\n${evidenciasAnexoPrompt.join('\n\n')}\n</UNTRUSTED_ATTACHMENT_EVIDENCE>\n\n` +
-        `${contextoImagemSelecionada}${contextoContinuacaoImagem}${contextoCatalogoImagens}<AUTHENTICATED_USER_MESSAGE>\n${pergunta}\n</AUTHENTICATED_USER_MESSAGE>`
-      : `${contextoImagemSelecionada}${contextoContinuacaoImagem}${contextoCatalogoImagens}${pergunta}`;
+        `${contextoImagemSelecionada}${contextoContinuacaoImagem}${contextoCatalogoImagens}${contextoResultadoAutorizado}<AUTHENTICATED_USER_MESSAGE>\n${pergunta}\n</AUTHENTICATED_USER_MESSAGE>`
+      : `${contextoImagemSelecionada}${contextoContinuacaoImagem}${contextoCatalogoImagens}${contextoResultadoAutorizado}${pergunta}`;
     let mensagens = normalizarHistoricoVisivel([
       ...historicoSelecionado,
       { role: 'user', content: mensagemAutenticada }
@@ -2018,6 +2278,24 @@ async function executarAssistente(pergunta, dependencias = {}) {
         provider: 'nexus', modelo: null, rodadas: 0 };
     } else if (respostaDiretaArquivo && !imagemRelacionadaNegocio && !resultadosWeb.length) {
       resultado = { texto: respostaDiretaArquivo, provider: 'nexus', modelo: null, rodadas: 0 };
+    } else if (transformacaoResultadoObrigatoria) {
+      resultado = await provider.executar({
+        pergunta,
+        mensagens,
+        instrucoes: `${instrucoesTurno}\n${INSTRUCOES_ARQUIVOS}\n${INSTRUCOES_RESULT_REF}`,
+        tools: toolResultado,
+        toolChoice: 'consultar_resultado_nexus',
+        maxRodadas: 3,
+        telemetria,
+        stage: 'result_ref_continuation',
+        purpose: 'corporate_result_continuation',
+        onEvento: dependencias.onEvento,
+        estadoExecucao,
+        handoffMode: dependencias.handoffMode,
+        debugFallback: dependencias.debugFallback === true,
+        onCheckpoint,
+        onHandoff
+      });
     } else if (politica.obrigatoria) {
       const evidencia = await consultar(pergunta);
       if (erroPesquisaWeb) mensagens = normalizarHistoricoVisivel([...mensagens, { role: 'user',
@@ -2038,14 +2316,17 @@ async function executarAssistente(pergunta, dependencias = {}) {
       } else resultado = respostaCorporativaDireta ? {
         texto: respostaCorporativaDireta,
         provider: 'nexus', modelo: null, rodadas: 0
-      } : await provider.executar({
+      } : await (async () => {
+        try {
+          return await providerSinteseCorporativa.executar({
           pergunta,
           mensagens: normalizarHistoricoVisivel([...mensagens, {
             role: 'user', content: `Evidencia corporativa autorizada: ${JSON.stringify(evidencia)}`
           }]),
-          instrucoes: `${instrucoesTurno}\n${INSTRUCOES_ARQUIVOS}\n${INSTRUCOES_IMAGENS}`,
-          tools: [...toolsRevisaoSeguras, ...toolsValidacaoPoliticas, ...toolsArquivos, ...toolGeracao, ...toolImagem],
-          toolChoice: imagemObrigatoria ? 'gerar_imagem' : null,
+          instrucoes: `${instrucoesTurno}\n${INSTRUCOES_ARQUIVOS}\n${INSTRUCOES_IMAGENS}\n${INSTRUCOES_GRAFICOS}\n${INSTRUCOES_RESULT_REF}`,
+          tools: [...toolsRevisaoSeguras, ...toolsValidacaoPoliticas, ...toolsArquivos,
+            ...toolGeracao, ...toolGrafico, ...toolResultado, ...toolImagem],
+          toolChoice: graficoObrigatorio ? 'gerar_grafico' : imagemObrigatoria ? 'gerar_imagem' : null,
           maxRodadas: 2,
           telemetria,
           stage: resultadosWeb.length ? 'web_synthesis' : 'generalist_final',
@@ -2056,7 +2337,28 @@ async function executarAssistente(pergunta, dependencias = {}) {
           debugFallback: dependencias.debugFallback === true,
           onCheckpoint,
           onHandoff
-        });
+          });
+        } catch (erroSintese) {
+          const respostaPreservada = respostaCorporativaFallback || consultaCache?.answer;
+          if (!possuiTextoResposta(respostaPreservada)) throw erroSintese;
+          estadoExecucao.checkpoint('sintese_generalista_preservada', {
+            etapa: 'generalist_final',
+            codigo: erroSintese.codigo || erroSintese.code || erroSintese.name || 'ERRO_SINTESE'
+          });
+          dependencias.onEvento?.(
+            'Síntese final indisponível; preservando os dados corporativos já comprovados.'
+          );
+          return {
+            texto: respostaPreservada,
+            provider: 'nexus',
+            modelo: null,
+            rodadas: 0,
+            fallbackSinteseCorporativa: true,
+            erroSinteseCodigo: erroSintese.codigo || erroSintese.code ||
+              erroSintese.name || 'ERRO_SINTESE'
+          };
+        }
+      })();
     } else {
       const toolsWeb = modoWeb === 'v1' && (
         decisaoWeb.modo === 'delegada' ||
@@ -2066,13 +2368,16 @@ async function executarAssistente(pergunta, dependencias = {}) {
       const contextoProvider = {
         pergunta,
         mensagens,
-        instrucoes: `${instrucoesTurno}\n${INSTRUCOES_ARQUIVOS}\n${INSTRUCOES_IMAGENS}`,
+        instrucoes: `${instrucoesTurno}\n${INSTRUCOES_ARQUIVOS}\n${INSTRUCOES_IMAGENS}\n${INSTRUCOES_GRAFICOS}\n${INSTRUCOES_RESULT_REF}`,
         // A fonte ja foi decidida pela guarda local. Conversas e pesquisas web
         // nao podem promover a si mesmas para uma consulta corporativa.
         tools: resultadosWeb.length ? []
           : [...toolsRevisaoSeguras, ...toolsWeb, ...toolsDocumentacaoContextual,
-            ...toolsValidacaoPoliticas, ...toolsArquivos, ...toolGeracao, ...toolImagem],
-        toolChoice: imagemObrigatoria && !resultadosWeb.length ? 'gerar_imagem' : null,
+            ...toolsValidacaoPoliticas, ...toolsArquivos, ...toolGeracao, ...toolGrafico,
+            ...toolResultado, ...toolImagem],
+        toolChoice: !resultadosWeb.length && graficoObrigatorio ? 'gerar_grafico'
+          : transformacaoResultadoObrigatoria && !resultadosWeb.length ? 'consultar_resultado_nexus'
+          : imagemObrigatoria && !resultadosWeb.length ? 'gerar_imagem' : null,
         maxRodadas: Number(dependencias.maxRodadas || process.env.NEXUS_MAX_RODADAS || 10),
         telemetria,
         stage: resultadosWeb.length ? 'web_synthesis' : 'generalist_response',
@@ -2086,8 +2391,12 @@ async function executarAssistente(pergunta, dependencias = {}) {
         onHandoff,
         prepararFallback: async () => ({
           ...contextoProvider,
-          tools: imagemObrigatoria && !imagemToolExecutada ? toolImagem : [],
-          toolChoice: imagemObrigatoria && !imagemToolExecutada ? 'gerar_imagem' : null,
+          tools: graficoObrigatorio ? toolGrafico
+            : transformacaoResultadoObrigatoria ? toolResultado
+            : imagemObrigatoria && !imagemToolExecutada ? toolImagem : [],
+          toolChoice: graficoObrigatorio ? 'gerar_grafico'
+            : transformacaoResultadoObrigatoria ? 'consultar_resultado_nexus'
+            : imagemObrigatoria && !imagemToolExecutada ? 'gerar_imagem' : null,
           prepararFallback: null
         })
       };
@@ -2189,17 +2498,28 @@ async function executarAssistente(pergunta, dependencias = {}) {
       }
     }
     let validacaoSintese = null;
-    let corporateFallbackUsed = false;
+    let corporateFallbackUsed = resultado?.fallbackSinteseCorporativa === true;
     if (consultaCache && !respostaCorporativaDireta) {
       validacaoSintese = validarSinteseCorporativa(resultado.texto, consultaCache);
+      let validacaoFallback = null;
+      let qualidadeResposta = 'accepted';
       if (!validacaoSintese.valida) {
-        if (!possuiTextoResposta(consultaCache.answer)) {
+        const textoFallback = possuiTextoResposta(consultaCache.fallbackAnswer)
+          ? consultaCache.fallbackAnswer : consultaCache.answer;
+        if (!possuiTextoResposta(textoFallback)) {
           throw erroRespostaVazia('RESPOSTA_CORPORATIVA_VAZIA');
+        }
+        validacaoFallback = validarSinteseCorporativa(textoFallback, consultaCache);
+        const contratoAnalitico = consultaCache.evidence?.manifest?.contratoAnalitico;
+        if (contratoAnalitico && !validacaoFallback.valida) {
+          qualidadeResposta = 'degraded';
+        } else {
+          qualidadeResposta = 'repaired';
         }
         corporateFallbackUsed = true;
         resultado = {
           ...resultado,
-          texto: consultaCache.answer,
+          texto: textoFallback,
           provider: 'nexus',
           modelo: null
         };
@@ -2207,15 +2527,43 @@ async function executarAssistente(pergunta, dependencias = {}) {
       await auditoria?.registrarEvento(turno, {
         tipo: 'synthesis_validation',
         recurso: consultaCache.evidence?.route || null,
-        resultado: validacaoSintese.valida ? 'accepted' : 'corporate_fallback',
+        resultado: validacaoSintese.valida && !corporateFallbackUsed
+          ? 'accepted' : 'corporate_fallback',
         metadados: {
           evidence_status: consultaCache.evidence?.status || null,
           synthesis_required: true,
           synthesis_validation: validacaoSintese.valida ? 'valid' : 'invalid',
           corporate_fallback_used: corporateFallbackUsed,
-          reason_codes: validacaoSintese.motivos
+          fallback_validation: validacaoFallback
+            ? (validacaoFallback.valida ? 'valid' : 'invalid') : null,
+          response_quality: qualidadeResposta,
+          reason_codes: [
+            ...validacaoSintese.motivos,
+            ...(validacaoFallback?.valida === false
+              ? validacaoFallback.motivos.map((motivo) => `fallback:${motivo}`) : []),
+            ...(resultado?.fallbackSinteseCorporativa ? ['synthesis_provider_error'] : [])
+          ]
         }
       });
+      if (qualidadeResposta !== 'accepted') {
+        await auditoria?.registrarEvento(turno, {
+          tipo: 'response_quality',
+          recurso: consultaCache.evidence?.route || null,
+          resultado: qualidadeResposta,
+          metadados: {
+            repaired_with_structured_evidence: qualidadeResposta === 'repaired' &&
+              possuiTextoResposta(consultaCache.fallbackAnswer),
+            reason_codes: validacaoSintese.motivos
+          }
+        });
+      }
+      if (qualidadeResposta === 'degraded') {
+        const erro = new Error(
+          'Os dados foram consultados, mas a resposta não preservou a seleção ou o período solicitado.'
+        );
+        erro.codigo = 'RESPOSTA_CORPORATIVA_CONTRATO_INVALIDO';
+        throw erro;
+      }
     } else if (consultaCache) {
       await auditoria?.registrarEvento(turno, {
         tipo: 'synthesis_validation',
@@ -2317,7 +2665,9 @@ async function executarAssistente(pergunta, dependencias = {}) {
     const consultaCorporativaDocumental = modoFonte === 'documentacao' ||
       consultaCache?.evidence?.route === 'documentacao' ||
       consultaCache?.evidence?.toolsUsed?.includes('consultar_documentacao');
-    const tiposFonte = [(consultaCache && !consultaCorporativaDocumental) || resultadoConjunto ? 'dados_nexus' : null,
+    const tiposFonte = [(consultaCache && !consultaCorporativaDocumental) || resultadoConjunto ||
+      graficoComResultadoAnterior || artefatosGerados.some((item) => item.chart === true)
+      ? 'dados_nexus' : null,
       evidenciaDocumental || consultaCorporativaDocumental ? 'documentacao' : null,
       resultadosWeb.length ? 'web' : null,
       artefatosGerados.some((item) => item.kind === 'image') ? 'imagem' : null,
@@ -2436,6 +2786,8 @@ module.exports = {
   aliasesImagemInferidos,
   resolverReferenciasCatalogo,
   intencaoCriarImagem,
+  intencaoGerarGrafico,
+  resultadoAnteriorDisponivelParaGrafico,
   continuacaoCriacaoImagem,
   envelopeCorporativo,
   construirObjetivoCorporativo,

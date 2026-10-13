@@ -20,8 +20,10 @@ const PERMISSOES_ESPECIAIS = Object.freeze({
   consultar_evidencia_anexo: 'ia.arquivo.analisar',
   processar_arquivo_local: 'ia.arquivo.processar_local',
   gerar_arquivo: 'ia.arquivo.gerar',
+  gerar_grafico: 'ia.arquivo.gerar',
   exportar_resultado: 'ia.arquivo.gerar',
   consultar_conjunto_nexus: 'ia.nexus.consultar',
+  consultar_resultado_nexus: 'ia.nexus.consultar',
   consultar_nexus: 'ia.nexus.consultar',
   solicitar_revisao_memoria: 'memoria.candidatar',
   construir_sql: 'sql.gerar',
@@ -32,6 +34,22 @@ const PERMISSOES_ESPECIAIS = Object.freeze({
   consultar_bronze: 'bronze.auditar',
   agregar_bronze: 'bronze.auditar',
   solicitar_aprofundamento: 'produto.consultar'
+});
+const PERMISSOES_COMPOSTAS = Object.freeze({
+  analisar_evolucao_produto: [
+    'produto.consultar', 'vendas.consultar', 'desempenho.consultar'
+  ],
+  comparar_canais_produto: [
+    'produto.consultar', 'vendas.consultar', 'desempenho.consultar'
+  ],
+  diagnosticar_produto_360: [
+    'produto.consultar', 'catalogo.consultar', 'vendas.consultar',
+    'desempenho.consultar', 'estoque.consultar', 'reposicoes.consultar'
+  ],
+  detectar_excecoes_produto: [
+    'produto.consultar', 'catalogo.consultar', 'vendas.consultar',
+    'desempenho.consultar', 'estoque.consultar', 'reposicoes.consultar'
+  ]
 });
 const CHAVE_SENSIVEL = /password|senha|secret|token|credential|api[_-]?key|sql/i;
 
@@ -63,7 +81,8 @@ function permissaoDoDominioDataset(dominio) {
 }
 
 function permissoesDaFerramenta(nome, argumentos = {}) {
-  const permissoes = [permissaoDaFerramenta(nome)];
+  const permissoes = PERMISSOES_COMPOSTAS[nome]
+    ? [...PERMISSOES_COMPOSTAS[nome]] : [permissaoDaFerramenta(nome)];
   if (nome === 'consultar_conjunto_nexus') {
     const permissaoDominio = permissaoDoDominioDataset(argumentos.dominio);
     if (permissaoDominio) permissoes.push(permissaoDominio);
@@ -163,7 +182,7 @@ function criarServicoGovernanca(opcoes) {
       'pesquisar_web', 'processar_imagem_local', 'interpretar_imagem',
       'analisar_arquivo', 'processar_arquivo_local', 'gerar_arquivo',
       'consultar_evidencia_anexo',
-      'exportar_resultado', 'consultar_conjunto_nexus',
+      'exportar_resultado', 'consultar_conjunto_nexus', 'consultar_resultado_nexus',
       'baixar_fonte_documentacao'].includes(nome)
       ? 'generalista' : obterCapacidade(nome)?.camada || 'negocio';
     const registro = (await pool.query(`

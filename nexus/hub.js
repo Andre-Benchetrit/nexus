@@ -1,7 +1,8 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { comTransacao } = require('./db');
-const { relatorioExecutivo, relatorioTrace } = require('./relatorios_uso');
+const { relatorioExecutivo } = require('./relatorios_uso');
 const { criarServicoMemoriaGovernada } = require('./memoria_governada');
+const auditoriaOperacional = require('./auditoria_operacional');
 
 const COMPOSICOES = Object.freeze(['baixo', 'medio', 'alto', 'extra_alto']);
 const LIMITE_CONVERSAS = 50;
@@ -122,6 +123,25 @@ async function exigirPermissao(pool, ator, codigo, opcoes = {}) {
     throw new ErroHub('ACESSO_NEGADO', `Acesso negado para ${codigo}.`, 403);
   }
   return decisao;
+}
+
+async function resolverEscopoAuditoria(pool, ator) {
+  const global = await decisaoPermissao(pool, ator.principalId, 'auditoria.consultar', null);
+  if (global.permitida) return { global: true, departmentIds: [] };
+  const candidatos = (await pool.query(`SELECT DISTINCT ra.department_id
+    FROM nexus.role_assignments ra
+    JOIN nexus.roles r ON r.id=ra.role_id
+    WHERE ra.principal_id=$1 AND r.slug='gestor' AND ra.department_id IS NOT NULL`,
+  [ator.principalId])).rows.map((item) => item.department_id);
+  const permitidos = [];
+  for (const departmentId of candidatos) {
+    const decisao = await decisaoPermissao(pool, ator.principalId,
+      'auditoria.consultar.setor', departmentId);
+    if (decisao.permitida) permitidos.push(departmentId);
+  }
+  if (!permitidos.length) throw new ErroHub('ACESSO_NEGADO',
+    'Acesso negado à Auditoria do Hub.', 403);
+  return { global: false, departmentIds: permitidos };
 }
 
 async function montarPerfil(pool, principalId) {
@@ -389,6 +409,7 @@ function criarServicoHub(opcoes = {}) {
            'kind',ar.artifact_kind,'parentArtifactId',ar.parent_artifact_id,
            'version',ar.version_number,'brandMode',ip.brand_mode,
            'draft',COALESCE((ar.safe_metadata->>'draft')::boolean,false),
+           'chart',COALESCE((ar.safe_metadata->>'chart')::boolean,false),
            'validation',ar.safe_metadata->'validation',
            'previewUrl',CASE WHEN ar.artifact_kind='image' THEN '/api/nexus/conversations/' || ar.conversation_id || '/artifacts/' || ar.id || '?disposition=inline' ELSE NULL END,
            'url','/api/nexus/conversations/' || ar.conversation_id || '/artifacts/' || ar.id
@@ -743,22 +764,39 @@ function criarServicoHub(opcoes = {}) {
   }
 
   async function listarAuditoria(filtros = {}) {
-    await exigirPermissao(pool, ator, 'auditoria.consultar', { acao: 'hub_audit_list' });
-    const limite = Math.min(200, Math.max(1, Number(filtros.limite || 100)));
-    return (await pool.query(`
-      SELECT ae.id,ae.tipo,ae.recurso,ae.resultado,ae.metadados,ae.criado_em,
-        p.slug AS principal,c.chave_sessao AS sessao
-      FROM nexus.audit_events ae
-      LEFT JOIN nexus.principals p ON p.id=ae.principal_id
-      LEFT JOIN nexus.conversations c ON c.id=ae.conversation_id
-      WHERE ($1::timestamptz IS NULL OR ae.criado_em>=$1)
-      ORDER BY ae.criado_em DESC LIMIT $2
-    `, [filtros.inicio || null, limite])).rows;
+    const escopo = await resolverEscopoAuditoria(pool, ator);
+    return (await auditoriaOperacional.activity(pool, {
+      ...filtros, from: filtros.from || filtros.inicio, limit: filtros.limit || filtros.limite
+    }, escopo)).items;
   }
 
   async function obterTrace(traceId) {
-    await exigirPermissao(pool, ator, 'auditoria.consultar', { acao: 'hub_audit_trace' });
-    return relatorioTrace(pool, traceId);
+    const escopo = await resolverEscopoAuditoria(pool, ator);
+    try { return await auditoriaOperacional.trace(pool, traceId, escopo); }
+    catch (erro) {
+      throw new ErroHub(erro.codigo || 'TRACE_NAO_AUTORIZADO', erro.message,
+        erro.status || 403);
+    }
+  }
+
+  async function auditoriaOverview(filtros = {}) {
+    return auditoriaOperacional.overview(pool, filtros,
+      await resolverEscopoAuditoria(pool, ator));
+  }
+
+  async function auditoriaAtividade(filtros = {}) {
+    return auditoriaOperacional.activity(pool, filtros,
+      await resolverEscopoAuditoria(pool, ator));
+  }
+
+  async function auditoriaGlossario() {
+    await resolverEscopoAuditoria(pool, ator);
+    return auditoriaOperacional.glossary();
+  }
+
+  async function consultarLake() {
+    await exigirPermissao(pool, ator, 'governanca.administrar', { acao: 'hub_lake_status' });
+    return true;
   }
 
   async function listarCandidaturasMemoria(filtros = {}) {
@@ -808,6 +846,7 @@ function criarServicoHub(opcoes = {}) {
   return {
     ator, atualizarConversa, atualizarPrincipal, atualizarSetor, cadastrarPrincipal,
     cadastrarSetor, concluirAtividade, criarConversa, excluirConversa, iniciarSolicitacao,
+    auditoriaAtividade, auditoriaGlossario, auditoriaOverview, consultarLake,
     listarAuditoria, listarCandidaturasMemoria, listarConversas, listarMensagens,
     prepararNovaTentativa, selecionarVariante,
     listarPapeis, listarPrincipals, listarSetores,

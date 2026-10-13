@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const { createReadStream } = require('node:fs');
 const { carregarMarca, construirArtefato } = require('./artifact_builder');
 const { construirXlsxDataset } = require('./dataset_artifact_builder');
+const { construirGrafico, prepararLinhasGrafico } = require('./chart_builder');
 
 class ErroArtefatoServico extends Error {
   constructor(codigo, mensagem, status = 400) {
@@ -130,6 +131,50 @@ function criarServicoArtefatos({ pool, storage, principalId, departmentId = null
       throw erro;
     } finally { await fs.unlink(construido.caminho).catch(() => null); }
   }
+  async function gerarGraficoDeDataset(conversationId, turnId, spec, opcoes = {}) {
+    await conversaAutorizada(conversationId);
+    const datasets = opcoes.servicoDatasets;
+    if (!datasets) throw new ErroArtefatoServico('DATASET_SERVICE_UNAVAILABLE',
+      'O serviço de resultados não está disponível.', 503);
+    const modo = String(opcoes.mode || process.env.NEXUS_ARTIFACTS_MODE || 'off').toLowerCase();
+    if (modo === 'off') throw new ErroArtefatoServico('ARTIFACTS_DISABLED',
+      'A geração de arquivos está desativada.', 503);
+    const aberto = await datasets.obter(conversationId, spec.result_ref);
+    if (aberto.descriptor.tipo !== 'result_ref') throw new ErroArtefatoServico('CHART_RESULT_REF_INVALID',
+      'O gráfico corporativo exige um resultado de consulta autorizado.');
+    const lido = await datasets.lerLinhas(conversationId, spec.result_ref, 50_000);
+    const linhasGrafico = prepararLinhasGrafico(lido.linhas, aberto.item.query_manifest || {});
+    const construido = construirGrafico(linhasGrafico, {
+      ...spec,
+      atualizado_em: aberto.descriptor.atualizacaoCorporativa || aberto.descriptor.updatedAt || null
+    });
+    if (modo === 'shadow') return { shadow: true, formato: 'png', validacao: construido.validacao };
+    const salvo = await storage.salvar({ buffer: construido.buffer, extensao: 'png' });
+    try {
+      const titulo = String(construido.dados.titulo || spec.titulo || 'Gráfico Nexus').slice(0, 120);
+      const item = (await pool.query(`INSERT INTO nexus.conversation_artifacts
+        (conversation_id,principal_id,turn_id,department_id,format,media_type,file_name,title,
+         storage_key,sha256,bytes,classification,safe_metadata,status,artifact_kind)
+        VALUES ($1,$2,$3,$4,'png','image/png',$5,$6,$7,$8,$9,$10,$11::jsonb,'ready','image')
+        RETURNING id,format,media_type,file_name,title,bytes,classification,status,criado_em`,
+      [conversationId, principalId, turnId || null, opcoes.departmentId || departmentId,
+        nomeArquivo(titulo, 'png'), titulo, salvo.chave,
+        crypto.createHash('sha256').update(construido.buffer).digest('hex'), construido.buffer.length,
+        aberto.descriptor.classificacao || 'dados_nexus', JSON.stringify({
+          chart: true, result_ref: spec.result_ref, chartSpec: {
+            tipo: construido.dados.tipo, metrica: construido.dados.metrica,
+            categoria: construido.dados.categoria, serie: construido.dados.serie
+          }, validation: construido.validacao,
+          lineage: [{ type: 'result_ref', id: spec.result_ref }]
+        })])).rows[0];
+      return { id: item.id, format: item.format, mediaType: item.media_type,
+        name: item.file_name, title: item.title, bytes: Number(item.bytes), chart: true,
+        classification: item.classification, status: item.status, createdAt: item.criado_em,
+        previewUrl: `/v1/conversations/${conversationId}/artifacts/${item.id}?disposition=inline`,
+        url: `/v1/conversations/${conversationId}/artifacts/${item.id}`,
+        validation: construido.validacao };
+    } catch (erro) { await storage.excluir(salvo.chave).catch(() => null); throw erro; }
+  }
   async function obter(conversationId, artifactId) {
     await conversaAutorizada(conversationId);
     const item = (await pool.query(`SELECT * FROM nexus.conversation_artifacts
@@ -189,7 +234,7 @@ function criarServicoArtefatos({ pool, storage, principalId, departmentId = null
       WHERE conversation_id=$1 AND principal_id=$2`, [conversationId, principalId]);
   }
   return { abrir, chavesDaConversa, excluir, excluirChaves, finalizarExclusaoConversa,
-    gerar, gerarDeDataset, listarPorTurno, obter };
+    gerar, gerarDeDataset, gerarGraficoDeDataset, listarPorTurno, obter };
 }
 
 async function processarFilaLimpezaArtefatos({ pool, storage, limite = 20 }) {

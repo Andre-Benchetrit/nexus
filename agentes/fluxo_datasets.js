@@ -29,7 +29,14 @@ function dominioDaReferencia(referencia) {
 
 function referenciaConjunto(pergunta) {
   const texto = normalizar(pergunta);
-  return /\b(?:deste|desta|desse|dessa|destes|destas|desses|dessas|deles|delas|nesses|nessas|da planilha|do arquivo|na planilha|no arquivo|itens da|produtos da|produtos anexados|itens anexados|esta lista|essa lista|esses produtos|essas informacoes)\b/.test(texto);
+  return /\b(?:deste|desta|desse|dessa|destes|destas|desses|dessas|deles|delas|nesses|nessas|da planilha|do arquivo|na planilha|no arquivo|itens da|produtos da|produtos anexados|itens anexados|esta lista|essa lista|esses produtos|essas informacoes|este resultado|esse resultado|aquele resultado|estes dados|esses dados|aqueles dados)\b/.test(texto);
+}
+
+function intencaoTransformarResultado(pergunta) {
+  const texto = normalizar(pergunta);
+  const acao = /\b(?:agrupe|agrupar|agrupado|separe|separar|organize|organizar|ordene|ordenar|filtre|filtrar|liste|listar|listagem|resuma|resumir|consolide|consolidar|conte|contar|quantos|quantas|totalize|totalizar|compare|comparar|mostre|mostrar)\b/.test(texto);
+  const estrutura = /\b(?:por|cada|separad[oa]s?|agrupad[oa]s?|ordem|ranking|lista|tabela|resultado|registros?|linhas?|itens?|pedidos?|produtos?|dados)\b/.test(texto);
+  return referenciaConjunto(pergunta) && acao && estrutura;
 }
 
 function solicitaConsultaSysemp(pergunta, dominio = null) {
@@ -82,6 +89,10 @@ function classificarFluxoDatasets(pergunta, {
     /\b(?:inclua|incluir|adicione|adicionar|acrescente|complemente)\b[\s\S]{0,100}\b(?:ean|codigo de barras|sku|codigo auxiliar|marca|categoria)\b/.test(normalizar(pergunta));
   const limiteSolicitado = limiteRankingSolicitado(pergunta);
   const quantidadeAnterior = Number(referenciaAnterior?.quantidadeLinhas || 0);
+  if (possuiRefAnterior && intencaoTransformarResultado(pergunta) && !exportar &&
+      !solicitaConsultaSysemp(pergunta, dominio)) {
+    return { fluxo: 'transformar_resultado', exportar: false };
+  }
   const precisaRefazerRanking = exportar && limiteSolicitado && quantidadeAnterior > 0 &&
     limiteSolicitado !== quantidadeAnterior && dominio;
   if (precisaRefazerRanking) return {
@@ -99,5 +110,6 @@ function classificarFluxoDatasets(pergunta, {
 }
 
 module.exports = { classificarDominio, classificarFluxoDatasets, dominioDaReferencia,
-  extrairPeriodo, intencaoExportar, limiteRankingSolicitado, referenciaConjunto,
+  extrairPeriodo, intencaoExportar, intencaoTransformarResultado,
+  limiteRankingSolicitado, referenciaConjunto,
   solicitaConsultaSysemp };

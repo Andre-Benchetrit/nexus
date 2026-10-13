@@ -40,25 +40,69 @@ function dataBrasileiraParaIso(valor) {
 
 function extrairMesNomeado(normalizado, dataReferencia) {
   const nomes = Object.keys(MESES).join('|');
-  const encontrado = new RegExp(
-    `\\b(${nomes})\\b(?:\\s*(?:de|/|-)\\s*((?:19|20)\\d{2}))?`
-  ).exec(normalizado);
-  if (!encontrado) return null;
-  const mes = MESES[encontrado[1]];
+  const encontrados = [...normalizado.matchAll(new RegExp(
+    `\\b(${nomes})\\b(?:\\s*(?:de|/|-)\\s*((?:19|20)\\d{2}))?`,
+    'g'
+  ))].map((encontrado) => ({
+    mes: MESES[encontrado[1]],
+    anoExplicito: encontrado[2] ? Number(encontrado[2]) : null
+  }));
+  if (!encontrados.length) return null;
+
   const anoReferencia = Number(String(dataReferencia).slice(0, 4));
   const mesReferencia = Number(String(dataReferencia).slice(5, 7));
-  const anoExplicito = encontrado[2] ? Number(encontrado[2]) : null;
-  const ano = anoExplicito || (mes <= mesReferencia ? anoReferencia : anoReferencia - 1);
-  const mesTexto = String(mes).padStart(2, '0');
-  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
-  const mesmoMesAtual = ano === anoReferencia && mes === mesReferencia;
+  const possuiAnoExplicito = encontrados.some(({ anoExplicito }) => anoExplicito);
+  const cruzaViradaDoAno = encontrados.some((item, indice) => {
+    if (!indice) return false;
+    const anterior = encontrados[indice - 1];
+    return anterior.mes >= 10 && item.mes <= 3;
+  });
+
+  const anos = encontrados.map(({ mes, anoExplicito }) =>
+    anoExplicito || (mes <= mesReferencia ? anoReferencia : anoReferencia - 1));
+
+  if (possuiAnoExplicito) {
+    const indiceAncora = encontrados.findIndex(({ anoExplicito }) => anoExplicito);
+    const anoAncora = encontrados[indiceAncora].anoExplicito;
+    if (!cruzaViradaDoAno) {
+      for (let indice = 0; indice < anos.length; indice += 1) {
+        anos[indice] = encontrados[indice].anoExplicito || anoAncora;
+      }
+    } else {
+      anos[indiceAncora] = anoAncora;
+      for (let indice = indiceAncora - 1; indice >= 0; indice -= 1) {
+        anos[indice] = encontrados[indice].anoExplicito ||
+          anos[indice + 1] - (encontrados[indice].mes > encontrados[indice + 1].mes ? 1 : 0);
+      }
+      for (let indice = indiceAncora + 1; indice < anos.length; indice += 1) {
+        anos[indice] = encontrados[indice].anoExplicito ||
+          anos[indice - 1] + (encontrados[indice].mes < encontrados[indice - 1].mes ? 1 : 0);
+      }
+    }
+  }
+
+  const periodos = encontrados.map(({ mes }, indice) => {
+    const ano = anos[indice];
+    const mesTexto = String(mes).padStart(2, '0');
+    const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+    const mesmoMesAtual = ano === anoReferencia && mes === mesReferencia;
+    return {
+      inicio: `${ano}-${mesTexto}-01`,
+      fim: mesmoMesAtual
+        ? dataReferencia
+        : `${ano}-${mesTexto}-${String(ultimoDia).padStart(2, '0')}`
+    };
+  });
+  const inicio = periodos.map((periodo) => periodo.inicio).sort()[0];
+  const fim = periodos.map((periodo) => periodo.fim).sort().at(-1);
+  const plural = periodos.length > 1;
   return {
     tipo: 'periodo_explicito',
-    origem: anoExplicito ? 'mes_nomeado_com_ano' : 'mes_nomeado_mais_recente',
-    inicio: `${ano}-${mesTexto}-01`,
-    fim: mesmoMesAtual
-      ? dataReferencia
-      : `${ano}-${mesTexto}-${String(ultimoDia).padStart(2, '0')}`
+    origem: possuiAnoExplicito
+      ? (plural ? 'meses_nomeados_com_ano' : 'mes_nomeado_com_ano')
+      : (plural ? 'meses_nomeados_mais_recentes' : 'mes_nomeado_mais_recente'),
+    inicio,
+    fim
   };
 }
 

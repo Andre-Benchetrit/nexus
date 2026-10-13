@@ -300,6 +300,9 @@ function criarServicoDatasets({ pool, storage, principalId, departmentId = null,
     });
   }
   async function criarDeResultadoCorporativo(conversationId, turnId, resultadosTools) {
+    const existente = [...resultadosTools].reverse().find((item) =>
+      item?.resultado?.result_ref)?.resultado?.result_ref;
+    if (existente) return obter(conversationId, existente);
     const tabela = extrairTabelaResultado(resultadosTools);
     if (!tabela || modoEfetivo !== 'v1') return null;
     return criarDeLinhas(conversationId, turnId, tabela.linhas, {

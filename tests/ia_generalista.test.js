@@ -243,6 +243,40 @@ test('provider Anthropic executa tool_use e devolve tool_result na rodada seguin
   assert.equal(retorno.tool_use_id, 'tool_1');
 });
 
+test('continuacao curta apos documentacao permanece na base documental', async () => {
+  let perfilTools = null;
+  const resultado = await executarAssistente('Qual o link?', {
+    memoria: memoriaFalsa(), auditoriaIA: false, knowledgeMode: 'v1',
+    mensagens: [
+      { role: 'user', content: 'Como eu abro chamado?' },
+      { role: 'assistant', content: 'Use o sistema FID.', provenance: 'documentacao' }
+    ],
+    governanca: {
+      async avaliar() { return { permitida: true }; },
+      async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
+      async concluirTool() {}
+    },
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar() { return { texto: 'não deveria perder a fonte', provider: 'mock', modelo: 'mock' }; }
+    },
+    executarAgenteCorporativo: async (_pergunta, dependencias) => {
+      perfilTools = dependencias.perfilTools;
+      return {
+        texto: 'https://intranet.exemplo/chamados',
+        roteamento: {
+          perfilInicial: 'documentacao', perfilEfetivo: 'documentacao',
+          ferramentasExecutadas: ['consultar_documentacao'], respostaPronta: true,
+          evidenciaFactual: { status: 'complete' }
+        }
+      };
+    }
+  });
+  assert.equal(perfilTools, 'documentacao');
+  assert.equal(resultado.proveniencia, 'documentacao');
+  assert.match(resultado.texto, /intranet\.exemplo\/chamados/);
+});
+
 test('provider Anthropic força uma tool nomeada somente na primeira rodada', async () => {
   const requisicoes = [];
   const respostas = [{ id: 'msg_forced_1', stop_reason: 'tool_use', usage: {},
@@ -487,6 +521,44 @@ test('fallback generalista reutiliza a consulta Nexus feita no turno', async () 
   assert.equal(consultasCorporativas, 1);
   assert.equal(resultado.fallbackDe, 'primario');
   assert.equal(resultado.proveniencia, 'dados_nexus');
+});
+
+test('falha da sintese final preserva a resposta corporativa ja comprovada', async () => {
+  let chamadasGeneralista = 0;
+  const resultado = await executarAssistente('Compare minhas vendas destes produtos entre julho e setembro.', {
+    memoria: memoriaFalsa(), auditoriaIA: false,
+    governanca: {
+      async avaliar() { return { permitida: true }; },
+      async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
+      async concluirTool() {}
+    },
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar() {
+        chamadasGeneralista += 1;
+        const erro = new Error('request timed out');
+        erro.code = 'ETIMEDOUT';
+        throw erro;
+      }
+    },
+    executarAgenteCorporativo: async () => ({
+      texto: 'Comparação corporativa comprovada entre julho e setembro.',
+      roteamento: {
+        perfilInicial: 'produto',
+        perfilEfetivo: 'produto',
+        exigeSintese: true,
+        respostaPronta: false,
+        ferramentasExecutadas: ['analisar_evolucao_produto'],
+        evidenciaFactual: { status: 'complete', manifesto: { identificadores: [] } }
+      },
+      _resultadosTools: []
+    })
+  });
+  assert.equal(chamadasGeneralista, 1);
+  assert.equal(resultado.texto, 'Comparação corporativa comprovada entre julho e setembro.');
+  assert.equal(resultado.provider, 'nexus');
+  assert.equal(resultado.proveniencia, 'dados_nexus');
+  assert.equal(resultado.fallbackSinteseCorporativa, true);
 });
 
 test('historico visivel remove inicio invalido e combina papeis consecutivos', () => {

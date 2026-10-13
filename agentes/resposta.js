@@ -32,7 +32,18 @@ const ROTULOS_METRICAS = Object.freeze({
   valor_devolucoes: 'Valor das devoluções vinculadas',
   faturamento_liquido: 'Faturamento líquido',
   ticket_medio_faturado: 'Ticket médio faturado',
-  prazo_medio_emissao_dias: 'Prazo médio de emissão em dias'
+  prazo_medio_emissao_dias: 'Prazo médio de emissão em dias',
+  pedidos: 'Pedidos distintos',
+  itens_pedidos: 'Linhas de item pedidas',
+  quantidade_pedida: 'Unidades pedidas',
+  valor_pedidos: 'Valor dos pedidos',
+  notas_fiscais: 'Notas fiscais distintas',
+  itens_faturados: 'Linhas de item faturadas',
+  quantidade_faturada: 'Unidades faturadas',
+  custo_produtos: 'Custo dos produtos',
+  margem_bruta_produtos: 'Margem bruta dos produtos',
+  comissao_marketplace: 'Comissão de marketplace',
+  contribuicao_apos_comissao: 'Contribuição após comissão'
 });
 
 const METRICAS_MONETARIAS = new Set([
@@ -43,13 +54,19 @@ const METRICAS_MONETARIAS = new Set([
   'faturamento_total',
   'valor_devolucoes',
   'faturamento_liquido',
-  'ticket_medio_faturado'
+  'ticket_medio_faturado',
+  'valor_pedidos',
+  'custo_produtos',
+  'margem_bruta_produtos',
+  'comissao_marketplace',
+  'contribuicao_apos_comissao'
 ]);
 const METRICAS_PERCENTUAIS = new Set(['taxa_cancelamento_pct', 'taxa_emissao_pct']);
 const METRICAS_INTEIRAS = new Set([
   'pedidos_validos', 'pedidos_cancelados', 'pedidos_pendentes',
   'pedidos_faturados', 'pedidos_devolvidos', 'pedidos_status_conflitante',
-  'pedidos_pagos', 'notas_emitidas'
+  'pedidos_pagos', 'notas_emitidas', 'pedidos', 'itens_pedidos',
+  'notas_fiscais', 'itens_faturados'
 ]);
 
 function dataCurta(valor) {
@@ -154,6 +171,61 @@ function formatarRankingProdutos(resultadosTools = []) {
   return linhas.join('\n');
 }
 
+function formatarEvolucaoProdutos(resultadosTools = []) {
+  const item = [...resultadosTools].reverse().find((entrada) => (
+    entrada.nome === 'analisar_evolucao_produto' &&
+    Array.isArray(entrada.resultado?.dados)
+  ));
+  const resultado = item?.resultado;
+  if (!resultado) return null;
+  const metricas = (resultado.metricas || []).filter((metrica) =>
+    resultado.dados.some((linha) => linha?.[metrica] != null));
+  if (!resultado.dados.length) {
+    return 'A consulta foi concluída, mas não encontrou movimento dos produtos no período solicitado.';
+  }
+  if (!metricas.length) return null;
+  const linhas = ['Evolução dos produtos', ''];
+  if (resultado.periodo?.inicio) {
+    linhas.push(
+      `Período: ${dataCurta(resultado.periodo.inicio)} a ${dataCurta(resultado.periodo.fim || resultado.periodo.inicio)}.`,
+      ''
+    );
+  }
+  const rotulos = metricas.map((metrica) =>
+    resultado.definicoes_metricas?.[metrica]?.rotulo || ROTULOS_METRICAS[metrica] || metrica);
+  linhas.push(`| Período | Produto | Código auxiliar (SKU) | ${rotulos.map(escaparCelula).join(' | ')} |`);
+  linhas.push(`|---|---|---|${metricas.map(() => '---:').join('|')}|`);
+  const limite = 100;
+  for (const linha of resultado.dados.slice(0, limite)) {
+    linhas.push(`| ${dataCurta(linha.periodo)} | ${escaparCelula(linha.descricao_produto)} | ` +
+      `${escaparCelula(linha.sku)} | ${metricas.map((metrica) =>
+        formatarMetrica(metrica, linha[metrica])).join(' | ')} |`);
+  }
+  const cobertura = resultado.cobertura_fontes;
+  if (cobertura?.comprova_integridade_da_carga === false) {
+    linhas.push('', 'A faixa está dentro da cobertura observada quando indicado pela fonte, mas isso não comprova por si só a integridade da carga. Dias sem registro podem significar ausência de movimento ou ausência de dados.');
+  }
+  if (resultado.resultado_truncado_no_prompt || resultado.dados.length > limite) {
+    linhas.push('', 'A tabela é uma prévia; o conjunto completo ficou preservado para filtros e exportação nesta conversa.');
+  }
+  if (resultado.atualizado_em) {
+    linhas.push('', `Fonte: Dados do Sysemp, atualizados em ${formatarInstanteParaUsuario(resultado.atualizado_em)}.`);
+  }
+  return linhas.join('\n');
+}
+
+function formatarRespostaCorporativaDeterministica(resultadosTools = []) {
+  const painelFocado = [...resultadosTools].reverse().find((item) => (
+    item.nome === 'analisar_indicadores' &&
+    item.resultado?.operacao === 'painel' &&
+    (item.resultado?.modo === 'focado' || item.resultado?.dados_disponiveis === false)
+  ));
+  return formatarEvolucaoProdutos(resultadosTools)
+    || formatarRankingProdutos(resultadosTools)
+    || formatarPainelFocado(painelFocado?.resultado)
+    || null;
+}
+
 function corrigirAlegacaoAusenciaDocumental(texto, resultadosTools = []) {
   const consultouDocumentacao = resultadosTools.some((item) =>
     item.nome === 'consultar_documentacao');
@@ -186,7 +258,8 @@ function aplicarGarantiasResposta(texto, resultadosTools = []) {
       item.resultado?.dados_disponiveis === false
     )
   ));
-  let resposta = formatarRankingProdutos(resultadosTools)
+  let resposta = formatarEvolucaoProdutos(resultadosTools)
+    || formatarRankingProdutos(resultadosTools)
     || formatarPainelFocado(painelFocado?.resultado)
     || formatarDatasResposta(texto);
   resposta = corrigirAlegacaoAusenciaDocumental(resposta, resultadosTools);
@@ -383,7 +456,8 @@ function criarManifestoFactual(resultadosTools = [], decisao = {}) {
     camposAusentes: camposObrigatorios.filter((campo) => !Object.hasOwn(camposValores, campo)),
     valoresPorCampo: camposValores,
     ferramentas: resultadosTools.map((item) => item.nome),
-    resultados: resultados.length
+    resultados: resultados.length,
+    contratoAnalitico: decisao.contratoAnalitico || null
   };
 }
 
@@ -408,6 +482,21 @@ function validarSinteseCorporativa(texto, envelope) {
   const motivos = [];
   const status = envelope?.evidence?.status || envelope?.status;
   const manifesto = envelope?.evidence?.manifest || envelope?.manifesto || {};
+  const ferramentas = manifesto.ferramentas || manifesto.tools || [];
+  const usaInteligenciaProduto = ferramentas.some((nome) => [
+    'analisar_evolucao_produto', 'comparar_canais_produto',
+    'diagnosticar_produto_360', 'detectar_excecoes_produto'
+  ].includes(nome));
+  const textoNormalizado = normalizarTextoBusca(texto);
+  if (usaInteligenciaProduto && /\b(?:corrigid[oa]s?|corrigimos|corrige|correcao)\b/.test(textoNormalizado)) {
+    motivos.push('correcao_metrica_nao_comprovada');
+  }
+  const integridadeComprovada = (manifesto.valoresPorCampo?.comprova_integridade_da_carga || [])
+    .includes('true');
+  if (usaInteligenciaProduto && !integridadeComprovada &&
+      /(?:cobertura|carga|dados|periodo)\s+(?:esta\s+|estao\s+|e\s+|sao\s+)?complet[oa]s?|sem (?:qualquer )?(?:indicacao|sinal) de (?:periodo )?parcial/.test(textoNormalizado)) {
+    motivos.push('integridade_carga_nao_comprovada');
+  }
   if (['complete', 'partial', 'empty'].includes(status) && textoIndicaIndisponibilidade(texto)) {
     motivos.push('contradicao_disponibilidade');
   }
@@ -431,6 +520,24 @@ function validarSinteseCorporativa(texto, envelope) {
       motivos.push(`campo_obrigatorio_ausente:${campo}`);
     }
   }
+  const contrato = manifesto.contratoAnalitico;
+  if (contrato?.tipo === 'coorte_produtos') {
+    const produtosEsperados = (contrato.produtos || []).map((produto) =>
+      produto.sku || (produto.tipo === 'sku' ? produto.valor : null)).filter(Boolean);
+    const produtosAusentes = produtosEsperados.filter((identificador) =>
+      !String(texto || '').includes(String(identificador)));
+    if (produtosAusentes.length) motivos.push('coorte_produtos_incompleta');
+    if (contrato.periodo) {
+      const datasObrigatorias = [contrato.periodo.inicio, contrato.periodo.fim]
+        .map((data) => {
+          const [ano, mes, dia] = String(data).split('-');
+          return `${dia}/${mes}/${ano}`;
+        });
+      if (datasObrigatorias.some((data) => !String(texto || '').includes(data))) {
+        motivos.push('janela_temporal_incompleta');
+      }
+    }
+  }
   return { valida: motivos.length === 0, motivos: [...new Set(motivos)] };
 }
 
@@ -443,8 +550,10 @@ module.exports = {
   corrigirAlegacaoAusenciaDocumental,
   extrairIdentificadoresNegocio,
   formatarDatasResposta,
+  formatarEvolucaoProdutos,
   formatarPainelFocado,
   formatarRankingProdutos,
+  formatarRespostaCorporativaDeterministica,
   normalizarResultadoTool,
   textoIndicaIndisponibilidade,
   validarSinteseCorporativa

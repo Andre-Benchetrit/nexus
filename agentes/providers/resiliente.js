@@ -6,7 +6,7 @@ const CODIGOS_TRANSITORIOS = new Set([
 const CODIGOS_FALLBACK_CONTROLADO = new Set([
   ...CODIGOS_TRANSITORIOS,
   'MAX_RODADAS', 'RESPOSTA_INVALIDA', 'SCHEMA_INVALIDO', 'TOOL_CALL_INVALIDO',
-  'TOOL_USE_FAILED'
+  'TOOL_USE_FAILED', 'LLM_OUTPUT_TRUNCATED'
 ]);
 
 const { aplicarHandoffAoContexto, resolverModoHandoff } = require('../execucao_turno');
@@ -51,6 +51,7 @@ function esperar(ms) {
 }
 
 function numeroSeguro(valor, padrao, minimo, maximo) {
+  if (valor == null || String(valor).trim() === '') return padrao;
   const numero = Number(valor);
   if (!Number.isFinite(numero)) return padrao;
   return Math.max(minimo, Math.min(maximo, numero));
@@ -87,7 +88,8 @@ function criarProviderResiliente(primario, fallback, opcoes = {}) {
           ultimoErro = erro;
 
           const codigo = obterCodigoErro(erro);
-          const podeRepetir = !erroDeQuota(erro) && codigo !== 'TOOL_USE_FAILED' &&
+          const podeRepetir = !erroDeQuota(erro) &&
+            !['TOOL_USE_FAILED', 'LLM_OUTPUT_TRUNCATED'].includes(codigo) &&
             tentativa < tentativasExtras;
           if (!podeRepetir) break;
           contexto.onEvento?.(

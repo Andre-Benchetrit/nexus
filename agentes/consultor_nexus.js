@@ -25,6 +25,10 @@ const {
 } = require('./contexto_temporal');
 const { aplicarPoliticaArgumentos, validarPoliticaExecucao } = require('./politicas_tools');
 const {
+  aplicarContratoNaDecisao,
+  criarContratoContinuidadeProduto
+} = require('./continuidade_analitica');
+const {
   criarMemoria,
   extrairReferenciasTemporais,
   pareceContinuacao
@@ -46,6 +50,7 @@ const {
   aplicarGarantiasResposta,
   avaliarSustentacaoFactual,
   criarEnvelopeEvidencia,
+  formatarRespostaCorporativaDeterministica,
   normalizarResultadoTool
 } = require('./resposta');
 const {
@@ -359,6 +364,11 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
     perguntaNormalizada = interacao.texto;
   }
   const historicoCurto = await memoria?.listarCurta() || [];
+  const contratoAnalitico = criarContratoContinuidadeProduto({
+    pergunta: dependencias.perguntaAtual || perguntaNormalizada,
+    historico: historicoCurto,
+    selecaoAutorizada: dependencias.continuationProductSelection || null
+  });
   const contextoTemporal = resolverContextoTemporalDaSolicitacao(
     dependencias.perguntaAtual || perguntaNormalizada,
     historicoCurto,
@@ -437,11 +447,56 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       );
     }
   }
-  const usarDecisaoSemantica = modoRoteador === 'v2' && decisaoSemantica;
-  const decisaoRota = usarDecisaoSemantica ? decisaoSemantica : decisaoLegada;
-  const planoValidado = decisaoRota
+  let usarDecisaoSemantica = modoRoteador === 'v2' && decisaoSemantica;
+  let decisaoRota = usarDecisaoSemantica ? decisaoSemantica : decisaoLegada;
+  decisaoRota = aplicarContratoNaDecisao(decisaoRota, contratoAnalitico);
+  let planoValidado = decisaoRota
     ? validarPlanoSugerido(decisaoRota)
     : { ferramentas: [], rejeitadas: [], capacidadesAusentes: [] };
+  if (contratoAnalitico && dependencias.auditoriaIA && dependencias.turnoIA) {
+    await dependencias.auditoriaIA.registrarEvento?.(dependencias.turnoIA, {
+      tipo: 'analytic_continuation_contract',
+      recurso: contratoAnalitico.tipo,
+      resultado: 'applied',
+      metadados: {
+        product_count: contratoAnalitico.quantidadeProdutos,
+        period_start: contratoAnalitico.periodo?.inicio || null,
+        period_end: contratoAnalitico.periodo?.fim || null,
+        granularity: contratoAnalitico.granularidade,
+        source_result_ref: Boolean(contratoAnalitico.resultRefId)
+      }
+    });
+  }
+  let recuperacaoPlanoLocal = null;
+  const rotaSemanticaInequivocaSemPlano = usarDecisaoSemantica &&
+    !decisaoRota.precisaEsclarecimento &&
+    !(decisaoRota.dominioPrimario === 'hibrido' && decisaoRota.confianca < 0.45) &&
+    planoValidado.ferramentas.length === 0;
+  if (rotaSemanticaInequivocaSemPlano && decisaoLegada?.dominioPrimario !== 'hibrido') {
+    const decisaoLocal = aplicarContextoTemporalNaDecisao(decisaoLegada, contextoTemporal);
+    const planoLocal = validarPlanoSugerido(decisaoLocal);
+    if (planoLocal.ferramentas.length) {
+      recuperacaoPlanoLocal = {
+        motivo: 'plano_semantico_sem_ferramenta_valida',
+        dominioSemantico: decisaoSemantica.dominioPrimario,
+        dominioLocal: decisaoLocal.dominioPrimario,
+        ferramentasRejeitadas: planoValidado.rejeitadas.map((item) => item.ferramenta),
+        ferramentasRecuperadas: planoLocal.ferramentas
+      };
+      usarDecisaoSemantica = false;
+      decisaoRota = decisaoLocal;
+      planoValidado = planoLocal;
+      dependencias.onEvento?.(
+        `Plano semantico sem ferramenta valida; usando rota local segura: ${JSON.stringify({
+          dominio: decisaoLocal.dominioPrimario,
+          ferramentas: planoLocal.ferramentas
+        })}`
+      );
+      estadoExecucao.checkpoint('plano_semantico_recuperado_localmente', {
+        etapa: 'business_reasoning', dados: recuperacaoPlanoLocal
+      });
+    }
+  }
   estadoExecucao.atualizarContexto({
     perguntaAutonoma: decisaoRota?.perguntaAutonoma || perguntaNormalizada,
     etapa: 'business_reasoning',
@@ -662,7 +717,9 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
           decisao: decisaoRota,
           pergunta: perguntaNormalizada,
           perguntaAtual: dependencias.perguntaAtual || perguntaNormalizada,
-          referenciasAnteriores: historicoCurto.at(-1)?.referencias || {}
+          perguntaAnterior: historicoCurto.at(-1)?.pergunta || null,
+          referenciasAnteriores: historicoCurto.at(-1)?.referencias || {},
+          contratoAnalitico
         }
       ),
       async onArgumentosNormalizados(nome, ajustes) {
@@ -755,7 +812,7 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
     }
   );
   ferramentasInstrumentadas = instrumentar(ferramentas);
-  const maxRodadas = Number(
+  const maxRodadasConfigurado = Number(
     dependencias.maxRodadas || process.env.NEXUS_MAX_RODADAS || (roteamentoAutomatico
     ? MAX_RODADAS_APROFUNDAMENTO
     : (
@@ -764,6 +821,8 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
         : MAX_RODADAS_GENERICAS
     ))
   );
+  const maxRodadas = contratoAnalitico
+    ? Math.min(4, maxRodadasConfigurado) : maxRodadasConfigurado;
   if (!Number.isInteger(maxRodadas) || maxRodadas < 1 || maxRodadas > 20) {
     throw new Error('maxRodadas deve ser um inteiro entre 1 e 20.');
   }
@@ -839,10 +898,20 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       faixaSemantica: faixaInicial.faixa
     })}`
     : '';
+  const contextoContratoAnalitico = contratoAnalitico
+    ? `Contrato de continuidade analitica validado pelo Nexus: ${JSON.stringify({
+      tipo: contratoAnalitico.tipo,
+      quantidadeProdutos: contratoAnalitico.quantidadeProdutos,
+      periodo: contratoAnalitico.periodo,
+      granularidade: contratoAnalitico.granularidade,
+      metricas: contratoAnalitico.metricas
+    })}. Execute analisar_evolucao_produto uma unica vez. A selecao exata e a janela temporal serao aplicadas localmente; nao troque a coorte, nao use ranking atual e nao solicite aprofundamento.`
+    : '';
   const instrucoesComuns = [
     instrucoesBase,
     ...instrucoesDominiosSecundarios,
     contextoRota,
+    contextoContratoAnalitico,
     contextoMemoria,
     contextoPlaybook,
     contextoCobertura
@@ -875,6 +944,7 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
   });
   let resultado;
   let recuperacao = null;
+  let falhaSintesePreservada = null;
   try {
     resultado = await executarProvider(ferramentasInstrumentadas);
   } catch (erro) {
@@ -891,25 +961,50 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
         recuperacao = null;
       }
     }
-    if (!recuperacao) throw erro;
-
-    dependencias.onEvento?.(
-      `Roteamento ampliado: ${recuperacao.nome} foi solicitada pelo provider.`
-    );
-    estadoExecucao.checkpoint('rota_recuperada', {
-      etapa: 'business_reasoning', dados: { ferramenta: recuperacao.nome }
-    });
-    resultadosTools.length = 0;
-    ferramentas = [
-      ...ferramentas,
-      recuperacao.ferramenta
-    ].map((ferramenta) => ({ ...ferramenta, terminal: false }));
-    perfilEfetivo = recuperacao.perfil;
-    ferramentasInstrumentadas = instrumentar(ferramentas);
-    resultado = await executarProvider(ferramentasInstrumentadas, [
-      obterInstrucaoPerfil(recuperacao.perfil),
-      `Recuperacao de roteamento: a fachada ${recuperacao.nome} agora esta disponivel.`
-    ]);
+    if (!recuperacao) {
+      const respostaPreservada = formatarRespostaCorporativaDeterministica(resultadosTools);
+      if (!respostaPreservada) throw erro;
+      falhaSintesePreservada = erro;
+      resultado = {
+        texto: respostaPreservada,
+        provider: 'nexus', modelo: null, rodadas: 0,
+        fallbackDeterministico: true
+      };
+      dependencias.onEvento?.(
+        'Síntese do modelo indisponível; preservando os dados corporativos já comprovados.'
+      );
+      estadoExecucao.checkpoint('sintese_deterministica_aplicada', {
+        etapa: 'business_reasoning',
+        dados: { ferramentas: resultadosTools.map((item) => item.nome) }
+      });
+      await dependencias.auditoriaIA?.registrarEvento?.(dependencias.turnoIA, {
+        tipo: 'corporate_synthesis_fallback',
+        recurso: provider.nome || null,
+        resultado: 'deterministic',
+        metadados: {
+          erro_codigo: erro.codigo || erro.code || erro.name || 'ERRO_SINTESE',
+          tools_count: resultadosTools.length
+        }
+      });
+    } else {
+      dependencias.onEvento?.(
+        `Roteamento ampliado: ${recuperacao.nome} foi solicitada pelo provider.`
+      );
+      estadoExecucao.checkpoint('rota_recuperada', {
+        etapa: 'business_reasoning', dados: { ferramenta: recuperacao.nome }
+      });
+      resultadosTools.length = 0;
+      ferramentas = [
+        ...ferramentas,
+        recuperacao.ferramenta
+      ].map((ferramenta) => ({ ...ferramenta, terminal: false }));
+      perfilEfetivo = recuperacao.perfil;
+      ferramentasInstrumentadas = instrumentar(ferramentas);
+      resultado = await executarProvider(ferramentasInstrumentadas, [
+        obterInstrucaoPerfil(recuperacao.perfil),
+        `Recuperacao de roteamento: a fachada ${recuperacao.nome} agora esta disponivel.`
+      ]);
+    }
   }
   let sustentacaoFactual = avaliarSustentacaoFactual(resultado.texto, resultadosTools);
   const evidenciaFactual = criarEnvelopeEvidencia(resultadosTools, decisaoRota || {});
@@ -1058,6 +1153,11 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       decisao: decisaoRota,
       plano: planoValidado,
       faixaSemantica,
+      fallbackDeterministico: falhaSintesePreservada ? {
+        aplicado: true,
+        erroCodigo: falhaSintesePreservada.codigo || falhaSintesePreservada.code ||
+          falhaSintesePreservada.name || 'ERRO_SINTESE'
+      } : null,
       sustentacaoFactual,
       respostaPronta,
       exigeSintese,
@@ -1069,7 +1169,8 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
         dominioV2: decisaoSemantica.dominioPrimario,
         divergiu: decisaoLegada.dominioPrimario !== decisaoSemantica.dominioPrimario
       } : null,
-      fallbackSemantico: erroRoteadorSemantico?.message || null
+      fallbackSemantico: erroRoteadorSemantico?.message || null,
+      recuperacaoPlanoLocal
     },
     // Evidência estruturada privada para materialização local. A camada generalista
     // remove este campo antes de responder e nunca o inclui no histórico do modelo.
@@ -1144,7 +1245,8 @@ function criarProviderDaFaixa(dependencias, selecao, providerAtual = null) {
     cliente: dependencias.clientesPorProvider?.[selecao.provider],
     clienteFallback: dependencias.clienteFallback,
     semFallback: dependencias.semFallback,
-    timeoutMs: dependencias.timeoutMs
+    timeoutMs: dependencias.corporateTimeoutMs ||
+      process.env.NEXUS_CORPORATE_LLM_TIMEOUT_MS || dependencias.timeoutMs
   });
   return selecionado;
 }

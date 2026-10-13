@@ -5,6 +5,7 @@ const kpiFaturamentoDiarioPorEmpresa = require('./modelos/vendas/kpi_faturamento
 const kpiPedidosPagosDiario = require('./modelos/vendas/kpi_pedidos_pagos_diario');
 const kpiPedidosPagosDiarioPorEmpresa = require('./modelos/vendas/kpi_pedidos_pagos_diario_por_empresa');
 const desempenhoProdutoDiario = require('./modelos/vendas/desempenho_produto_diario');
+const inteligenciaProdutoCanalDiaria = require('./modelos/vendas/inteligencia_produto_canal_diaria');
 const kpiPlataformaDiario = require('./modelos/vendas/kpi_plataforma_diario');
 const kpiFreteDiario = require('./modelos/vendas/kpi_frete_diario');
 const riscoRupturaProduto = require('./modelos/estoque/risco_ruptura_produto');
@@ -21,6 +22,7 @@ const objetos = {
   kpi_pedidos_pagos_diario: kpiPedidosPagosDiario,
   kpi_pedidos_pagos_diario_por_empresa: kpiPedidosPagosDiarioPorEmpresa,
   desempenho_produto_diario: desempenhoProdutoDiario,
+  inteligencia_produto_canal_diaria: inteligenciaProdutoCanalDiaria,
   kpi_plataforma_diario: kpiPlataformaDiario,
   kpi_frete_diario: kpiFreteDiario,
   risco_ruptura_produto: riscoRupturaProduto,

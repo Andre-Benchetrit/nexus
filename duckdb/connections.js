@@ -40,6 +40,15 @@ async function prepararPostgresDuckDB(con) {
     await runDuckDB(con, 'INSTALL postgres;');
     await runDuckDB(con, 'LOAD postgres;');
   }
+
+  // O postgres scanner pode abrir ate 64 conexoes por padrao durante leituras
+  // paralelas. O Sysemp possui um limite bem menor e, em uma atualizacao com
+  // varias entidades, isso pode produzir 53300 (too_many_connections) e deixar
+  // todas as dimensoes dependentes bloqueadas. O pipeline executa entidades em
+  // serie, portanto duas conexoes sao suficientes e mais previsiveis.
+  await runDuckDB(con, 'SET threads=2;');
+  await runDuckDB(con, 'SET pg_connection_limit=2;');
+  await runDuckDB(con, 'SET pg_connection_cache=false;');
 }
 
 function montarPostgresConnectionString() {
@@ -79,6 +88,13 @@ async function conectarPostgresNoDuckDB(con, alias = 'pg_db') {
   );
 }
 
+async function desconectarPostgresNoDuckDB(con, alias = 'pg_db') {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_$]*$/.test(alias)) {
+    throw new Error(`Alias PostgreSQL invalido: ${alias}.`);
+  }
+  await runDuckDB(con, `DETACH ${alias};`);
+}
+
 module.exports = {
   criarConexaoDuckDB,
   fecharConexaoDuckDB,
@@ -86,5 +102,6 @@ module.exports = {
   allDuckDB,
   prepararPostgresDuckDB,
   conectarPostgresNoDuckDB,
+  desconectarPostgresNoDuckDB,
   montarPostgresConnectionString
 };

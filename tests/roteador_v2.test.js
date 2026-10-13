@@ -303,6 +303,50 @@ test('v2 pede esclarecimento sem executar provider principal', async (t) => {
   assert.equal(resultado.roteamento.esclarecimento, true);
 });
 
+test('v2 recupera localmente pergunta clara quando o plano semantico e rejeitado', async (t) => {
+  const memoria = memoriaTemporaria(t);
+  let toolsPrincipais = [];
+  const resultado = await executarAgente('Quantos pedidos tivemos no ano de 2026?', {
+    routerMode: 'v2',
+    memoria,
+    dataReferencia: '2026-10-05',
+    provider: {
+      nome: 'principal-mock', modelo: 'principal',
+      async executar(contexto) {
+        toolsPrincipais = contexto.tools.map((item) => item.definicao.name);
+        return { texto: 'Consulta preparada.', provider: 'principal-mock', modelo: 'principal' };
+      }
+    },
+    providerRoteador: {
+      nome: 'router-mock', modelo: 'router-v2',
+      async executar(contexto) {
+        await contexto.tools[0].executar(decisaoBloqueios({
+          pergunta_autonoma: 'Quantos pedidos tivemos no ano de 2026?',
+          dominio_primario: 'indicadores',
+          dominios_secundarios: ['vendas'],
+          intencao: 'agregar',
+          entidades: [],
+          periodo: {
+            data_inicial: '2026-01-01', data_final: '2026-12-31', referencia: 'ano explícito'
+          },
+          campos_solicitados: ['quantidade_pedidos'],
+          plano_sugerido: [{ ferramenta: 'analisar_indicadores', finalidade: 'totalizar pedidos' }],
+          capacidades_ausentes: [],
+          confianca: 0.97,
+          precisa_esclarecimento: false,
+          pergunta_esclarecimento: null
+        }));
+        return { texto: 'ok' };
+      }
+    }
+  });
+  assert.deepEqual(toolsPrincipais, ['analisar_vendas', 'solicitar_aprofundamento']);
+  assert.equal(resultado.roteamento.perfilInicial, 'vendas');
+  assert.equal(resultado.roteamento.esclarecimento, undefined);
+  assert.equal(resultado.roteamento.recuperacaoPlanoLocal.motivo,
+    'plano_semantico_sem_ferramenta_valida');
+});
+
 test('v2 permite mudança legítima de bloqueios para faturamento dos pedidos', async (t) => {
   const memoria = memoriaTemporaria(t);
   memoria.registrarInteracao({

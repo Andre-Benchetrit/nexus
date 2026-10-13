@@ -3,6 +3,10 @@ const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const mammoth = require('mammoth');
 const { createCanvas } = require('@napi-rs/canvas');
+const { FAMILIA_FONTE_CANVAS, registrarFontesCanvas } = require('./canvas_fonts');
+
+registrarFontesCanvas();
+const FONTE_CANVAS = `"${FAMILIA_FONTE_CANVAS}"`;
 const {
   AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, ImageRun,
   Packer, PageNumber, Paragraph, Table, TableCell, TableRow, TextRun, WidthType
@@ -208,7 +212,7 @@ function nomeAbaUnico(titulo, indice, usados) {
 function desenharGrafico(grafico, marca) {
   const canvas = createCanvas(1200, 620); const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 1200, 620);
-  ctx.fillStyle = marca.cores.texto; ctx.font = 'bold 30px Arial'; ctx.fillText(grafico.titulo, 70, 55);
+  ctx.fillStyle = marca.cores.texto; ctx.font = `bold 30px ${FONTE_CANVAS}`; ctx.fillText(grafico.titulo, 70, 55);
   const max = Math.max(...grafico.valores, 1); const base = 520; const largura = 1000 / grafico.valores.length;
   ctx.strokeStyle = '#d8e2dc'; ctx.beginPath(); ctx.moveTo(70, base); ctx.lineTo(1130, base); ctx.stroke();
   if (grafico.tipo === 'linha') {
@@ -219,7 +223,7 @@ function desenharGrafico(grafico, marca) {
     grafico.valores.forEach((valor, i) => { const altura = (valor / max) * 390;
       ctx.fillStyle = marca.cores.primaria; ctx.fillRect(85 + i * largura, base - altura, Math.max(12, largura * 0.62), altura); });
   }
-  ctx.fillStyle = marca.cores.texto; ctx.font = '18px Arial';
+  ctx.fillStyle = marca.cores.texto; ctx.font = `18px ${FONTE_CANVAS}`;
   grafico.categorias.forEach((categoria, i) => ctx.fillText(categoria.slice(0, 12), 80 + i * largura, 555));
   return canvas.toBuffer('image/png');
 }

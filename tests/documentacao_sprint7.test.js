@@ -31,6 +31,9 @@ test('roteador e politica de fonte reconhecem procedimento interno', () => {
   const capacidade = obterCapacidade('consultar_documentacao');
   assert.equal(capacidade.dominio, 'documentacao');
   assert.ok(capacidade.campos.includes('pagina_documento'));
+  assert.deepEqual(exigeFonteCorporativa('Como eu abro chamado?'), {
+    obrigatoria: true, motivo: 'documentacao_corporativa'
+  });
 });
 
 test('status SSE reconhece validacao contextual de politicas', () => {
@@ -368,6 +371,29 @@ test('nova busca documental nao fica presa ao documento irrelevante anterior', (
   });
   assert.equal(argumentos.documento_id, undefined);
   assert.equal(argumentos.consulta, 'Busque por manual de marca');
+});
+
+test('consulta documental usa a pergunta real em vez da reformulacao livre do modelo', () => {
+  const argumentos = aplicarPoliticaArgumentos('consultar_documentacao', {
+    consulta: 'fluxos diversos de suporte interno', limite: 8, analisar_visual: false
+  }, {
+    perguntaAtual: 'Como eu abro chamado?', referenciasAnteriores: {}
+  });
+  assert.equal(argumentos.consulta, 'Como eu abro chamado?');
+});
+
+test('pedido de link amplia a busca documental usando o assunto anterior', () => {
+  const documentoAnterior = '11111111-1111-4111-8111-111111111111';
+  const argumentos = aplicarPoliticaArgumentos('consultar_documentacao', {
+    consulta: 'qual o link?', documento_id: documentoAnterior,
+    limite: 8, analisar_visual: false
+  }, {
+    perguntaAtual: 'Qual o link?',
+    perguntaAnterior: 'Como eu abro chamado?',
+    referenciasAnteriores: { documento_id: [documentoAnterior] }
+  });
+  assert.equal(argumentos.documento_id, undefined);
+  assert.equal(argumentos.consulta, 'Como eu abro chamado? Qual o link?');
 });
 
 test('expansao de marca exige intencao explicita e ignora cor ou logo isolados', () => {

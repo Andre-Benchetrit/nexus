@@ -83,6 +83,27 @@ function montarFiltros(argumentos) {
   return filtros;
 }
 
+function montarWhereResumo(filtros, citar) {
+  const condicoes = [];
+  const parametros = [];
+  for (const campo of ['marketplace_pedido', 'id_nota_saida']) {
+    const filtro = filtros[campo];
+    if (!filtro) continue;
+    if (filtro.operador === 'igual') {
+      condicoes.push(`${citar(campo)} = ?`);
+      parametros.push(filtro.valor);
+    } else if (filtro.operador === 'em') {
+      const valores = filtro.valores || [];
+      condicoes.push(`${citar(campo)} IN (${valores.map(() => '?').join(', ')})`);
+      parametros.push(...valores);
+    }
+  }
+  return {
+    where: condicoes.length ? ` WHERE ${condicoes.join(' AND ')}` : '',
+    parametros
+  };
+}
+
 async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
   validarObjeto(argumentos);
   if (!['resumir', 'listar', 'listar_itens', 'detalhar_pedido'].includes(argumentos.operacao)) {
@@ -100,27 +121,49 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
     if (argumentos.operacao === 'resumir') {
       const [pedidos, totais] = await Promise.all([
         leitorGold.contar('bloqueio_sem_estoque_pedido', { filtros }),
-        leitorGold.agregar('bloqueio_sem_estoque_pedido', {
-          agrupamentos: [],
-          calculos: [
-            { operacao: 'somar', campo: 'quantidade_ocorrencias' },
-            { operacao: 'somar', campo: 'quantidade_produtos_identificados' },
-            { operacao: 'somar', campo: 'quantidade_ocorrencias_sem_produto' }
-          ],
-          filtros,
-          limite: 1
+        leitorGold.comObjeto('bloqueio_sem_estoque_item', async ({
+          contexto, consultarSql, citar
+        }) => {
+          const { where, parametros } = montarWhereResumo(filtros, citar);
+          const [linha] = await consultarSql(`
+            SELECT
+              count(*) AS quantidade_ocorrencias,
+              count(*) FILTER (WHERE ${citar('id_produto')} > 0)
+                AS quantidade_ocorrencias_produto_identificado,
+              count(DISTINCT ${citar('id_produto')}) FILTER (WHERE ${citar('id_produto')} > 0)
+                AS quantidade_produtos_unicos_identificados,
+              count(*) FILTER (WHERE ${citar('id_produto')} = 0)
+                AS quantidade_ocorrencias_sem_produto,
+              coalesce(sum(coalesce(${citar('quantidade_pedida')}, 0)), 0)
+                AS quantidade_unidades_bloqueadas
+            FROM ${citar(contexto.viewAtual)}${where}
+          `, parametros);
+          return linha || {};
         })
       ]);
-      const total = totais.dados[0] || {};
+      const total = totais || {};
       return {
         operacao: 'resumir',
         id_bloqueio: 58,
         descricao_bloqueio: 'PRODUTOS SEM ESTOQUE',
         quantidade_pedidos: pedidos.total,
         quantidade_notas: pedidos.total,
-        quantidade_ocorrencias: total.calculo_1 ?? 0,
-        quantidade_produtos_identificados: total.calculo_2 ?? 0,
-        quantidade_ocorrencias_sem_produto: total.calculo_3 ?? 0,
+        quantidade_ocorrencias: total.quantidade_ocorrencias ?? 0,
+        quantidade_ocorrencias_produto_identificado:
+          total.quantidade_ocorrencias_produto_identificado ?? 0,
+        quantidade_produtos_unicos_identificados:
+          total.quantidade_produtos_unicos_identificados ?? 0,
+        quantidade_produtos_identificados:
+          total.quantidade_produtos_unicos_identificados ?? 0,
+        quantidade_ocorrencias_sem_produto:
+          total.quantidade_ocorrencias_sem_produto ?? 0,
+        quantidade_unidades_bloqueadas: total.quantidade_unidades_bloqueadas ?? 0,
+        definicoes_metricas: {
+          quantidade_pedidos: 'pedidos/notas distintos com bloqueio ativo elegível',
+          quantidade_ocorrencias: 'linhas de ocorrência do bloqueio 58',
+          quantidade_produtos_unicos_identificados: 'produtos distintos em todas as ocorrências',
+          quantidade_unidades_bloqueadas: 'soma da quantidade pedida nas ocorrências'
+        },
         regra_meli_coleta_ext:
           'ignorado, exceto quando dt_limite_expedicao e hoje em America/Sao_Paulo',
         atualizado_em: pedidos.ultimaConstrucao
@@ -201,6 +244,12 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
         operacao: 'listar_itens',
         id_bloqueio: 58,
         quantidade_retornada: dados.length,
+        quantidade_ocorrencias: dados.length,
+        quantidade_produtos_unicos_identificados: new Set(dados
+          .map((linha) => Number(linha.id_produto || 0))
+          .filter((id) => id > 0)).size,
+        quantidade_unidades_bloqueadas: dados.reduce((total, linha) =>
+          total + Number(linha.quantidade_pedida || 0), 0),
         dados,
         candidatos_produto_inferidos: candidatosProdutoInferidos,
         possui_inferencia: candidatosProdutoInferidos.length > 0,

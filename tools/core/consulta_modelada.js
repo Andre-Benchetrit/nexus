@@ -45,7 +45,8 @@ function criarCamadaModelada({
       properties: {
         operacao: { type: 'string', enum: OPERACOES_CONSULTA },
         objeto: { type: ['string', 'null'], enum: [...objetosPermitidos, null] },
-        visao: { type: ['string', 'null'], enum: ['atual', 'historico', null] },
+        visao: { type: ['string', 'null'], enum: ['atual', 'historico', null],
+          description: 'Use atual para qualquer consulta de negocio, inclusive periodos passados. Historico concatena snapshots tecnicos e so serve para auditoria explicita de cargas do lake.' },
         id: { type: ['string', 'null'] },
         colunas: {
           anyOf: [
@@ -148,7 +149,8 @@ function criarCamadaModelada({
       type: 'object',
       properties: {
         objeto: { type: 'string', enum: objetosPermitidos },
-        visao: { type: ['string', 'null'], enum: ['atual', 'historico', null] },
+        visao: { type: ['string', 'null'], enum: ['atual', 'historico', null],
+          description: 'Use atual para qualquer consulta de negocio, inclusive series temporais. Historico concatena snapshots tecnicos e so serve para auditoria explicita de cargas do lake.' },
         agrupamentos: {
           anyOf: [
             {

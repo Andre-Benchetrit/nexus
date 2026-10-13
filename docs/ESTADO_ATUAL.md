@@ -1,6 +1,6 @@
 # Estado atual do Nexus
 
-Atualizado em 29 de setembro de 2026.
+Atualizado em 6 de outubro de 2026.
 
 Este documento e a referencia resumida do produto que existe no repositorio hoje.
 Os demais guias explicam cada subsistema em mais detalhes. Uma capability estar
@@ -75,6 +75,12 @@ governanca, seguranca e disponibilidade real das fontes continuam soberanos.
 - autorizacoes de dominio como `vendas.consultar`, `estoque.consultar` e
   `catalogo.consultar` revalidadas antes da leitura e da exportacao.
 
+A inteligencia de produto acrescenta quatro leituras conversacionais: evolucao
+de uma coorte fixa, diagnostico 360 graus, alertas sob demanda e comparacao por
+canal. Pedidos e faturamento permanecem separados por suas datas de negocio; a
+contribuicao apos comissao nao e apresentada como lucro e o estoque atual nao e
+tratado como historico de estoque.
+
 Na implantacao FID, as respostas corporativas devem identificar a fonte como
 `Dados do Sysemp`, evitando apresentar Sysemp como se fosse o proprio Nexus.
 
@@ -135,6 +141,8 @@ alterar intencao, selecionar tools, conceder acesso ou iniciar acoes.
 - identidade visual configuravel por implantacao;
 - reabertura e validacao do binario antes da entrega;
 - armazenamento privado na conversa, com classificacao herdada das fontes.
+- graficos PNG de linha, barras ou variacao calculados localmente a partir do
+  `result_ref`, sem pedir ao modelo para reconstruir os numeros.
 
 Nenhum arquivo gerado entra automaticamente no Knowledge ou no OneDrive.
 
@@ -167,6 +175,8 @@ nao fazem parte da versao atual.
 - DLP e classificacao aplicados antes de providers externos;
 - memoria somente por candidatura, revisao e publicacao governada;
 - auditoria sanitizada de rota, tool, provider, tokens, custo, duracao e origem;
+- painel operacional de auditoria com visao global para administradores e
+  escopo setorial para gestores, sem exibir perguntas, respostas ou anexos;
 - banco e logs nao armazenam prompts completos, resultados corporativos brutos,
   credenciais ou conteudo integral dos anexos.
 
@@ -240,4 +250,3 @@ o `.env` local inteiro para producao.
 - [Pesquisa web e imagens](WEB_E_IMAGENS.md)
 - [Producao no Railway](PRODUCAO_RAILWAY.md)
 - [Comandos](COMANDOS.md)
-

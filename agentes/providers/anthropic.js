@@ -18,7 +18,7 @@ function converterToolAnthropic(definicao) {
 function criarProviderAnthropic(opcoes = {}) {
   const modelo = opcoes.modelo || process.env.ANTHROPIC_MODEL || null;
   const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000);
-  const maxTokens = Number(opcoes.maxTokens || process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 4096);
+  const maxTokens = Number(opcoes.maxTokens || process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 8192);
   let cliente = opcoes.cliente;
 
   function obterCliente() {
@@ -118,6 +118,15 @@ function criarProviderAnthropic(opcoes = {}) {
       const chamadas = (resposta.content || []).filter((item) => item.type === 'tool_use');
       messages.push({ role: 'assistant', content: resposta.content || [] });
       if (!chamadas.length) {
+        if (resposta.stop_reason === 'max_tokens') {
+          const erro = new Error(
+            `O provider anthropic interrompeu a resposta ao atingir o limite de ${maxTokens} tokens.`
+          );
+          erro.codigo = 'LLM_OUTPUT_TRUNCATED';
+          erro.stopReason = resposta.stop_reason;
+          erro.maxTokens = maxTokens;
+          throw erro;
+        }
         emitirCheckpoint(onCheckpoint, 'provider_concluiu', {
           etapa: estagioAtual, provider: 'anthropic', rodada: rodada + 1,
           callId: auditada.callId

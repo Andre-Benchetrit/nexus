@@ -70,6 +70,17 @@ test('roteia rankings dimensionais faturados para o Gold de desempenho', () => {
   );
 });
 
+test('roteia as quatro intenções de inteligência de produto para o perfil composto', () => {
+  assert.equal(classificarPergunta('Mostre a evolução dos top 10 produtos nos últimos três meses'),
+    'inteligencia_produto');
+  assert.equal(classificarPergunta('Faça um diagnóstico 360 deste produto'),
+    'inteligencia_produto');
+  assert.equal(classificarPergunta('Quais produtos precisam de atenção nas vendas e no estoque?'),
+    'inteligencia_produto');
+  assert.equal(classificarPergunta('Compare este produto entre os canais de venda'),
+    'inteligencia_produto');
+});
+
 test('roteia ranking de produtos dos pedidos pagos para vendas', () => {
   assert.equal(classificarPergunta(
     'Me dê os top 15 produtos por receita dos pedidos pagos desse período.'

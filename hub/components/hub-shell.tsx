@@ -157,16 +157,17 @@ function ImageArtifactCard({ item, conversationId, onEdit }: {
   const [selectedId, setSelectedId] = useState(item.id);
   const [imageState, setImageState] = useState<"loading" | "loaded" | "error">("loading");
   useEffect(() => {
+    if (item.chart) return;
     let active = true;
     nexusFetch<Artifact[]>(`conversations/${conversationId}/artifacts/${item.id}/versions`)
       .then((items) => { if (active && items.length) setVersions(items); })
       .catch(() => undefined);
     return () => { active = false; };
-  }, [conversationId, item.id]);
+  }, [conversationId, item.id, item.chart]);
   const selectedIndex = Math.max(0, versions.findIndex((version) => version.id === selectedId));
   const selected = versions[selectedIndex] || item;
   useEffect(() => { setImageState("loading"); }, [selected.id]);
-  return <figure className="generated-image-card">
+  return <figure className={`generated-image-card${selected.chart ? " chart" : ""}`}>
     <div className={`generated-image-preview ${imageState}`} aria-busy={imageState === "loading"}>
       {imageState === "loading" && <div className="generated-image-loading" role="status">
         <i aria-hidden="true" /><span>Carregando imagem…</span>
@@ -175,19 +176,20 @@ function ImageArtifactCard({ item, conversationId, onEdit }: {
         <span>Não foi possível carregar a prévia.</span>
       </div>}
       <img key={selected.id} src={apiFileUrl(selected.previewUrl || selected.url)}
-        alt={selected.title || "Imagem criada pelo Nexus"}
+        alt={selected.title || (selected.chart ? "Gráfico criado pelo Nexus" : "Imagem criada pelo Nexus")}
         onLoad={() => setImageState("loaded")} onError={() => setImageState("error")} />
     </div>
     <figcaption><div><strong>{selected.title || selected.name}</strong>
-      <small>Rascunho validado · v{selected.version || 1} · {selected.brandMode === "full_brand" ? "Marca completa" : selected.brandMode === "visual_identity" ? "Identidade sem logo" : "Sem logo"}</small></div>
-      {selected.validation && <small className="image-compliance">{selected.validation.width}×{selected.validation.height} · {selected.validation.layers || 0} camada(s) · {selected.validation.brandCompliant === false ? "Revisar marca" : "Conformidade básica aprovada"}</small>}
+      <small>{selected.chart ? "Gráfico validado · Dados do Sysemp · cálculo local" : <>Rascunho validado · v{selected.version || 1} · {selected.brandMode === "full_brand" ? "Marca completa" : selected.brandMode === "visual_identity" ? "Identidade sem logo" : "Sem logo"}</>}</small></div>
+      {selected.validation && <small className="image-compliance">{selected.validation.width}×{selected.validation.height}{selected.chart ? ` · ${selected.validation.series || 0} série(s) · ${selected.validation.categories || 0} período(s)` : ` · ${selected.validation.layers || 0} camada(s) · ${selected.validation.brandCompliant === false ? "Revisar marca" : "Conformidade básica aprovada"}`}</small>}
       <div className="generated-image-actions">
         {versions.length > 1 && <span className="image-version-switcher">
           <button type="button" disabled={selectedIndex <= 0} onClick={() => setSelectedId(versions[selectedIndex - 1].id)} aria-label="Versão anterior">‹</button>
           <i>{selectedIndex + 1}/{versions.length}</i>
           <button type="button" disabled={selectedIndex >= versions.length - 1} onClick={() => setSelectedId(versions[selectedIndex + 1].id)} aria-label="Próxima versão">›</button>
         </span>}
-        <button type="button" onClick={() => onEdit(selected)}>Editar esta imagem</button>
+        {!selected.chart && <button type="button" onClick={() => onEdit(selected)}>Editar esta imagem</button>}
+        {selected.chart && <a href={apiFileUrl(selected.previewUrl || selected.url)} target="_blank" rel="noreferrer">Ampliar</a>}
         <a href={apiFileUrl(selected.url)} download>Baixar</a>
       </div></figcaption>
   </figure>;
@@ -269,8 +271,10 @@ export function HubShell({ profile, initialConversationId }: {
     ...(currentProfile.permissoesGlobais || []),
     ...(selectedDepartment?.permissoes || [])
   ]);
-  const canAdmin = currentProfile.permissoes.some((code) =>
-    ["governanca.administrar", "auditoria.consultar", "custos.consultar.setor", "custos.consultar.global",
+  const canAuditAdmin = currentProfile.permissoes.includes("auditoria.consultar") ||
+    currentProfile.setores.some((setor) => setor.permissoes?.includes("auditoria.consultar.setor"));
+  const canAdmin = canAuditAdmin || currentProfile.permissoes.some((code) =>
+    ["governanca.administrar", "custos.consultar.setor", "custos.consultar.global",
       "documentacao.criar.setor", "documentacao.editar.setor", "documentacao.publicar.setor",
       "documentacao.administrar.global", "documentacao.auditar"].includes(code)
   );

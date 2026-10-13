@@ -36,6 +36,16 @@ type KnowledgeEdit = {
   versions: Array<{ id: string; numero: number; status: string; titulo: string;
     criado_em?: string; publicado_em?: string | null }>;
 };
+type AuditOverview = {
+  period: { from: string; to: string };
+  summary: Record<string, string | number | null>;
+  users: Array<Record<string, any>>;
+  capabilities: Array<Record<string, any>>;
+};
+type AuditActivity = { items: Array<Record<string, any>>; nextCursor?: string | null };
+type AuditGlossary = { version: string; capabilities: Array<Record<string, string>>;
+  modes: Array<Record<string, string>>; statuses: Array<Record<string, string>>;
+  terms: Array<Record<string, string>> };
 
 function parseKnowledgeSteps(value: FormDataEntryValue | null) {
   const paragraphs = String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -63,7 +73,8 @@ function money(value: unknown, currency: "USD" | "BRL") {
 export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   const router = useRouter();
   const isAdmin = profile.permissoes.includes("governanca.administrar");
-  const canAudit = profile.permissoes.includes("auditoria.consultar");
+  const canAudit = profile.permissoes.includes("auditoria.consultar") || profile.setores.some((setor) =>
+    setor.permissoes?.includes("auditoria.consultar.setor"));
   const canCost = profile.permissoes.some((item) => item.startsWith("custos.consultar"));
   const canMemory = profile.permissoes.some((item) =>
     item === "memoria.auditar" || item.startsWith("memoria.revisar") || item === "memoria.administrar");
@@ -74,7 +85,6 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   const [people, setPeople] = useState<Principal[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [audit, setAudit] = useState<Array<Record<string, any>>>([]);
   const [lake, setLake] = useState<Record<string, any> | null>(null);
   const [memoryCandidates, setMemoryCandidates] = useState<MemoryCandidate[]>([]);
   const [knowledge, setKnowledge] = useState<KnowledgeDocument[]>([]);
@@ -110,7 +120,7 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
     canMemory && ["memory", "Aprendizados"],
     canKnowledge && ["knowledge", "Base de conhecimento"],
     canAudit && ["audit", "Auditoria"],
-    canAudit && ["lake", "Lake"]
+    isAdmin && ["lake", "Lake"]
   ].filter(Boolean) as string[][], [canCost, isAdmin, canAudit, canMemory, canKnowledge]);
 
   async function load() {
@@ -129,7 +139,6 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
         ]); setPeople(p); setDepartments(d); setRoles(r);
       }
       if (tab === "departments") setDepartments(await nexusFetch<Department[]>("admin/departments"));
-      if (tab === "audit") setAudit(await nexusFetch("admin/audit"));
       if (tab === "memory") setMemoryCandidates(await nexusFetch<MemoryCandidate[]>(
         "admin/memory-candidates?status=pending_review"
       ));
@@ -633,7 +642,7 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
         </div>}
       </section>}
 
-      {tab === "audit" && <DataTable title="Eventos recentes" rows={audit} />}
+      {tab === "audit" && <AuditPanel />}
       {tab === "lake" && lake && <><div className="metric-grid">
         <Metric label="Estado" value={lake.health?.saudavel ? "Saudável" : "Indisponível"} />
         <Metric label="Bronze" value={lake.health?.camadas?.bronze || 0} />
@@ -643,6 +652,138 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
       </>}
     </section>
   </main>;
+}
+
+function AuditPanel() {
+  const [overview, setOverview] = useState<AuditOverview | null>(null);
+  const [activity, setActivity] = useState<AuditActivity>({ items: [] });
+  const [glossary, setGlossary] = useState<AuditGlossary | null>(null);
+  const [trace, setTrace] = useState<Record<string, any> | null>(null);
+  const [filters, setFilters] = useState({ from: "", to: "", departmentId: "",
+    principalId: "", capability: "", status: "", sourceMode: "", onlyProblems: false });
+  const [applied, setApplied] = useState(filters);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [traceLoading, setTraceLoading] = useState<string | null>(null);
+
+  function query(extra: Record<string, string> = {}) {
+    const params = new URLSearchParams();
+    Object.entries(applied).forEach(([key, value]) => {
+      if (value !== "" && value !== false) params.set(key, String(value));
+    });
+    Object.entries(extra).forEach(([key, value]) => value && params.set(key, value));
+    const text = params.toString();
+    return text ? `?${text}` : "";
+  }
+
+  async function loadAudit() {
+    setAuditLoading(true); setAuditError(null); setTrace(null);
+    try {
+      const [resumo, atividades, termos] = await Promise.all([
+        nexusFetch<AuditOverview>(`admin/audit/overview${query()}`),
+        nexusFetch<AuditActivity>(`admin/audit/activity${query()}`),
+        glossary || nexusFetch<AuditGlossary>("admin/audit/glossary")
+      ]);
+      setOverview(resumo); setActivity(atividades); setGlossary(termos);
+    } catch (cause) {
+      setAuditError(cause instanceof Error ? cause.message : "Falha ao carregar a auditoria.");
+    } finally { setAuditLoading(false); }
+  }
+
+  useEffect(() => { loadAudit(); }, [applied]);
+  useEffect(() => {
+    if (!trace) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setTrace(null); };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [trace]);
+
+  async function loadMore() {
+    if (!activity.nextCursor) return;
+    try {
+      const proxima = await nexusFetch<AuditActivity>(`admin/audit/activity${query({ cursor: activity.nextCursor })}`);
+      setActivity((current) => ({ items: [...current.items, ...proxima.items], nextCursor: proxima.nextCursor }));
+    } catch (cause) { setAuditError(cause instanceof Error ? cause.message : "Falha ao carregar mais atividades."); }
+  }
+
+  async function openTrace(traceId: string) {
+    setAuditError(null); setTraceLoading(traceId);
+    try { setTrace(await nexusFetch(`admin/audit/traces/${traceId}`)); }
+    catch (cause) { setAuditError(cause instanceof Error ? cause.message : "Trace não autorizado."); }
+    finally { setTraceLoading(null); }
+  }
+
+  const summary = overview?.summary || {};
+  const nomeCatalogado = (grupo: "modes" | "statuses", codigo: string) =>
+    glossary?.[grupo]?.find((item) => item.codigo === codigo)?.nome || codigo;
+  const departments = [...new Map(activity.items.filter((item) => item.department_id)
+    .map((item) => [item.department_id, item.setor])).entries()];
+  return <section className="audit-panel">
+    <div className="audit-heading"><div><p className="eyebrow">METADADOS OPERACIONAIS</p>
+      <h2>Auditoria do Hub</h2><p>Atividade, autorizações e falhas sem exibir perguntas, respostas ou arquivos.</p></div>
+      <small>Período padrão: últimos 7 dias</small></div>
+    <form className="audit-filters glass-panel" onSubmit={(event) => { event.preventDefault(); setApplied({ ...filters }); }}>
+      <label>De<input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
+      <label>Até<input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
+      <label>Setor<select value={filters.departmentId} onChange={(event) => setFilters({ ...filters, departmentId: event.target.value })}>
+        <option value="">Todos permitidos</option>{departments.map(([id, nome]) => <option key={id} value={id}>{nome}</option>)}</select></label>
+      <label>Usuário<select value={filters.principalId} onChange={(event) => setFilters({ ...filters, principalId: event.target.value })}>
+        <option value="">Todos</option>{(overview?.users || []).map((item) =>
+          <option key={item.principal_id} value={item.principal_id}>{item.usuario || "Usuário"}</option>)}</select></label>
+      <label>Capability<select value={filters.capability} onChange={(event) => setFilters({ ...filters, capability: event.target.value })}>
+        <option value="">Todas</option>{(overview?.capabilities || []).map((item) =>
+          <option key={item.capability} value={item.capability}>{item.nome}</option>)}</select></label>
+      <label>Status<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
+        <option value="">Todos</option><option value="sucesso">Concluído</option><option value="erro">Erro</option>
+        <option value="bloqueada">Acesso bloqueado</option><option value="iniciado">Em andamento</option></select></label>
+      <label>Modo<select value={filters.sourceMode} onChange={(event) => setFilters({ ...filters, sourceMode: event.target.value })}>
+        <option value="">Todos</option><option value="automatico">Automático</option><option value="geral">Conhecimento geral</option>
+        <option value="dados">Consultar dados</option><option value="documentacao">Documentação</option>
+        <option value="web">Web</option><option value="imagem">Imagem</option></select></label>
+      <label className="audit-checkbox"><input type="checkbox" checked={filters.onlyProblems}
+        onChange={(event) => setFilters({ ...filters, onlyProblems: event.target.checked })} />Somente erros ou bloqueios</label>
+      <button className="primary-button">Aplicar filtros</button>
+    </form>
+    {auditError && <p className="admin-error">{auditError}</p>}
+    {auditLoading && <p className="audit-loading">Carregando metadados autorizados…</p>}
+    {!auditLoading && <>
+      <div className="metric-grid">
+        <Metric label="Turnos" value={summary.turnos || 0} /><Metric label="Usuários ativos" value={summary.usuarios_ativos || 0} />
+        <Metric label="Taxa de sucesso" value={`${summary.taxa_sucesso || 0}%`} /><Metric label="Erros" value={summary.erros || 0} />
+        <Metric label="Bloqueios" value={summary.bloqueios || 0} /><Metric label="Duração média" value={`${summary.duracao_media_ms || 0} ms`} />
+      </div>
+      <div className="audit-grid"><DataTable title="Atividade por usuário" rows={overview?.users || []} />
+        <DataTable title="Atividade por capability" rows={overview?.capabilities || []} /></div>
+      <section className="data-section glass-panel"><h2>Linha do tempo recente</h2><div className="table-scroll"><table>
+        <thead><tr><th>Quando</th><th>Usuário</th><th>Setor</th><th>Modo</th><th>Capabilities</th><th>Estado</th><th>Duração</th><th>Detalhe</th></tr></thead>
+        <tbody>{activity.items.map((item) => <tr key={item.id}><td>{new Date(item.criado_em).toLocaleString("pt-BR")}</td>
+          <td>{item.usuario || "—"}</td><td>{item.setor || "Sem setor"}</td><td>{nomeCatalogado("modes", item.source_mode)}</td>
+          <td>{(item.capabilityLabels || []).join(", ") || "Resposta direta"}</td><td>{item.bloqueios ? "Acesso bloqueado" : nomeCatalogado("statuses", item.status)}</td>
+          <td>{item.duracao_ms == null ? "—" : `${item.duracao_ms} ms`}</td><td><button className="text-button"
+            aria-haspopup="dialog" aria-busy={traceLoading === item.trace_id}
+            disabled={Boolean(traceLoading)} onClick={() => openTrace(item.trace_id)}>
+            {traceLoading === item.trace_id ? "Carregando…" : "Ver etapas"}</button></td></tr>)}
+          {!activity.items.length && <tr><td colSpan={8}>Nenhuma atividade encontrada.</td></tr>}</tbody></table></div>
+        {activity.nextCursor && <button className="secondary-button" onClick={loadMore}>Carregar mais</button>}
+      </section>
+      {trace && <div className="audit-trace-backdrop" role="presentation" onMouseDown={() => setTrace(null)}>
+        <section className="audit-trace glass-panel" role="dialog" aria-modal="true" aria-labelledby="audit-trace-title"
+          onMouseDown={(event) => event.stopPropagation()}><header><div><p className="eyebrow">TRACE SANITIZADO</p>
+          <h2 id="audit-trace-title">{trace.turn?.trace_id}</h2>
+          <p>{trace.turn?.usuario} · {trace.turn?.setor || "Sem setor"} · {nomeCatalogado("statuses", trace.turn?.status)}</p></div>
+          <button className="audit-trace-close" type="button" aria-label="Fechar etapas" onClick={() => setTrace(null)}>×</button></header>
+          <ol>{(trace.stages || []).map((stage: Record<string, any>) => <li key={`${stage.tipo}-${stage.id}`}>
+            <strong>{stage.nome || (stage.tipo === "modelo" ? "Processamento do modelo" : "Modelo alternativo")}</strong>
+            <span>{nomeCatalogado("statuses", stage.status)} · {stage.duracao_ms == null ? "duração não registrada" : `${stage.duracao_ms} ms`}</span>
+            {stage.finalidade && <small>{stage.finalidade}</small>}
+            {stage.erro_codigo && <small>Erro: {stage.erro_codigo}</small>}</li>)}</ol>
+          {!(trace.stages || []).length && <p>Nenhuma etapa técnica foi registrada neste turno.</p>}
+        </section></div>}
+      {glossary && <details className="audit-glossary glass-panel"><summary>Glossário da Auditoria · versão {glossary.version}</summary>
+        <div className="audit-glossary-grid">{[...glossary.capabilities, ...glossary.modes, ...glossary.statuses, ...glossary.terms]
+          .map((item) => <article key={`${item.codigo}-${item.nome}`}><strong>{item.nome}</strong><code>{item.codigo}</code><p>{item.descricao || item.finalidade}</p></article>)}</div></details>}
+    </>}
+  </section>;
 }
 
 function AdminLoading() {

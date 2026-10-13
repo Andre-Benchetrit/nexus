@@ -11,6 +11,7 @@ const { validarPlanoSugerido, obterCapacidade } = require('../agentes/capacidade
 const { extrairContextoTemporal } = require('../agentes/contexto_temporal');
 const {
   aplicarPoliticaArgumentos,
+  solicitaHistoricoTecnico,
   validarPoliticaExecucao
 } = require('../agentes/politicas_tools');
 const { avaliarFaixaSemantica } = require('../agentes/escalonamento_semantico');
@@ -61,6 +62,34 @@ test('envelope registra campos comprovados e sintese nao pode omitir identificad
   );
 });
 
+test('síntese de inteligência de produto não inventa correção nem integridade da carga', () => {
+  const envelope = criarEnvelopeEvidencia([{
+    nome: 'analisar_evolucao_produto',
+    resultado: {
+      metricas: ['pedidos', 'itens_faturados'],
+      cobertura_fontes: {
+        conclusao: 'intervalo_dentro_da_cobertura_observada',
+        comprova_integridade_da_carga: false
+      },
+      dados: [{ periodo: '2026-07-01', pedidos: 46, itens_faturados: 43 }]
+    }
+  }]);
+  const correcao = validarSinteseCorporativa(
+    'A consulta anterior foi corrigida e julho tem 43 itens faturados.', envelope
+  );
+  assert.equal(correcao.valida, false);
+  assert.ok(correcao.motivos.includes('correcao_metrica_nao_comprovada'));
+  const cobertura = validarSinteseCorporativa(
+    'A cobertura está completa e julho tem 46 pedidos.', envelope
+  );
+  assert.equal(cobertura.valida, false);
+  assert.ok(cobertura.motivos.includes('integridade_carga_nao_comprovada'));
+  assert.equal(validarSinteseCorporativa(
+    'No intervalo observado, julho tem 46 pedidos distintos e 43 linhas de item faturadas; a ferramenta não comprova a integridade da carga.',
+    envelope
+  ).valida, true);
+});
+
 test('limites de volume sao ajustados sem alterar filtros ou enums', async () => {
   const schema = {
     properties: {
@@ -108,6 +137,71 @@ test('continuidade de bloqueios força enriquecimento em lote com referencias an
   );
   assert.equal(argumentos.operacao, 'listar_itens');
   assert.deepEqual(argumentos.marketplace_pedidos, ['PED-1', 'PED-2']);
+});
+
+test('politica temporal preserva a faixa completa de meses na inteligencia de produto', () => {
+  const argumentos = aplicarPoliticaArgumentos(
+    'analisar_evolucao_produto',
+    { data_inicial: '2026-07-01', data_final: '2026-07-31', granularidade: 'mes' },
+    {
+      temporal: {
+        tipo: 'periodo_explicito', origem: 'meses_nomeados_mais_recentes',
+        inicio: '2026-07-01', fim: '2026-09-30'
+      }
+    }
+  );
+  assert.equal(argumentos.data_inicial, '2026-07-01');
+  assert.equal(argumentos.data_final, '2026-09-30');
+});
+
+test('historico comercial usa snapshot atual e nao soma snapshots do lake', () => {
+  const argumentos = aplicarPoliticaArgumentos('agregar_gold', {
+    objeto: 'desempenho_produto_diario', visao: 'historico',
+    agrupamentos: [{ campo: 'data_referencia', granularidade: 'mes' }],
+    calculos: [{ campo: 'quantidade_faturada', operacao: 'somar' }]
+  }, {
+    pergunta: 'Para o SKU PHPPU12C1BR, consulte unidades faturadas por mês de janeiro a agosto de 2026.'
+  });
+  assert.equal(argumentos.visao, 'atual');
+  assert.equal(solicitaHistoricoTecnico('Mostre o histórico de vendas dos últimos oito meses.'), false);
+});
+
+test('visao historica permanece disponivel para auditoria explicita de snapshots', () => {
+  const argumentos = aplicarPoliticaArgumentos('agregar_gold', {
+    objeto: 'desempenho_produto_diario', visao: 'historico',
+    agrupamentos: [], calculos: [{ campo: null, operacao: 'contar' }]
+  }, {
+    pergunta: 'Audite os snapshots das cargas do lake e compare as versões do Gold.'
+  });
+  assert.equal(argumentos.visao, 'historico');
+  assert.equal(solicitaHistoricoTecnico('Audite os snapshots das cargas do lake.'), true);
+  assert.equal(solicitaHistoricoTecnico(
+    'Existe divergência entre este registro e o resultado modelado.'
+  ), true);
+  assert.equal(aplicarPoliticaArgumentos('consultar_bronze', {
+    operacao: 'consultar', entidade: 'nota_saida', visao: 'historico'
+  }, {
+    pergunta: 'Existe divergência entre este registro e o resultado modelado.'
+  }).visao, 'historico');
+  assert.equal(solicitaHistoricoTecnico('Analise vendas históricas sem usar snapshots.'), false);
+});
+
+test('normalizacao de visao e registrada antes da execucao da tool', async () => {
+  let recebido;
+  let ajustes;
+  const [tool] = instrumentarFerramentas([{
+    definicao: { type: 'function', name: 'agregar_gold', parameters: { type: 'object', properties: {} } },
+    executar: async (argumentos) => { recebido = argumentos; return { ok: true }; }
+  }], null, {
+    normalizarArgumentos: (nome, argumentos) => aplicarPoliticaArgumentos(nome, argumentos, {
+      pergunta: 'Unidades faturadas por mês de janeiro a agosto.'
+    }),
+    onArgumentosNormalizados: async (_nome, itens) => { ajustes = itens; }
+  });
+  await tool.executar({ visao: 'historico' });
+  assert.equal(recebido.visao, 'atual');
+  assert.deepEqual(ajustes, [{ campo: 'visao', recebido: 'historico', aplicado: 'atual',
+    motivo: 'politica_de_consulta' }]);
 });
 
 test('fachada atual de bloqueios rejeita data historica em vez de responder com o estado atual', () => {
