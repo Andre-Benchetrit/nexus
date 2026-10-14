@@ -4,7 +4,7 @@ const { METRICAS, seletorSchema, compararCanais } = require('./core/inteligencia
 const definicaoCompararCanaisProduto = {
   type: 'function',
   name: 'comparar_canais_produto',
-  description: 'Compara produtos por plataforma do Sysemp, incluindo pedidos, faturamento, margem e contribuição após comissão.',
+  description: 'Compara produtos por plataforma do Sysemp, incluindo pedidos, faturamento e margem estimada sem comissão.',
   strict: true,
   parameters: {
     type: 'object',

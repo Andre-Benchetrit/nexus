@@ -145,8 +145,7 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     entidades: ['produto', 'sku', 'ean', 'plataforma'],
     campos: [
       'pedidos', 'quantidade_pedida', 'valor_pedidos', 'quantidade_faturada',
-      'faturamento_emitido', 'custo_produtos', 'margem_bruta_produtos',
-      'comissao_marketplace', 'contribuicao_apos_comissao'
+      'faturamento_emitido', 'custo_produtos', 'margem_bruta_produtos'
     ],
     operacoes: ['evolucao', 'comparar_periodos', 'selecionar_top_n'],
     transformacoesPermitidas: ['resumir', 'ordenar', 'destacar', 'comparar_periodos', 'formatar_tabela'],
@@ -158,7 +157,7 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     entidades: ['produto', 'sku', 'ean', 'plataforma', 'estoque', 'reposicao'],
     campos: [
       'pedidos', 'faturamento_emitido', 'custo_produtos', 'margem_bruta_produtos',
-      'contribuicao_apos_comissao', 'estoque_total', 'quantidade_reservada',
+      'estoque_total', 'quantidade_reservada',
       'cobertura', 'risco_ruptura', 'reposicao'
     ],
     operacoes: ['diagnosticar', 'comparar_periodos', 'comparar_canais'],
@@ -170,7 +169,7 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     dominio: 'inteligencia_produto', intencoes: ['diagnosticar', 'listar', 'ranquear'],
     entidades: ['produto', 'sku', 'ean', 'plataforma', 'estoque', 'reposicao'],
     campos: [
-      'quantidade_faturada', 'faturamento_emitido', 'contribuicao_apos_comissao',
+      'quantidade_faturada', 'faturamento_emitido', 'margem_bruta_produtos',
       'participacao_canal', 'estoque_total', 'risco_ruptura', 'reposicao_atrasada',
       'diferenca_periodo'
     ],
@@ -184,8 +183,7 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     entidades: ['produto', 'sku', 'ean', 'plataforma'],
     campos: [
       'quantidade_pedida', 'quantidade_faturada', 'valor_pedidos',
-      'faturamento_emitido', 'participacao_canal', 'margem_bruta_produtos',
-      'comissao_marketplace', 'contribuicao_apos_comissao'
+      'faturamento_emitido', 'participacao_canal', 'margem_bruta_produtos'
     ],
     operacoes: ['comparar_canais', 'comparar_periodos'],
     transformacoesPermitidas: ['resumir', 'ordenar', 'destacar', 'comparar_periodos', 'formatar_tabela'],

@@ -78,7 +78,13 @@ governanca, seguranca e disponibilidade real das fontes continuam soberanos.
 A inteligencia de produto acrescenta quatro leituras conversacionais: evolucao
 de uma coorte fixa, diagnostico 360 graus, alertas sob demanda e comparacao por
 canal. Pedidos e faturamento permanecem separados por suas datas de negocio; a
-contribuicao apos comissao nao e apresentada como lucro e o estoque atual nao e
+margem estimada usa faturamento menos custo dos produtos e nunca e apresentada
+como lucro. A comissao cadastrada no Sysemp e desconsiderada das analises e dos
+alertas porque funciona como valor de contingencia do marketplace e nao
+representa necessariamente a comissao efetiva. O valor pode estar
+propositalmente acima da taxa real para servir de base quando a tabela de precos
+falha. Quando a comissao efetiva for necessaria, o Nexus orienta a confirmacao
+com o setor Comercial em vez de estimar pelo campo. O estoque atual nao e
 tratado como historico de estoque.
 
 Na implantacao FID, as respostas corporativas devem identificar a fonte como

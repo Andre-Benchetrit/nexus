@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 
 const {
   definicaoAnalisarDesempenho,
-  executarAnalisarDesempenho
+  executarAnalisarDesempenho,
+  METRICAS
 } = require('../tools/analisar_desempenho');
 
 function leitorFalso() {
@@ -35,6 +36,7 @@ test('expoe contrato estrito para desempenho Gold', () => {
     new Set(definicaoAnalisarDesempenho.parameters.required),
     new Set(Object.keys(definicaoAnalisarDesempenho.parameters.properties))
   );
+  assert.equal(Object.hasOwn(METRICAS, 'comissao_marketplace'), false);
 });
 
 test('ranqueia marca e calcula margem percentual pelos totais', async () => {
@@ -68,6 +70,7 @@ test('ranqueia marca e calcula margem percentual pelos totais', async () => {
   });
   assert.equal(falso.chamadas[0][1].ordenacao.indice, 1);
   assert.match(resposta.conceito_margem, /nao e lucro liquido/);
+  assert.match(resposta.aviso_comissao, /desconsiderada/i);
 });
 
 test('ranking faturado de produto preserva codigo auxiliar sem confundir com id', async () => {

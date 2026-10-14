@@ -41,9 +41,9 @@ const ROTULOS_METRICAS = Object.freeze({
   itens_faturados: 'Linhas de item faturadas',
   quantidade_faturada: 'Unidades faturadas',
   custo_produtos: 'Custo dos produtos',
-  margem_bruta_produtos: 'Margem bruta dos produtos',
-  comissao_marketplace: 'Comissão de marketplace',
-  contribuicao_apos_comissao: 'Contribuição após comissão'
+  margem_bruta_produtos: 'Margem estimada dos produtos',
+  comissao_marketplace: 'Comissão cadastrada (não usada nas análises)',
+  contribuicao_apos_comissao: 'Cálculo legado após comissão (não usar para decisão)'
 });
 
 const METRICAS_MONETARIAS = new Set([

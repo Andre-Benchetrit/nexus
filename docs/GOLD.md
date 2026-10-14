@@ -88,6 +88,16 @@ O custo e o custo atual cadastrado no produto, nao um custo historico congelado
 na data da venda. Por isso, a margem deve ser entendida como estimativa ate que
 o custo historico seja disponibilizado.
 
+A comissao de marketplace permanece materializada somente como dado bruto para
+compatibilidade e diagnostico da origem. Ela nao participa das analises, alertas
+ou comparacoes apresentadas ao usuario, pois na operacao FID o campo funciona
+como valor de contingencia enviado pelo ERP quando a tabela de precos falha,
+pode estar propositalmente acima da taxa real e nao representa necessariamente
+a comissao efetiva. Quando essa taxa for necessaria, o Nexus orienta a consulta
+ao setor Comercial e nao estima o valor pelo campo. O indicador analitico usado
+e `faturamento - custo dos produtos`, sempre identificado como margem estimada,
+nunca como lucro.
+
 ### `kpi_plataforma_diario`
 
 Uma linha por data do pedido e plataforma. Resume o funil correto de pedidos:
@@ -290,7 +300,8 @@ materiais externos e consumos ficam fora do ranking.
 ## Outras tools Gold
 
 - `analisar_desempenho`: resume ou ranqueia produto, marca, grupo, subgrupo,
-  categoria e plataforma por quantidade, faturamento, custo, margem e comissao.
+  categoria e plataforma por quantidade, faturamento, custo e margem estimada,
+  com aviso de que a comissao cadastrada foi desconsiderada.
   Rankings possuem metrica de ordenacao explicita e filtros dimensionais.
 - `analisar_operacao`: resume o funil de pedidos ou ranqueia plataformas sem
   misturar os graos de pedido e nota; aceita filtro por plataforma.

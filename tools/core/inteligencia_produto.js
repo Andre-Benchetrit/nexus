@@ -4,14 +4,14 @@ const {
   criarConexaoDuckDB,
   fecharConexaoDuckDB
 } = require('../../duckdb/connections');
+const { AVISO_COMISSAO_MARKETPLACE } = require('./regras_negocio');
 
 const OBJETO = 'inteligencia_produto_canal_diaria';
 const MAX_PRODUTOS = 20;
 const METRICAS = Object.freeze([
   'pedidos', 'itens_pedidos', 'quantidade_pedida', 'valor_pedidos',
   'notas_fiscais', 'itens_faturados', 'quantidade_faturada',
-  'faturamento_emitido', 'custo_produtos', 'margem_bruta_produtos',
-  'comissao_marketplace', 'contribuicao_apos_comissao'
+  'faturamento_emitido', 'custo_produtos', 'margem_bruta_produtos'
 ]);
 const DEFINICOES_METRICAS = Object.freeze({
   pedidos: { grupo: 'pedidos', rotulo: 'Pedidos distintos', campo_temporal: 'data do pedido',
@@ -32,26 +32,24 @@ const DEFINICOES_METRICAS = Object.freeze({
     descricao: 'Soma do valor dos itens nas notas fiscais emitidas.' },
   custo_produtos: { grupo: 'faturamento', rotulo: 'Custo dos produtos faturados', campo_temporal: 'data de emissão',
     descricao: 'Soma do custo dos produtos nas notas fiscais emitidas.' },
-  margem_bruta_produtos: { grupo: 'faturamento', rotulo: 'Margem bruta dos produtos', campo_temporal: 'data de emissão',
-    descricao: 'Faturamento emitido menos custo dos produtos; não é lucro líquido.' },
-  comissao_marketplace: { grupo: 'faturamento', rotulo: 'Comissão de marketplace', campo_temporal: 'data de emissão',
-    descricao: 'Soma da comissão de marketplace associada aos itens faturados.' },
-  contribuicao_apos_comissao: { grupo: 'faturamento', rotulo: 'Contribuição após comissão', campo_temporal: 'data de emissão',
-    descricao: 'Faturamento menos custo dos produtos e comissão; não é lucro líquido.' }
+  margem_bruta_produtos: { grupo: 'faturamento', rotulo: 'Margem estimada dos produtos', campo_temporal: 'data de emissão',
+    descricao: 'Faturamento emitido menos custo dos produtos, com a comissão desconsiderada; não é lucro líquido.' }
 });
 const SINAIS_COBERTURA = Object.freeze({
   pedidos: '(coalesce(pedidos,0) <> 0 OR coalesce(itens_pedidos,0) <> 0 OR ' +
     'coalesce(quantidade_pedida,0) <> 0 OR coalesce(valor_pedidos,0) <> 0)',
   faturamento: '(coalesce(notas_fiscais,0) <> 0 OR coalesce(itens_faturados,0) <> 0 OR ' +
     'coalesce(quantidade_faturada,0) <> 0 OR coalesce(faturamento_emitido,0) <> 0 OR ' +
-    'coalesce(custo_produtos,0) <> 0 OR coalesce(margem_bruta_produtos,0) <> 0 OR ' +
-    'coalesce(comissao_marketplace,0) <> 0 OR coalesce(contribuicao_apos_comissao,0) <> 0)'
+    'coalesce(custo_produtos,0) <> 0 OR coalesce(margem_bruta_produtos,0) <> 0)'
 });
 const REGRAS_EXCECAO = Object.freeze([
-  'queda_quantidade', 'queda_faturamento', 'contribuicao_negativa',
+  'queda_quantidade', 'queda_faturamento', 'margem_estimada_negativa',
   'concentracao_canal', 'estoque_sem_giro', 'ruptura',
   'reposicao_atrasada', 'diferenca_periodo'
 ]);
+const ALIASES_REGRAS_EXCECAO = Object.freeze({
+  contribuicao_negativa: 'margem_estimada_negativa'
+});
 
 function erro(codigo, mensagem) {
   const falha = new Error(mensagem); falha.codigo = codigo; return falha;
@@ -233,6 +231,11 @@ function validarMetricas(entrada, padrao) {
   return metricas;
 }
 
+function normalizarRegrasExcecao(entrada) {
+  const solicitadas = entrada?.length ? entrada : REGRAS_EXCECAO;
+  return [...new Set(solicitadas.map((regra) => ALIASES_REGRAS_EXCECAO[regra] || regra))];
+}
+
 function seletorSchema() {
   return {
     type: 'object',
@@ -409,6 +412,7 @@ async function analisarEvolucao(argumentos, dependencias = {}) {
       comparacao_periodo_anterior: comparacao, result_ref: resultRef,
       resultado_truncado_no_prompt: series.length > 200,
       conceito: 'Pedidos, linhas de item e unidades são métricas distintas. Pedidos usam a data do pedido; faturamento usa a data de emissão. Os conceitos não são somados nem tratados como correções uns dos outros.',
+      aviso_comissao: AVISO_COMISSAO_MARKETPLACE,
       atualizado_em: atualizadoEm, shadow: contexto.modo === 'shadow' };
   } finally { await fecharContexto(contexto, dependencias); }
 }
@@ -419,7 +423,7 @@ async function compararCanais(argumentos, dependencias = {}) {
     const periodo = resolverPeriodo(argumentos, contexto.coberturaDados, 'mes');
     const metricas = validarMetricas(argumentos.metricas,
       ['quantidade_pedida', 'valor_pedidos', 'quantidade_faturada', 'faturamento_emitido',
-        'margem_bruta_produtos', 'comissao_marketplace', 'contribuicao_apos_comissao']);
+        'margem_bruta_produtos']);
     const coberturaFontes = await medirCoberturaPeriodo(contexto.conexao,
       contexto.inteligencia.viewAtual, periodo, contexto.coberturaDados, metricas);
     periodo.parcial = periodo.parcial ||
@@ -473,7 +477,8 @@ async function compararCanais(argumentos, dependencias = {}) {
       dados: linhas.slice(0, 200), result_ref: resultRef,
       resultado_truncado_no_prompt: linhas.length > 200,
       conceito_canal: 'Canal corresponde à plataforma cadastrada no Sysemp.',
-      conceito_contribuicao: 'Faturamento menos custo dos produtos e comissão; não é lucro líquido.',
+      conceito_margem: 'Margem estimada = faturamento menos custo dos produtos; não é lucro líquido.',
+      aviso_comissao: AVISO_COMISSAO_MARKETPLACE,
       atualizado_em: atualizadoEm, shadow: contexto.modo === 'shadow' };
   } finally { await fecharContexto(contexto, dependencias); }
 }
@@ -494,9 +499,7 @@ async function diagnosticar360(argumentos, dependencias = {}) {
         sum(quantidade_faturada) AS quantidade_faturada,
         sum(faturamento_emitido) AS faturamento_emitido,
         sum(custo_produtos) AS custo_produtos,
-        sum(margem_bruta_produtos) AS margem_bruta_produtos,
-        sum(comissao_marketplace) AS comissao_marketplace,
-        sum(contribuicao_apos_comissao) AS contribuicao_apos_comissao
+        sum(margem_bruta_produtos) AS margem_bruta_produtos
       FROM "${contexto.inteligencia.viewAtual}" WHERE id_produto=?
         AND data_referencia BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)`,
     [id, faixa.inicio, faixa.fim]))[0] || {});
@@ -508,8 +511,7 @@ async function diagnosticar360(argumentos, dependencias = {}) {
         coalesce(nullif(any_value(plataforma),''),'Canal não identificado') AS canal,
         sum(faturamento_emitido) AS faturamento_emitido,
         sum(quantidade_faturada) AS quantidade_faturada,
-        sum(margem_bruta_produtos) AS margem_bruta_produtos,
-        sum(contribuicao_apos_comissao) AS contribuicao_apos_comissao
+        sum(margem_bruta_produtos) AS margem_bruta_produtos
       FROM "${contexto.inteligencia.viewAtual}" WHERE id_produto=?
         AND data_referencia BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
       GROUP BY id_plataforma ORDER BY faturamento_emitido DESC LIMIT 10`,
@@ -523,7 +525,7 @@ async function diagnosticar360(argumentos, dependencias = {}) {
         sum(valor_pedidos) AS valor_pedidos,
         sum(quantidade_faturada) AS quantidade_faturada,
         sum(faturamento_emitido) AS faturamento_emitido,
-        sum(contribuicao_apos_comissao) AS contribuicao_apos_comissao
+        sum(margem_bruta_produtos) AS margem_bruta_produtos
       FROM "${contexto.inteligencia.viewAtual}" WHERE id_produto=?
         AND data_referencia BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
       GROUP BY periodo ORDER BY periodo`, [id, periodo.inicio, periodo.fim])).map(normalizar);
@@ -546,7 +548,9 @@ async function diagnosticar360(argumentos, dependencias = {}) {
     if (queda('faturamento_emitido') != null && queda('faturamento_emitido') <= -20) {
       excecoes.push({ regra: 'queda_faturamento', valor_pct: Number(queda('faturamento_emitido').toFixed(4)) });
     }
-    if (Number(atual.contribuicao_apos_comissao || 0) < 0) excecoes.push({ regra: 'contribuicao_negativa' });
+    if (Number(atual.margem_bruta_produtos || 0) < 0) {
+      excecoes.push({ regra: 'margem_estimada_negativa', valor: Number(atual.margem_bruta_produtos) });
+    }
     if (risco?.classificacao_risco && ['RUPTURA_ATUAL', 'CRITICO', 'ALTO'].includes(risco.classificacao_risco)) {
       excecoes.push({ regra: 'ruptura', classificacao: risco.classificacao_risco });
     }
@@ -572,9 +576,10 @@ async function diagnosticar360(argumentos, dependencias = {}) {
       excecoes, result_ref: resultRef,
       conceitos: {
         estoque: 'Fotografia atual do estoque; não representa histórico do período.',
-        contribuicao: 'Faturamento menos custo dos produtos e comissão; não é lucro líquido.',
+        margem: 'Margem estimada = faturamento menos custo dos produtos; não é lucro líquido.',
         datas: 'Pedidos usam data do pedido e faturamento usa data de emissão.'
       },
+      aviso_comissao: AVISO_COMISSAO_MARKETPLACE,
       atualizado_em: { desempenho: atualizadoEm, estoque: atualizadoRisco },
       shadow: contexto.modo === 'shadow' };
   } finally { await fecharContexto(contexto, dependencias); }
@@ -587,7 +592,7 @@ async function detectarExcecoes(argumentos, dependencias = {}) {
     if (periodo.parcial) throw erro('PRODUCT_ALERT_PARTIAL_PERIOD',
       'Alertas não são calculados automaticamente com período incompleto. Informe um período completo.');
     const anterior = periodoAnterior(periodo.inicio, periodo.fim);
-    const regras = argumentos.regras?.length ? [...new Set(argumentos.regras)] : [...REGRAS_EXCECAO];
+    const regras = normalizarRegrasExcecao(argumentos.regras);
     if (regras.some((x) => !REGRAS_EXCECAO.includes(x))) throw erro('PRODUCT_ALERT_RULE_INVALID',
       'Uma das regras de exceção informadas é inválida.');
     const limites = {
@@ -607,7 +612,7 @@ async function detectarExcecoes(argumentos, dependencias = {}) {
         sum(quantidade_pedida) AS quantidade_pedida, sum(valor_pedidos) AS valor_pedidos,
         sum(quantidade_faturada) AS quantidade_faturada,
         sum(faturamento_emitido) AS faturamento_emitido,
-        sum(contribuicao_apos_comissao) AS contribuicao_apos_comissao
+        sum(margem_bruta_produtos) AS margem_bruta_produtos
       FROM "${contexto.inteligencia.viewAtual}" WHERE data_referencia BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
         ${filtros.length ? `AND ${filtros.join(' AND ')}` : ''}
       GROUP BY id_produto`, [faixa.inicio, faixa.fim, ...paramsFiltro])).map(normalizar);
@@ -663,7 +668,7 @@ async function detectarExcecoes(argumentos, dependencias = {}) {
           valor_pedidos: 0,
           quantidade_faturada: 0,
           faturamento_emitido: 0,
-          contribuicao_apos_comissao: 0
+          margem_bruta_produtos: 0
         });
       }
     }
@@ -680,8 +685,8 @@ async function detectarExcecoes(argumentos, dependencias = {}) {
       if (regras.includes('queda_faturamento') && variacao('faturamento_emitido') != null &&
           variacao('faturamento_emitido') <= -limites.queda_pct) alertas.push({ regra: 'queda_faturamento',
         valor_pct: Number(variacao('faturamento_emitido').toFixed(4)), criterio_pct: limites.queda_pct });
-      if (regras.includes('contribuicao_negativa') && Number(atual.contribuicao_apos_comissao || 0) < 0) {
-        alertas.push({ regra: 'contribuicao_negativa', valor: Number(atual.contribuicao_apos_comissao) });
+      if (regras.includes('margem_estimada_negativa') && Number(atual.margem_bruta_produtos || 0) < 0) {
+        alertas.push({ regra: 'margem_estimada_negativa', valor: Number(atual.margem_bruta_produtos) });
       }
       const valoresCanal = canaisPorProduto.get(atual.id_produto) || [];
       const totalCanal = valoresCanal.reduce((soma, valor) => soma + valor, 0);
@@ -723,7 +728,8 @@ async function detectarExcecoes(argumentos, dependencias = {}) {
       regras, limites, dados: completo, result_ref: resultRef,
       alertas_sob_demanda: true,
       conceito_diferenca_periodo: 'Compara pedidos e faturamento no intervalo; não comprova backlog.',
-      conceito_contribuicao: 'Não é lucro líquido e não inclui frete, impostos ou despesas.',
+      conceito_margem: 'Margem estimada = faturamento menos custo dos produtos; não é lucro líquido e não inclui frete, impostos ou despesas operacionais.',
+      aviso_comissao: AVISO_COMISSAO_MARKETPLACE,
       atualizado_em: { desempenho: atualizadoEm, estoque: atualizadoRisco },
       shadow: contexto.modo === 'shadow' };
   } finally { await fecharContexto(contexto, dependencias); }
@@ -734,6 +740,7 @@ module.exports = {
   METRICAS,
   DEFINICOES_METRICAS,
   REGRAS_EXCECAO,
+  AVISO_COMISSAO: AVISO_COMISSAO_MARKETPLACE,
   seletorSchema,
   resolverModo,
   analisarEvolucao,

@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 
 const { criarConexaoDuckDB, fecharConexaoDuckDB, runDuckDB } = require('../duckdb/connections');
 const modelo = require('../gold/modelos/vendas/inteligencia_produto_canal_diaria');
-const { analisarEvolucao, compararCanais, detectarExcecoes } = require('../tools/core/inteligencia_produto');
+const { analisarEvolucao, compararCanais, detectarExcecoes, METRICAS,
+  REGRAS_EXCECAO } = require('../tools/core/inteligencia_produto');
 const { permissoesDaFerramenta } = require('../nexus/governanca');
 
 function all(conexao, sql) {
@@ -127,6 +128,51 @@ test('comparação por canal calcula participação mesmo quando faturamento nã
     }, dependencias);
     assert.deepEqual(resultado.dados.map((item) => item.participacao_faturamento_pct).sort(), [40, 60]);
     assert.equal(resultado.dados.reduce((soma, item) => soma + Number(item.quantidade_faturada), 0), 10);
+  } finally { await fecharConexaoDuckDB(conexao); }
+});
+
+test('inteligência de produto não expõe comissão nem contribuição como métricas analíticas', () => {
+  assert.equal(METRICAS.includes('comissao_marketplace'), false);
+  assert.equal(METRICAS.includes('contribuicao_apos_comissao'), false);
+  assert.equal(REGRAS_EXCECAO.includes('contribuicao_negativa'), false);
+  assert.equal(REGRAS_EXCECAO.includes('margem_estimada_negativa'), true);
+});
+
+test('alerta financeiro ignora comissão e usa somente margem estimada negativa', async () => {
+  const { conexao, dependencias } = await contextoInteligencia();
+  try {
+    await runDuckDB(conexao, `UPDATE intel
+      SET comissao_marketplace=9999, contribuicao_apos_comissao=-9999
+      WHERE id_produto=1`);
+    await runDuckDB(conexao, `UPDATE intel
+      SET margem_bruta_produtos=-500
+      WHERE id_produto=2 AND data_referencia >= DATE '2026-02-01'`);
+    const resultado = await detectarExcecoes({ data_inicial: null, data_final: null,
+      filtros: { produto: null, marca: null, categoria: null },
+      regras: ['margem_estimada_negativa'], limites: { queda_pct: null,
+        concentracao_canal_pct: null, diferenca_periodo_pct: null }, limite_resultados: 20
+    }, dependencias);
+    assert.equal(resultado.dados.some((item) => item.id_produto === 1), false);
+    const produto = resultado.dados.find((item) => item.id_produto === 2);
+    assert.ok(produto);
+    assert.equal(produto.alertas[0].regra, 'margem_estimada_negativa');
+    assert.match(resultado.aviso_comissao, /desconsiderada/i);
+  } finally { await fecharConexaoDuckDB(conexao); }
+});
+
+test('regra legada de contribuição é normalizada sem voltar a usar comissão', async () => {
+  const { conexao, dependencias } = await contextoInteligencia();
+  try {
+    await runDuckDB(conexao, `UPDATE intel
+      SET margem_bruta_produtos=-500, contribuicao_apos_comissao=100
+      WHERE id_produto=2 AND data_referencia >= DATE '2026-02-01'`);
+    const resultado = await detectarExcecoes({ data_inicial: null, data_final: null,
+      filtros: { produto: null, marca: null, categoria: null },
+      regras: ['contribuicao_negativa'], limites: { queda_pct: null,
+        concentracao_canal_pct: null, diferenca_periodo_pct: null }, limite_resultados: 20
+    }, dependencias);
+    assert.deepEqual(resultado.regras, ['margem_estimada_negativa']);
+    assert.equal(resultado.dados[0].alertas[0].regra, 'margem_estimada_negativa');
   } finally { await fecharConexaoDuckDB(conexao); }
 });
 

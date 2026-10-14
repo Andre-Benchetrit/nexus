@@ -91,8 +91,11 @@ quantidade_total ja inclui itens sem produto: nao some novamente. Se nao truncad
 `,
   desempenho: `
 Use analisar_desempenho para rankings faturados de produto, marca, classificacao ou plataforma.
-Faturamento usa data de emissao. Margem bruta de produtos e faturamento menos custo do produto;
-nao chame essa metrica de lucro liquido.
+Faturamento usa data de emissao. Margem estimada de produtos e faturamento menos custo do produto;
+nao chame essa metrica de lucro liquido. A comissao cadastrada no Sysemp nao representa a comissao
+efetiva: ela e um valor de contingencia do ERP para falha da tabela de precos e pode estar
+propositalmente acima da taxa real. Desconsidere-a das analises e avise isso explicitamente ao
+usuario. Se a comissao efetiva for necessaria, nao estime: oriente a confirmacao com o setor Comercial.
 Em ranking por produto, preserve id_produto, descricao_produto, sku e ean retornados pela mesma
 linha. SKU e codigo auxiliar sao o campo sku; nunca renomeie id_produto como SKU.
 Em ranking, ordenar_por deve refletir "mais": mais faturou=faturamento; mais vendeu=quantidade.
@@ -110,7 +113,11 @@ exata retornada. A inclusao de uma metrica nova em outra consulta nao corrige ne
 metrica anterior. Nunca diga que a cobertura ou a carga esta completa quando a ferramenta apenas
 informa que o intervalo esta dentro da cobertura observada; dias com registro medem movimento e
 nao comprovam integridade da carga.
-Contribuicao apos comissao nao e lucro: nao inclui frete, impostos ou despesas operacionais.
+A margem estimada e faturamento menos custo dos produtos. A comissao cadastrada no Sysemp deve ser
+desconsiderada dos calculos e alertas, e isso deve ser avisado explicitamente ao usuario. Nunca
+chame margem estimada de lucro: ela tambem nao inclui frete, impostos ou despesas operacionais.
+Se o usuario precisar da comissao efetiva, explique a peculiaridade do campo e oriente a consulta
+ao setor Comercial; nao apresente nem estime o valor cadastrado como taxa realmente praticada.
 O estoque do diagnostico e uma fotografia atual, nao historico. Preserve result_ref para
 follow-ups e exportacoes e nunca reconstrua os numeros pelo modelo.
 `,

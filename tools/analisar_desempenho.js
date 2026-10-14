@@ -9,6 +9,7 @@ const {
   criarSchemaFiltros,
   OPERADORES_FILTRO_SIMPLES
 } = require('./core/contratos');
+const { AVISO_COMISSAO_MARKETPLACE } = require('./core/regras_negocio');
 
 const DIMENSOES = Object.freeze({
   produto: 'descricao_produto',
@@ -65,11 +66,6 @@ const METRICAS = Object.freeze({
     ),
     saida: 'margem_bruta_pct'
   },
-  comissao_marketplace: {
-    componentes: { valor: 'comissao_marketplace' },
-    calcular: ({ valor }) => valor,
-    saida: 'comissao_marketplace'
-  },
   notas_fiscais: {
     componentes: { valor: 'notas_fiscais' },
     calcular: ({ valor }) => valor,
@@ -86,7 +82,7 @@ const definicaoAnalisarDesempenho = {
   type: 'function',
   name: 'analisar_desempenho',
   description:
-    'Gold faturado por produto, marca, grupo, categoria ou plataforma; inclui custo e margem bruta. ' +
+    'Gold faturado por produto, marca, grupo, categoria ou plataforma; inclui custo e margem estimada sem comissão. ' +
     'Quando agrupar_por for produto, atributos físicos e EAN podem ser solicitados em atributos_produto somente quando necessários.',
   strict: true,
   parameters: {
@@ -522,7 +518,9 @@ async function executarAnalisarDesempenho(argumentos, dependencias = {}) {
       conceito_valor:
         'faturamento emitido por data de emissao',
       conceito_margem:
-        'margem bruta de produtos = faturamento - custo dos produtos; nao e lucro liquido',
+        'margem estimada de produtos = faturamento - custo dos produtos; nao e lucro liquido',
+      aviso_comissao:
+        AVISO_COMISSAO_MARKETPLACE,
       dados,
       atualizado_em: resultado.ultimaConstrucao
     });

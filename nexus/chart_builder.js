@@ -20,12 +20,8 @@ const ROTULOS_METRICAS = Object.freeze({
   quantidade: 'Quantidade',
   pedidos: 'Pedidos',
   quantidade_pedidos: 'Pedidos',
-  margem_bruta: 'Margem bruta',
-  margem_bruta_produtos: 'Margem bruta',
-  contribuicao_apos_comissao: 'Contribuição após comissão',
-  contribuicao: 'Contribuição após comissão',
-  comissao: 'Comissão',
-  comissao_marketplace: 'Comissão de marketplace'
+  margem_bruta: 'Margem estimada',
+  margem_bruta_produtos: 'Margem estimada'
 });
 const CANDIDATOS = Object.freeze({
   periodo: ['periodo', 'data', 'mes', 'semana', 'dia'],
@@ -37,9 +33,7 @@ const CANDIDATOS = Object.freeze({
     quantidade_faturada: ['quantidade_faturada', 'qtd_faturada'],
     quantidade_pedida: ['quantidade_pedida', 'qtd_pedida', 'quantidade'],
     pedidos: ['pedidos', 'quantidade_pedidos'],
-    margem_bruta: ['margem_bruta', 'margem_bruta_produtos'],
-    contribuicao: ['contribuicao_apos_comissao', 'contribuicao'],
-    comissao: ['comissao', 'comissao_marketplace']
+    margem_bruta: ['margem_bruta', 'margem_bruta_produtos']
   }
 });
 

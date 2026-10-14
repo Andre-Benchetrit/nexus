@@ -23,6 +23,64 @@ XLSX, DOCX e PDF ja nao sao itens futuros.
 - avaliacao de um lakehouse somente quando volume, concorrencia, historico e
   governanca justificarem a complexidade adicional.
 
+## Programa MCP e automacoes de IA
+
+O proximo ciclo de evolucao ativa do Nexus sera executado em cinco sprints. MCP
+sera um executor abaixo das capabilities governadas do Nexus, e as automacoes
+poderao usar tanto tools locais quanto conectores MCP. Nenhum conector externo
+substituira permissoes, aprovacao, DLP ou auditoria.
+
+### Sprint 13 - Fundacao MCP
+
+- adicionar um cliente MCP independente do provider de LLM;
+- suportar Streamable HTTP em producao e stdio apenas em desenvolvimento;
+- manter catalogo administrativo de servidores, versoes e tools homologadas;
+- mapear toda tool externa para uma capability interna antes de expo-la ao
+  modelo;
+- validar schemas, aplicar timeout, limite de resultado, sanitizacao, health
+  check e auditoria;
+- permitir somente servidores e versoes presentes em allowlist.
+
+### Sprint 14 - Microsoft 365 somente leitura
+
+- integrar e-mail, calendario, OneDrive, SharePoint e estrutura organizacional;
+- priorizar identidade delegada do usuario e uma App Registration separada;
+- avaliar os servidores oficiais do Microsoft Agent 365 e, quando indisponiveis
+  no tenant, manter o mesmo contrato por meio de um MCP interno sobre Graph;
+- nao enviar mensagens, criar reunioes ou modificar conteudo nesta etapa.
+
+### Sprint 15 - Automacoes de IA somente leitura
+
+- criar definicoes versionadas, agendas, execucoes, etapas e notificacoes;
+- adicionar dispatcher e worker separados da API, com fila inicial em
+  PostgreSQL, lease, heartbeat, retry e idempotencia;
+- revalidar identidade, setor, permissoes, freshness das fontes e orcamento em
+  cada execucao;
+- oferecer templates para resumos, alertas e consultas recorrentes, com entrega
+  inicial somente na Central de Atividades do Hub.
+
+### Sprint 16 - Aprovacoes e acoes Microsoft
+
+- permitir rascunhos de e-mail, envio, reunioes e notificacoes do Teams por
+  capabilities especificas;
+- exigir previa e aprovacao humana para efeitos externos;
+- vincular a aprovacao a argumentos imutaveis, prazo de validade, revalidacao de
+  permissao, idempotencia e auditoria;
+- manter exclusoes e outras acoes destrutivas bloqueadas inicialmente.
+
+### Sprint 17 - Navegador isolado e agentes flexiveis
+
+- executar Playwright MCP apenas em worker e sandbox temporarios;
+- limitar dominios, rede, uploads, downloads, tempo e credenciais;
+- exigir aprovacao antes de submeter formularios ou produzir efeito externo;
+- permitir que o usuario descreva uma rotina e converter o pedido em uma
+  especificacao revisavel de gatilho, fontes, capabilities, condicoes, limites
+  e saida, sem executar o prompt livre como configuracao administrativa.
+
+O primeiro marco de produto sera o final da Sprint 15: conectores MCP de leitura
+e rotinas agendadas governadas. As Sprints 16 e 17 adicionarao capacidade de
+agir com aprovacao e, depois, navegacao isolada.
+
 ## Possivel camada de orquestracao
 
 O Nexus deve manter suas tools pequenas, somente leitura e validadas por
