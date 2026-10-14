@@ -64,7 +64,7 @@ function interpretarResultadoTool(output) {
 
 function criarProviderGemini(opcoes = {}) {
   const modelo = opcoes.modelo || process.env.GEMINI_MODEL || MODELO_PADRAO_GEMINI;
-  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000);
+  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 60_000);
   let cliente = opcoes.cliente;
 
   async function obterCliente() {

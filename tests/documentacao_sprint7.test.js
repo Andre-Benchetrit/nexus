@@ -8,7 +8,8 @@ const { Document, ImageRun, Packer, Paragraph } = require('docx');
 
 const { obterCapacidade, extrairReferenciasResultado } = require('../agentes/capacidades');
 const { classificarPergunta, referenciaContextual } = require('../agentes/roteador');
-const { aplicarPoliticaArgumentos, consultaDocumentalAncorada } = require('../agentes/politicas_tools');
+const { aplicarPoliticaArgumentos, consultaDocumentalAncorada,
+  intencaoCatalogoDocumental } = require('../agentes/politicas_tools');
 const { exigeFonteCorporativa } = require('../agentes/politica_fonte');
 const { permissaoDaFerramenta } = require('../nexus/governanca');
 const { criarFileSystemKnowledgeStorage } = require('../nexus/knowledge_storage');
@@ -18,7 +19,7 @@ const { extrairDocumento, renderizarPaginaPdf, renderizarVisualDocx } = require(
 const { baixarItemComRetry, classificarPasta, lerFontesOneDrive,
   listarArquivosFontesGraph, reconciliarOrigensDuplicadas,
   registrarImportacaoComRetry, removerDocumentosAusentes } = require('../nexus/documentacao_onedrive');
-const { textoEstruturadoParaBusca } = require('../nexus/documentacao');
+const { possuiConteudoEstruturado, textoEstruturadoParaBusca } = require('../nexus/documentacao');
 const { executarAgente, respostaIndisponibilidadeDocumental } = require('../agentes/consultor_nexus');
 const { executarConsultarDocumentacao, interpretarPaginas } = require('../tools/consultar_documentacao');
 const { caminhoRelativoSeguro, criarClienteGraphEscrita } = require('../integracoes/microsoft/graph');
@@ -75,6 +76,12 @@ test('indice documental inclui todos os campos estruturados e nao apenas passos'
   });
   for (const esperado of ['Resumo confirmado', 'Pessoa Jurídica', 'Comercial', 'ERP SYSEMP',
     'Localizar pedido', 'LOG PRINCIPAL', 'Manual interno']) assert.match(texto, new RegExp(esperado));
+});
+
+test('estrutura documental distingue campos vazios do conteudo organizado', () => {
+  assert.equal(possuiConteudoEstruturado({ objetivo: '', passos: [], alertas: [] }), false);
+  assert.equal(possuiConteudoEstruturado({ objetivo: 'Padronizar admissões.' }), true);
+  assert.equal(possuiConteudoEstruturado({ passos: [{ titulo: 'Cadastrar', descricao: '' }] }), true);
 });
 
 test('mapeia as pastas oficiais sem misturar setores', () => {
@@ -371,6 +378,36 @@ test('nova busca documental nao fica presa ao documento irrelevante anterior', (
   });
   assert.equal(argumentos.documento_id, undefined);
   assert.equal(argumentos.consulta, 'Busque por manual de marca');
+});
+
+test('inventario documental usa catalogo tipado em vez de busca pela frase inteira', async () => {
+  const pergunta = 'Faça um resumo das políticas existentes de recursos humanos e entregue em PDF.';
+  assert.deepEqual(intencaoCatalogoDocumental(pergunta), {
+    operacao: 'listar', tipo: 'politica'
+  });
+  const argumentos = aplicarPoliticaArgumentos('consultar_documentacao', {
+    operacao: 'buscar', consulta: pergunta,
+    documento_id: '11111111-1111-4111-8111-111111111111',
+    tipo: 'todos', limite: 12, analisar_visual: false
+  }, { perguntaAtual: pergunta, referenciasAnteriores: {
+    documento_id: ['11111111-1111-4111-8111-111111111111']
+  } });
+  assert.equal(argumentos.operacao, 'listar');
+  assert.equal(argumentos.tipo, 'politica');
+  assert.equal(argumentos.documento_id, undefined);
+
+  let recebido;
+  const resultado = await executarConsultarDocumentacao(argumentos, {
+    knowledgeMode: 'v1', departamentoId: '33333333-3333-4333-8333-333333333333',
+    servicoDocumentacao: { async listarParaIA(entrada) {
+      recebido = entrada;
+      return { status: 'sucesso', operacao: 'listar', total: 1,
+        resultados: [{ titulo: 'Política de RH', tipo: 'politica' }] };
+    } }
+  });
+  assert.equal(recebido.tipo, 'politica');
+  assert.equal(recebido.departmentId, '33333333-3333-4333-8333-333333333333');
+  assert.equal(resultado.total, 1);
 });
 
 test('consulta documental usa a pergunta real em vez da reformulacao livre do modelo', () => {

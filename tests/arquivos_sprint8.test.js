@@ -185,6 +185,38 @@ test('configuracao visual invalida usa a marca parcial e o tema padrao sem derru
   }
 });
 
+test('perfil visual escuro nao torna invisivel o texto de documentos claros', () => {
+  const anteriorGeral = process.env.NEXUS_BRAND_PROFILE_JSON;
+  const anteriorArtefato = process.env.NEXUS_ARTIFACT_BRAND_JSON;
+  process.env.NEXUS_BRAND_PROFILE_JSON = JSON.stringify({
+    nome: 'FID',
+    cores: { primaria: '#00e98c', secundaria: '#073b2b', destaque: '#19e68c',
+      texto: '#ffffff', superficie: '#07100b' }
+  });
+  delete process.env.NEXUS_ARTIFACT_BRAND_JSON;
+  try {
+    const marca = carregarMarca();
+    assert.equal(marca.nome, 'FID');
+    assert.equal(marca.cores.primaria, '#00e98c');
+    assert.equal(marca.cores.texto, '#17211c');
+    assert.equal(marca.cores.superficie, '#f3f8f5');
+  } finally {
+    if (anteriorGeral == null) delete process.env.NEXUS_BRAND_PROFILE_JSON;
+    else process.env.NEXUS_BRAND_PROFILE_JSON = anteriorGeral;
+    if (anteriorArtefato == null) delete process.env.NEXUS_ARTIFACT_BRAND_JSON;
+    else process.env.NEXUS_ARTIFACT_BRAND_JSON = anteriorArtefato;
+  }
+});
+
+test('rodape do PDF nao cria uma pagina adicional vazia', async () => {
+  const resultado = await construirArtefato({
+    formato: 'pdf', titulo: 'Documento curto', modelo: 'relatorio',
+    secoes: [{ titulo: 'Resumo', conteudo: 'Conteudo visivel e validado.', itens: [] }],
+    tabelas: [], graficos: [], fontes: []
+  });
+  assert.equal(resultado.validacao.paginas, 1);
+});
+
 for (const formato of ['xlsx', 'docx', 'pdf']) {
   test(`gera, reabre e valida artefato ${formato}`, async () => {
     const resultado = await construirArtefato({ formato, titulo: `Relatorio ${formato}`, modelo: 'relatorio',

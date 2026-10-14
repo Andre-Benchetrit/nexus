@@ -244,7 +244,7 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     dominio: 'documentacao', intencoes: ['listar', 'localizar', 'detalhar', 'explicar', 'resumir'],
     entidades: ['procedimento', 'politica', 'manual', 'processo', 'setor'],
     campos: ['documento_id', 'titulo_documento', 'versao_documento', 'pagina_documento', 'trecho', 'links', 'citacao'],
-    operacoes: ['consultar'], mutavel: true,
+    operacoes: ['listar', 'consultar'], mutavel: true,
     transformacoesPermitidas: ['resumir', 'ordenar', 'destacar', 'formatar_tabela'],
     derivacoesPermitidas: [],
     granularidades: ['documento', 'pagina', 'trecho'],

@@ -33,10 +33,6 @@ function texto(valor, maximo = 20000) {
 
 function carregarMarca(opcoes = {}) {
   let configurada = opcoes.brand || null;
-  if (!configurada && (process.env.NEXUS_BRAND_PROFILE_JSON || process.env.NEXUS_BRAND_LOGO)) {
-    try { configurada = criarBrandProfileProvider().obter(); }
-    catch (_) { /* preserva o fallback tolerante dos artefatos legados */ }
-  }
   if (!configurada && process.env.NEXUS_ARTIFACT_BRAND_JSON) {
     const jsonMarca = process.env.NEXUS_ARTIFACT_BRAND_JSON;
     try { configurada = JSON.parse(jsonMarca); }
@@ -46,6 +42,27 @@ function carregarMarca(opcoes = {}) {
       const nomeParcial = jsonMarca.match(/"nome"\s*:\s*"([^"\\]{1,100})/i)?.[1];
       configurada = nomeParcial ? { nome: nomeParcial } : null;
     }
+  }
+  if (!configurada && (process.env.NEXUS_BRAND_PROFILE_JSON || process.env.NEXUS_BRAND_LOGO)) {
+    try {
+      const perfil = criarBrandProfileProvider({
+        profile: process.env.NEXUS_BRAND_PROFILE_JSON || {},
+        logo: process.env.NEXUS_BRAND_LOGO || null
+      }).obter();
+      // O perfil geral foi criado para composicoes sobre fundo escuro e pode usar
+      // texto branco. Documentos, por outro lado, possuem pagina branca. Portanto,
+      // herdamos dele apenas a identidade cromatica e mantemos as cores funcionais
+      // do tema de documentos, salvo configuracao explicita de artefatos.
+      configurada = {
+        nome: perfil.nome,
+        logo: perfil.logo,
+        cores: {
+          primaria: perfil.cores.primaria,
+          secundaria: perfil.cores.secundaria,
+          destaque: perfil.cores.destaque
+        }
+      };
+    } catch (_) { /* preserva o fallback tolerante dos artefatos legados */ }
   }
   const cores = Object.fromEntries(Object.entries({ ...CORES_PADRAO, ...(configurada?.cores || {}) })
     .map(([chave, valor]) => [chave, /^#[0-9a-f]{6}$/i.test(String(valor || '')) ? String(valor) : CORES_PADRAO[chave]]));
@@ -358,7 +375,17 @@ async function gerarPdf(spec, marca) {
     if (spec.fontes.length) { pdf.addPage(); pdf.fillColor(marca.cores.primaria).fontSize(15).font('Helvetica-Bold').text('Fontes');
       pdf.fillColor(marca.cores.texto).fontSize(9).font('Helvetica'); spec.fontes.forEach((fonte) => pdf.text(`• ${fonte}`)); }
     const total = pdf.bufferedPageRange().count;
-    for (let i = 0; i < total; i += 1) { pdf.switchToPage(i); pdf.fillColor('#75827b').fontSize(8).text(`${marca.nome} · ${i + 1}/${total}`, 55, pdf.page.height - 36, { align: 'right', width: pdf.page.width - 110 }); }
+    for (let i = 0; i < total; i += 1) {
+      pdf.switchToPage(i);
+      const margemInferior = pdf.page.margins.bottom;
+      // PDFKit inicia uma nova pagina quando um texto e posicionado abaixo da
+      // margem inferior. O rodape e desenhado fora da area de fluxo, sem alterar
+      // a paginacao que ja foi calculada para o conteudo.
+      pdf.page.margins.bottom = 0;
+      pdf.fillColor('#75827b').fontSize(8).text(`${marca.nome} · ${i + 1}/${total}`,
+        55, pdf.page.height - 36, { align: 'right', width: pdf.page.width - 110, lineBreak: false });
+      pdf.page.margins.bottom = margemInferior;
+    }
     pdf.end();
   });
 }

@@ -46,6 +46,12 @@ function textoEstruturadoParaBusca(versao = {}) {
   }).filter(Boolean).join('\n\n');
 }
 
+function possuiConteudoEstruturado(conteudo = {}) {
+  return Boolean(String(conteudo.objetivo || '').trim() || String(conteudo.publico || '').trim() ||
+    (conteudo.preRequisitos || []).length || (conteudo.passos || []).length ||
+    (conteudo.alertas || []).length || (conteudo.referencias || []).length);
+}
+
 async function pode(pool, principalId, permissao, departmentId) {
   const decisao = await decisaoPermissao(pool, principalId, permissao, departmentId || null);
   return decisao.permitida;
@@ -124,6 +130,52 @@ function criarServicoDocumentacao(opcoes = {}) {
         d.atualizado_em DESC LIMIT $4`, [status || null, setor?.id || null, String(busca || '').trim(), maximo])).rows;
   }
 
+  async function listarParaIA({ departmentId = null, tipo = 'todos', limite = 12 } = {}) {
+    const setor = departmentId ? await resolverSetor(departmentId) : null;
+    await autorizar('documentacao.consultar', setor?.id || null);
+    const tipoNormalizado = String(tipo || 'todos').toLowerCase();
+    if (!['todos', 'politica', 'procedimento', 'manual'].includes(tipoNormalizado)) {
+      throw new ErroHub('TIPO_DOCUMENTO_INVALIDO', 'Tipo de documento invalido.', 400);
+    }
+    const maximo = Math.min(20, Math.max(1, Number(limite) || 12));
+    const linhas = (await pool.query(`SELECT d.id,d.titulo,d.tipo,d.escopo,
+        d.department_id,dep.nome AS setor,v.numero AS versao,v.publicado_em,v.resumo,
+        v.conteudo_estruturado,
+        (SELECT left(c.conteudo,1600) FROM nexus.knowledge_document_chunks c
+          WHERE c.version_id=v.id ORDER BY c.ordinal LIMIT 1) AS trecho_inicial
+      FROM nexus.knowledge_documents d
+      JOIN nexus.knowledge_document_versions v
+        ON v.id=d.current_published_version_id AND v.status='publicado'
+      LEFT JOIN nexus.departments dep ON dep.id=d.department_id
+      WHERE d.status='publicado'
+        AND (d.escopo='global' OR d.department_id=$1)
+        AND ($2='todos' OR d.tipo=$2)
+      ORDER BY CASE d.tipo WHEN 'politica' THEN 0 WHEN 'manual' THEN 1 ELSE 2 END,
+        d.titulo,d.atualizado_em DESC LIMIT $3`,
+    [setor?.id || null, tipoNormalizado, maximo])).rows;
+    return {
+      status: linhas.length ? 'sucesso' : 'vazio',
+      operacao: 'listar',
+      tipo: tipoNormalizado,
+      total: linhas.length,
+      resultados: linhas.map((linha) => {
+        const estrutura = linha.conteudo_estruturado || {};
+        return {
+          documento_id: linha.id,
+          titulo: linha.titulo,
+          tipo: linha.tipo,
+          escopo: linha.escopo,
+          setor: linha.setor,
+          versao: linha.versao,
+          publicado_em: linha.publicado_em,
+          resumo: linha.resumo || estrutura.objetivo || linha.trecho_inicial || null,
+          publico: estrutura.publico || null,
+          alertas: Array.isArray(estrutura.alertas) ? estrutura.alertas.slice(0, 8) : []
+        };
+      })
+    };
+  }
+
   async function criarRascunho(entrada = {}) {
     const tipo = validarTipo(entrada.tipo);
     const titulo = String(entrada.titulo || '').trim();
@@ -169,7 +221,10 @@ function criarServicoDocumentacao(opcoes = {}) {
     }
     if (!atual) throw new ErroHub('RASCUNHO_AUSENTE', 'Nao ha rascunho editavel para este documento.', 409);
     const titulo = String(entrada.titulo ?? atual.titulo).trim();
-    const conteudo = normalizarConteudo(entrada.conteudo ?? atual.conteudo_estruturado);
+    const conteudoNormalizado = normalizarConteudo(entrada.conteudo ?? atual.conteudo_estruturado);
+    const conteudo = possuiConteudoEstruturado(conteudoNormalizado)
+      ? conteudoNormalizado
+      : possuiConteudoEstruturado(atual.conteudo_estruturado) ? atual.conteudo_estruturado : {};
     const bruto = Buffer.from(JSON.stringify({ titulo, conteudo }), 'utf8');
     const versao = (await pool.query(`UPDATE nexus.knowledge_document_versions SET
       titulo=$2,resumo=$3,conteudo_estruturado=$4::jsonb,checksum=$5,status='rascunho',erro_codigo=NULL
@@ -568,6 +623,9 @@ function criarServicoDocumentacao(opcoes = {}) {
       edicao.texto_extraido = (await pool.query(`SELECT left(COALESCE(string_agg(texto,E'\n\n'
         ORDER BY numero),''),100000) AS texto FROM nexus.knowledge_document_pages WHERE version_id=$1`,
       [edicao.id])).rows[0]?.texto || '';
+      edicao.paginas_extraidas = (await pool.query(`SELECT numero,left(texto,12000) AS texto,
+        possui_imagem,metadados FROM nexus.knowledge_document_pages
+        WHERE version_id=$1 ORDER BY numero LIMIT 30`, [edicao.id])).rows;
     }
     return { documento, versoes, edicao };
   }
@@ -634,9 +692,9 @@ function criarServicoDocumentacao(opcoes = {}) {
   }
 
   return { abrirFontePublicada, abrirPaginaVisual, abrirPublicado, atualizarRascunho, buscar, criarRascunho, enviarParaRevisao,
-    listar, obter, publicar, realocarDocumento, registrarImportacao, removerRascunhoSincronizado,
+    listar, listarParaIA, obter, publicar, realocarDocumento, registrarImportacao, removerRascunhoSincronizado,
     solicitarAjustes, storage };
 }
 
-module.exports = { checksum, criarServicoDocumentacao, LIMIAR_SEMANTICO_BUSCA, slugificar,
-  textoEstruturadoParaBusca, validarTipo };
+module.exports = { checksum, criarServicoDocumentacao, LIMIAR_SEMANTICO_BUSCA, possuiConteudoEstruturado,
+  slugificar, textoEstruturadoParaBusca, validarTipo };

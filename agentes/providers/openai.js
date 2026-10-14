@@ -53,7 +53,7 @@ function serializarSaidaToolOpenAI(valor) {
 
 function criarProviderOpenAI(opcoes = {}) {
   const modelo = opcoes.modelo || process.env.OPENAI_MODEL || MODELO_PADRAO_OPENAI;
-  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000);
+  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 60_000);
   const reasoningEffort = String(
     opcoes.reasoningEffort || process.env.OPENAI_REASONING_EFFORT || 'low'
   ).toLowerCase();

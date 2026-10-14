@@ -10,8 +10,14 @@ const METRICAS_TOKEN = Object.freeze({
 const CHAVE_SENSIVEL = /prompt|message|mensagem|content|conteudo|document|resultado|sql|token|secret|senha|password|credential|api.?key/i;
 
 function codigoErro(erro) {
+  const descricao = [erro?.codigo, erro?.code, erro?.status, erro?.name, erro?.message]
+    .filter(Boolean).join(' ');
+  if (/timeout|timed\s*out|tempo\s+limite|aborted?\s+due\s+to\s+timeout/i.test(descricao)) {
+    return 'LLM_TIMEOUT';
+  }
   const valor = erro?.codigo || erro?.code || erro?.status || erro?.name;
-  if (valor && /^[A-Za-z0-9_-]{2,80}$/.test(String(valor))) return String(valor).toUpperCase();
+  if (valor && !/^(?:error|erro)$/i.test(String(valor)) &&
+      /^[A-Za-z0-9_-]{2,80}$/.test(String(valor))) return String(valor).toUpperCase();
   return erro ? 'ERRO_LLM' : null;
 }
 

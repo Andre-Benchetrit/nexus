@@ -3,6 +3,7 @@ const { comTransacao } = require('./db');
 const { relatorioExecutivo } = require('./relatorios_uso');
 const { criarServicoMemoriaGovernada } = require('./memoria_governada');
 const auditoriaOperacional = require('./auditoria_operacional');
+const { criarServicoReportesPiloto } = require('./pilot_reports');
 
 const COMPOSICOES = Object.freeze(['baixo', 'medio', 'alto', 'extra_alto']);
 const LIMITE_CONVERSAS = 50;
@@ -269,6 +270,14 @@ function criarServicoHub(opcoes = {}) {
     });
   }
 
+  function reportesPiloto() {
+    return criarServicoReportesPiloto({
+      pool,
+      principalId: ator.principalId,
+      exigirAdministracao: (permissao, acao) => exigirPermissao(pool, ator, permissao, { acao })
+    });
+  }
+
   async function listarConversas(filtros = {}) {
     const limite = Math.min(LIMITE_CONVERSAS, Math.max(1, Number(filtros.limite || 30)));
     const linhas = (await pool.query(`
@@ -393,6 +402,10 @@ function criarServicoHub(opcoes = {}) {
       SELECT m.id,m.turn_id,m.trace_id,m.papel,m.conteudo,m.proveniencia,m.metadata,m.criado_em,
         m.retry_root_message_id,m.variant_index,m.variant_active,
         t.status AS turn_status,
+        (SELECT jsonb_build_object('id',pr.id,'status',pr.status,'category',pr.category)
+          FROM nexus.pilot_reports pr
+          WHERE pr.message_ref=m.id AND pr.reporter_principal_id=$4
+          ORDER BY pr.created_at DESC LIMIT 1) AS pilot_report,
         (SELECT ae.metadados->>'source_mode' FROM nexus.audit_events ae
           WHERE ae.turn_id=m.turn_id AND ae.tipo='source_policy_decision'
           ORDER BY ae.criado_em DESC,ae.id DESC LIMIT 1) AS source_mode,
@@ -420,12 +433,13 @@ function criarServicoHub(opcoes = {}) {
       LEFT JOIN nexus.ai_turns t ON t.id=m.turn_id
       WHERE m.conversation_id=$1 AND ($2::timestamptz IS NULL OR m.criado_em<$2)
       ORDER BY m.criado_em DESC,m.id DESC LIMIT $3
-    `, [conversationId, filtros.cursor || null, limite])).rows.reverse();
+    `, [conversationId, filtros.cursor || null, limite, ator.principalId])).rows.reverse();
     const mensagens = linhas.map((linha) => ({ id: linha.id, turnId: linha.turn_id, traceId: linha.trace_id,
       role: linha.papel, content: linha.conteudo, provenance: linha.proveniencia,
       sourceMode: linha.source_mode || 'automatico', attachments: linha.attachments || [],
       artifacts: linha.artifacts || [], knowledgeSources: linha.metadata?.fontesDocumentais || [],
       turnStatus: linha.turn_status, createdAt: linha.criado_em,
+      pilotReport: linha.pilot_report || null,
       variantRootId: linha.retry_root_message_id || linha.id,
       variantIndex: Number(linha.variant_index || 1), variantActive: linha.variant_active !== false }));
     const grupos = new Map();
@@ -794,6 +808,34 @@ function criarServicoHub(opcoes = {}) {
     return auditoriaOperacional.glossary();
   }
 
+  async function criarReportePiloto(conversationId, messageId, dados = {}) {
+    return reportesPiloto().criar(conversationId, messageId, dados);
+  }
+
+  async function criarReporteAutomatico(conversationId, dados = {}) {
+    return reportesPiloto().criarAutomatico(conversationId, dados);
+  }
+
+  async function listarReportesPiloto(filtros = {}) {
+    return reportesPiloto().listar(filtros);
+  }
+
+  async function obterReportePiloto(reportId) {
+    return reportesPiloto().obter(reportId);
+  }
+
+  async function atualizarReportePiloto(reportId, dados = {}) {
+    return reportesPiloto().atualizar(reportId, dados);
+  }
+
+  async function excluirReportePiloto(reportId) {
+    return reportesPiloto().excluir(reportId);
+  }
+
+  async function exportarReportesPiloto(filtros = {}) {
+    return reportesPiloto().exportar(filtros);
+  }
+
   async function consultarLake() {
     await exigirPermissao(pool, ator, 'governanca.administrar', { acao: 'hub_lake_status' });
     return true;
@@ -844,13 +886,14 @@ function criarServicoHub(opcoes = {}) {
   }
 
   return {
-    ator, atualizarConversa, atualizarPrincipal, atualizarSetor, cadastrarPrincipal,
+    ator, atualizarConversa, atualizarPrincipal, atualizarReportePiloto, atualizarSetor, cadastrarPrincipal,
     cadastrarSetor, concluirAtividade, criarConversa, excluirConversa, iniciarSolicitacao,
+    criarReporteAutomatico, criarReportePiloto, excluirReportePiloto, exportarReportesPiloto,
     auditoriaAtividade, auditoriaGlossario, auditoriaOverview, consultarLake,
-    listarAuditoria, listarCandidaturasMemoria, listarConversas, listarMensagens,
+    listarAuditoria, listarCandidaturasMemoria, listarConversas, listarMensagens, listarReportesPiloto,
     prepararNovaTentativa, selecionarVariante,
     listarPapeis, listarPrincipals, listarSetores,
-    marcarSolicitacao, obterConversa, obterSolicitacao, obterTrace, perfil, relatorioCustos,
+    marcarSolicitacao, obterConversa, obterReportePiloto, obterSolicitacao, obterTrace, perfil, relatorioCustos,
     responderOferta, revisarCandidaturaMemoria, substituirAtribuicoes, validarComposicao
   };
 }

@@ -31,6 +31,18 @@ function solicitaEnderecoDocumental(pergunta) {
   return /\b(link|url|endereco|portal|site|sistema|painel|onde acess|como acess)\b/.test(texto);
 }
 
+function intencaoCatalogoDocumental(pergunta) {
+  const texto = normalizarTexto(pergunta);
+  if (!texto) return null;
+  const alvo = /\b(politica|politicas|procedimento|procedimentos|manual|manuais|documento|documentos)\b/.test(texto);
+  const inventario = /\b(qua(?:l|is)|liste|listar|listagem|relacione|relacao|existente|existentes|disponivel|disponiveis|catalogo|inventario|resumo|resuma)\b/.test(texto);
+  if (!alvo || !inventario) return null;
+  const tipo = /\bpolitica(?:s)?\b/.test(texto) ? 'politica'
+    : /\bprocedimento(?:s)?\b/.test(texto) ? 'procedimento'
+      : /\bmanua(?:l|is)\b/.test(texto) ? 'manual' : 'todos';
+  return { operacao: 'listar', tipo };
+}
+
 function consultaDocumentalContextual(pergunta, contexto = {}) {
   const atual = String(pergunta || '').trim();
   if (!atual || atual.length > 1000) return null;
@@ -87,8 +99,14 @@ function aplicarPoliticaArgumentos(nome, argumentos, contexto = {}) {
       contexto.decisao?.perguntaAutonoma || '');
     const novaBusca = novaBuscaDocumental(perguntaAtual);
     const buscaEndereco = solicitaEnderecoDocumental(perguntaAtual);
+    const catalogo = intencaoCatalogoDocumental(perguntaAtual);
+    if (catalogo) {
+      normalizados.operacao = catalogo.operacao;
+      normalizados.tipo = catalogo.tipo;
+      delete normalizados.documento_id;
+    } else if (!normalizados.operacao) normalizados.operacao = 'buscar';
     if (novaBusca || buscaEndereco) delete normalizados.documento_id;
-    if (!normalizados.documento_id && !novaBusca && !buscaEndereco && documentos.length === 1 &&
+    if (!catalogo && !normalizados.documento_id && !novaBusca && !buscaEndereco && documentos.length === 1 &&
         continuacaoDocumental(perguntaAtual)) {
       normalizados.documento_id = documentos[0];
     }
@@ -97,7 +115,7 @@ function aplicarPoliticaArgumentos(nome, argumentos, contexto = {}) {
       perguntaAutonoma: contexto.decisao?.perguntaAutonoma,
       perguntaAnterior: contexto.perguntaAnterior
     });
-    if (!normalizados.documento_id && (consultaAncorada || consultaContextual)) {
+    if (!catalogo && !normalizados.documento_id && (consultaAncorada || consultaContextual)) {
       // A pergunta do usuario e a ancora da recuperacao. A reformulacao livre do
       // modelo nao pode substituir silenciosamente os termos que expressam a
       // intencao real nem prender uma busca de link a um documento incompleto.
@@ -175,6 +193,6 @@ function validarPoliticaExecucao(nome, contexto = {}) {
 }
 
 module.exports = { aplicarPoliticaArgumentos, consultaDocumentalAncorada,
-  consultaDocumentalContextual, continuacaoDocumental, novaBuscaDocumental,
+  consultaDocumentalContextual, continuacaoDocumental, intencaoCatalogoDocumental, novaBuscaDocumental,
   solicitaEnderecoDocumental, solicitaHistoricoTecnico,
   validarPoliticaExecucao };

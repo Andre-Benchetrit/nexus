@@ -13,7 +13,8 @@ const {
   formatarRespostaCorporativaDeterministica,
   validarSinteseCorporativa
 } = require('./resposta');
-const { consultaDocumentalAncorada, continuacaoDocumental } = require('./politicas_tools');
+const { consultaDocumentalAncorada, continuacaoDocumental,
+  intencaoCatalogoDocumental } = require('./politicas_tools');
 const {
   classificarIntencaoPesquisa, criarOrcamentoPesquisa,
   criarWebSearchProvider, extrairConsultaPublica,
@@ -90,7 +91,9 @@ acionavel e cite as URLs que sustentam cada conclusao. Nao devolva apenas uma li
 fontes trouxerem evidencia suficiente; se ela for insuficiente, declare precisamente o que faltou. Cite
 somente a URL exata do campo url de cada fonte; links encontrados dentro do conteudo nao sao fontes autorizadas.
 Quando consultar_documentacao estiver disponivel, use-a uma unica vez somente para uma duvida que um
-procedimento ou manual interno possa resolver. Quando validar_politicas estiver disponivel, use-a se uma
+procedimento, politica ou manual interno possa resolver. Use operacao=listar para inventariar documentos
+existentes e operacao=buscar para localizar trechos que respondam uma duvida de conteudo. Nao transforme
+um pedido de listagem em uma busca textual pela frase inteira. Quando validar_politicas estiver disponivel, use-a se uma
 acao pretendida ou realizada puder contrariar politica corporativa, inclusive quando outro modo de fonte
 estiver selecionado. Exemplos de sinais genericos: compartilhar senha ou acesso,
 emprestar ou transferir ativos, expor dados, publicar material da marca, contornar aprovacao ou executar
@@ -431,9 +434,11 @@ function escaparTabela(valor) {
 function formatarResultadoConjunto(resultado) {
   const linhas = resultado?.previa || [];
   const colunas = linhas.length ? Object.keys(linhas[0]).filter((nome) => !nome.startsWith('__nexus_')).slice(0, 8) : [];
-  const texto = [
+  const texto = resultado?.dominio ? [
     `Cruzei ${Number(resultado.quantidade_linhas || 0).toLocaleString('pt-BR')} linha(s) com os dados autorizados do Sysemp em uma única consulta de ${resultado.dominio}.`,
     `Correspondências encontradas: ${Number(resultado.encontrados || 0).toLocaleString('pt-BR')}; não encontradas: ${Number(resultado.nao_encontrados || 0).toLocaleString('pt-BR')}.`
+  ] : [
+    `Resultado reorganizado localmente: ${Number(resultado?.quantidade_linhas || 0).toLocaleString('pt-BR')} linha(s).`
   ];
   if (linhas.length && colunas.length) {
     texto.push('', `| ${colunas.map(escaparTabela).join(' | ')} |`,
@@ -1172,13 +1177,13 @@ async function executarAssistente(pergunta, dependencias = {}) {
     // localmente mais abaixo.
     const timeoutSinteseCorporativa = Number(
       dependencias.corporateTimeoutMs || process.env.NEXUS_CORPORATE_LLM_TIMEOUT_MS ||
-      dependencias.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000
+      dependencias.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 60_000
     );
     const providerSinteseCorporativa = politica.obrigatoria && !dependencias.generalistProvider
       ? criarProviderGeneralista({
           ...dependencias,
           timeoutMs: Number.isFinite(timeoutSinteseCorporativa) && timeoutSinteseCorporativa > 0
-            ? timeoutSinteseCorporativa : 20_000
+            ? timeoutSinteseCorporativa : 60_000
         }, { permitirFallback: false })
       : provider;
     await auditoria?.registrarEvento(turno, {
@@ -1248,9 +1253,13 @@ async function executarAssistente(pergunta, dependencias = {}) {
       }
       consultasDocumentacao += 1;
       const consultaAncorada = validacaoPolitica ? null : consultaDocumentalAncorada(pergunta);
-      const argumentosEfetivos = consultaAncorada
-        ? { ...argumentos, consulta: consultaAncorada }
-        : argumentos;
+      const catalogoDocumental = validacaoPolitica ? null : intencaoCatalogoDocumental(pergunta);
+      const argumentosEfetivos = { ...argumentos };
+      if (catalogoDocumental) {
+        argumentosEfetivos.operacao = catalogoDocumental.operacao;
+        argumentosEfetivos.tipo = catalogoDocumental.tipo;
+        delete argumentosEfetivos.documento_id;
+      } else if (consultaAncorada) argumentosEfetivos.consulta = consultaAncorada;
       const nomeFerramenta = validacaoPolitica ? 'validar_politicas' : 'consultar_documentacao';
       const contextoExecucao = await governanca?.iniciarTool(nomeFerramenta, {
         consulta: argumentosEfetivos.consulta,
@@ -2279,23 +2288,38 @@ async function executarAssistente(pergunta, dependencias = {}) {
     } else if (respostaDiretaArquivo && !imagemRelacionadaNegocio && !resultadosWeb.length) {
       resultado = { texto: respostaDiretaArquivo, provider: 'nexus', modelo: null, rodadas: 0 };
     } else if (transformacaoResultadoObrigatoria) {
-      resultado = await provider.executar({
-        pergunta,
-        mensagens,
-        instrucoes: `${instrucoesTurno}\n${INSTRUCOES_ARQUIVOS}\n${INSTRUCOES_RESULT_REF}`,
-        tools: toolResultado,
-        toolChoice: 'consultar_resultado_nexus',
-        maxRodadas: 3,
-        telemetria,
-        stage: 'result_ref_continuation',
-        purpose: 'corporate_result_continuation',
-        onEvento: dependencias.onEvento,
-        estadoExecucao,
-        handoffMode: dependencias.handoffMode,
-        debugFallback: dependencias.debugFallback === true,
-        onCheckpoint,
-        onHandoff
-      });
+      try {
+        resultado = await provider.executar({
+          pergunta,
+          mensagens,
+          instrucoes: `${instrucoesTurno}\n${INSTRUCOES_ARQUIVOS}\n${INSTRUCOES_RESULT_REF}`,
+          // Depois de uma transformação local bem-sucedida a rodada seguinte deve
+          // somente redigir a resposta, não chamar a mesma tool indefinidamente.
+          tools: toolResultado.map((item) => ({ ...item, terminal: true })),
+          toolChoice: 'consultar_resultado_nexus',
+          maxRodadas: 4,
+          telemetria,
+          stage: 'result_ref_continuation',
+          purpose: 'corporate_result_continuation',
+          onEvento: dependencias.onEvento,
+          estadoExecucao,
+          handoffMode: dependencias.handoffMode,
+          debugFallback: dependencias.debugFallback === true,
+          onCheckpoint,
+          onHandoff
+        });
+      } catch (erroSintese) {
+        if (!resultadoConjunto) throw erroSintese;
+        estadoExecucao.checkpoint('sintese_result_ref_preservada', {
+          etapa: 'result_ref_continuation',
+          codigo: erroSintese.codigo || erroSintese.code || erroSintese.name || 'ERRO_SINTESE'
+        });
+        resultado = {
+          texto: formatarResultadoConjunto(resultadoConjunto),
+          provider: 'nexus', modelo: null, rodadas: 0,
+          fallbackSinteseResultRef: true
+        };
+      }
     } else if (politica.obrigatoria) {
       const evidencia = await consultar(pergunta);
       if (erroPesquisaWeb) mensagens = normalizarHistoricoVisivel([...mensagens, { role: 'user',

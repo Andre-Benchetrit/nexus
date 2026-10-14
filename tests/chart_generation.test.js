@@ -189,3 +189,49 @@ test('assistente expõe result_ref como capability e força continuação analí
   assert.equal(resultado.proveniencia, 'dados_nexus');
   assert.equal(resultado.dataRefs.some((item) => item.id === 'resultado-agrupado'), true);
 });
+
+test('continuação preserva o agrupamento local quando somente a síntese do modelo falha', async () => {
+  const resultado = await executarAssistente('Agrupe essa lista por produto, por favor.', {
+    memoria: { obterTarefaAtiva: async () => null, sessao: 'teste' },
+    auditoriaIA: false,
+    datasetsMode: 'v1',
+    conversationId: 'conversa-1',
+    servicoDatasets: {
+      async listarRecentes() {
+        return [{ id: 'resultado-bloqueios', tipo: 'result_ref', status: 'ready',
+          quantidadeLinhas: 32, classificacao: 'dados_corporativos',
+          colunas: [{ nome: 'marketplace_pedido' }, { nome: 'descricao_produto' }] }];
+      }
+    },
+    generalistProvider: {
+      nome: 'mock', modelo: 'mock',
+      async executar({ tools }) {
+        const ferramenta = tools.find((item) => item.definicao.name === 'consultar_resultado_nexus');
+        await ferramenta.executar({
+          result_ref: 'ignorado', operacao: 'agrupar', colunas: [],
+          agrupar_por: ['descricao_produto'],
+          metricas: [{ operacao: 'contar_distintos', campo: 'marketplace_pedido' }],
+          filtros: [], ordenar_por: 'contagem_distinta_marketplace_pedido',
+          direcao: 'desc', limite: 50
+        });
+        const erro = new Error('créditos insuficientes durante a síntese');
+        erro.codigo = 'PROVIDER_CREDITS_EXHAUSTED';
+        throw erro;
+      }
+    },
+    async executarConsultarResultadoNexusTool() {
+      return {
+        status: 'sucesso', operacao: 'agrupar', quantidade_linhas: 2,
+        previa: [
+          { descricao_produto: 'Produto A', contagem_distinta_marketplace_pedido: 20 },
+          { descricao_produto: 'Produto B', contagem_distinta_marketplace_pedido: 12 }
+        ],
+        result_ref: { id: 'resultado-agrupado', tipo: 'result_ref', status: 'ready' }
+      };
+    }
+  });
+  assert.match(resultado.texto, /Produto A/);
+  assert.match(resultado.texto, /20/);
+  assert.doesNotMatch(resultado.texto, /undefined/);
+  assert.equal(resultado.proveniencia, 'dados_nexus');
+});

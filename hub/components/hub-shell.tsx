@@ -30,6 +30,16 @@ const SOURCE_MODES: Array<{ value: SourceMode; label: string; hint: string }> = 
 const SOURCE_MODE_ICONS: Record<SourceMode, string> = {
   automatico: "✦", geral: "●", dados: "◆", documentacao: "▤", web: "◇", imagem: "▧"
 };
+const PILOT_REPORT_CATEGORIES = [
+  ["incorrect_or_incomplete", "Resposta incorreta ou incompleta"],
+  ["wrong_data_or_calculation", "Dados ou cálculo incorretos"],
+  ["misunderstood_request", "Não entendeu o pedido ou contexto"],
+  ["wrong_source_or_tool", "Fonte ou ferramenta inadequada"],
+  ["technical_error", "Erro técnico ou travamento"],
+  ["file_image_or_chart", "Problema com arquivo, imagem ou gráfico"],
+  ["usability", "Interface ou experiência"],
+  ["other", "Outro"]
+] as const;
 const FILE_STAGE_LABELS: Record<FileProcessingStage, string> = {
   validando_arquivo: "Validando arquivo",
   extraindo_conteudo: "Extraindo conteúdo",
@@ -252,6 +262,12 @@ export function HubShell({ profile, initialConversationId }: {
   const [imageOutputFormat, setImageOutputFormat] = useState<ImageOutputFormat>("png");
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null);
+  const [reportingMessage, setReportingMessage] = useState<Message | null>(null);
+  const [reportCategory, setReportCategory] = useState("");
+  const [reportComment, setReportComment] = useState("");
+  const [reportConsent, setReportConsent] = useState(false);
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
   const messagesAreaRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
@@ -276,7 +292,7 @@ export function HubShell({ profile, initialConversationId }: {
   const canAdmin = canAuditAdmin || currentProfile.permissoes.some((code) =>
     ["governanca.administrar", "custos.consultar.setor", "custos.consultar.global",
       "documentacao.criar.setor", "documentacao.editar.setor", "documentacao.publicar.setor",
-      "documentacao.administrar.global", "documentacao.auditar"].includes(code)
+      "documentacao.administrar.global", "documentacao.auditar", "piloto.problemas.administrar"].includes(code)
   );
   const canHigh = activePermissions.has("ia.composicao.alta") ||
     activePermissions.has("ia.composicao.extra_alta");
@@ -288,6 +304,7 @@ export function HubShell({ profile, initialConversationId }: {
   }
 
   function selectConversation(id: string | null) {
+    setReportingMessage(null);
     activeIdRef.current = id;
     setActiveId(id);
   }
@@ -657,6 +674,7 @@ export function HubShell({ profile, initialConversationId }: {
       const decoder = new TextDecoder();
       let buffer = "";
       let completed = false;
+      let completedMessageNeedsSync = false;
       let acceptedRequestId: string | null = null;
       let terminalError: string | null = null;
       const receive = (name: string, raw: unknown) => {
@@ -691,7 +709,8 @@ export function HubShell({ profile, initialConversationId }: {
           uploaded.forEach((attachment) => updateAttachmentEverywhere({
             attachmentId: attachment.id, analysisStatus: null
           }));
-          terminalError = String(data.message || "Não foi possível concluir a resposta.");
+          terminalError = String(data.message || "Não foi possível concluir a resposta.") +
+            (data.autoReported === true ? " O erro foi reportado automaticamente para análise." : "");
           completed = true;
         }
         if (name === "turn.completed" && data.message) {
@@ -699,6 +718,7 @@ export function HubShell({ profile, initialConversationId }: {
             attachmentId: attachment.id, analysisStatus: null
           }));
           const message = data.message as Message;
+          completedMessageNeedsSync = !message.id;
           if (!message.content?.trim()) {
             setError("O Nexus concluiu o turno sem produzir uma resposta válida.");
           } else {
@@ -716,7 +736,7 @@ export function HubShell({ profile, initialConversationId }: {
         buffer = parseSseChunk(buffer, receive);
       }
       if (terminalError) throw new Error(terminalError);
-      if (completed && isRetry && activeIdRef.current === conversationId) {
+      if (completed && (isRetry || completedMessageNeedsSync) && activeIdRef.current === conversationId) {
         const items = await nexusFetch<Message[]>(`conversations/${conversationId}/messages`);
         setMessages(visibleMessages(items));
       }
@@ -774,6 +794,42 @@ export function HubShell({ profile, initialConversationId }: {
     } finally {
       setRetryingMessageId(null);
     }
+  }
+
+  function openPilotReport(message: Message) {
+    if (!message.id || !message.traceId || message.pilotReport) return;
+    setReportingMessage(message);
+    setReportCategory("");
+    setReportComment("");
+    setReportConsent(false);
+    setReportError(null);
+  }
+
+  function closePilotReport() {
+    if (reportSubmitting) return;
+    setReportingMessage(null);
+    setReportError(null);
+  }
+
+  async function submitPilotReport(event: FormEvent) {
+    event.preventDefault();
+    if (!activeId || !reportingMessage?.id || !reportCategory || !reportConsent || reportSubmitting) return;
+    setReportSubmitting(true);
+    setReportError(null);
+    try {
+      const report = await nexusFetch<{ id: string; status: "new"; category: string }>(
+        `conversations/${activeId}/messages/${reportingMessage.id}/reports`, {
+          method: "POST",
+          body: JSON.stringify({ category: reportCategory, comment: reportComment, consent: reportConsent })
+        }
+      );
+      setMessages((items) => items.map((item) => item.id === reportingMessage.id
+        ? { ...item, pilotReport: { id: report.id, status: report.status, category: report.category } }
+        : item));
+      setReportingMessage(null);
+    } catch (cause) {
+      setReportError(cause instanceof Error ? cause.message : "Não foi possível enviar o reporte.");
+    } finally { setReportSubmitting(false); }
   }
 
   function editImageArtifact(artifact: Artifact) {
@@ -962,12 +1018,20 @@ export function HubShell({ profile, initialConversationId }: {
                     <button type="button" disabled={activeLoading || variantPosition >= variants.length - 1}
                       onClick={() => selectResponseVariant(message, 1)} aria-label="Próxima resposta">›</button>
                   </div>}
-                  <button type="button" className="message-retry-button"
-                    disabled={activeLoading || retryingHere || !message.id}
-                    onClick={() => retryAssistantMessage(message, index)}
-                    aria-label="Tentar responder novamente" title="Tentar responder novamente">
-                    {retryingHere ? "…" : "↻"}
-                  </button>
+                  <div className="message-actions">
+                    {message.id && message.traceId && (message.pilotReport
+                      ? <span className="message-reported" title="Esta versão já foi reportada">✓ Reportado</span>
+                      : <button type="button" className="message-report-button"
+                        disabled={activeLoading || retryingHere}
+                        onClick={() => openPilotReport(message)}
+                        aria-label="Reportar problema nesta resposta" title="Reportar problema">⚑</button>)}
+                    <button type="button" className="message-retry-button"
+                      disabled={activeLoading || retryingHere || !message.id}
+                      onClick={() => retryAssistantMessage(message, index)}
+                      aria-label="Tentar responder novamente" title="Tentar responder novamente">
+                      {retryingHere ? "…" : "↻"}
+                    </button>
+                  </div>
                 </footer>}
               </div>
             </article>})}
@@ -1048,6 +1112,29 @@ export function HubShell({ profile, initialConversationId }: {
         <button className="send-button" type="submit" disabled={activeLoading || (!input.trim() && !pendingFiles.length && !imageContext)} aria-label="Enviar">↑</button>
       </form><small>O Nexus pode cometer erros. Respostas corporativas são validadas pelas fontes autorizadas.</small></footer>
     </section>
+    {reportingMessage && <div className="pilot-report-backdrop" role="presentation" onMouseDown={closePilotReport}>
+      <form className="pilot-report-dialog" role="dialog" aria-modal="true" aria-labelledby="pilot-report-title"
+        onMouseDown={(event) => event.stopPropagation()} onSubmit={submitPilotReport}>
+        <header><div><p className="eyebrow">PILOTO NEXUS</p><h2 id="pilot-report-title">Reportar esta resposta</h2>
+          <p>Conte o que pareceu errado ou estranho. O trace será vinculado automaticamente.</p></div>
+          <button type="button" onClick={closePilotReport} disabled={reportSubmitting} aria-label="Cancelar reporte">×</button></header>
+        <label>Motivo<select value={reportCategory} required onChange={(event) => setReportCategory(event.target.value)}>
+          <option value="">Selecione um motivo</option>{PILOT_REPORT_CATEGORIES.map(([value, label]) =>
+            <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>O que você percebeu?<textarea value={reportComment} required minLength={5} maxLength={2000} rows={5}
+          placeholder="Explique brevemente o resultado esperado e o que ocorreu."
+          onChange={(event) => setReportComment(event.target.value)} /></label>
+        <label className="pilot-report-consent"><input type="checkbox" checked={reportConsent} required
+          onChange={(event) => setReportConsent(event.target.checked)} />
+          <span>Confirmo o compartilhamento desta conversa com os administradores. A cópia será preservada para análise mesmo se o chat for excluído.</span></label>
+        <small>Trace {reportingMessage.traceId}</small>
+        {reportError && <p className="admin-error">{reportError}</p>}
+        <footer><button type="button" className="secondary-button" onClick={closePilotReport}
+          disabled={reportSubmitting}>Cancelar</button><button className="primary-button"
+          disabled={reportSubmitting || !reportCategory || reportComment.trim().length < 5 || !reportConsent}>
+          {reportSubmitting ? "Enviando…" : "Enviar reporte"}</button></footer>
+      </form>
+    </div>}
     {sidebarOpen && <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="Fechar menu" />}
   </main>;
 }

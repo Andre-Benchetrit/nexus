@@ -24,6 +24,7 @@ export type Message = {
   knowledgeSources?: KnowledgeSource[];
   variantRootId?: string; variantIndex?: number; variantActive?: boolean;
   variants?: MessageVariant[];
+  pilotReport?: { id: string; status: "new" | "in_review" | "resolved" | "dismissed"; category: string } | null;
   attachmentAnalysis?: { analysisRef: string; cacheHit: boolean; intent?: unknown; manifests?: unknown[] } | null;
 };
 export type MessageVariant = {

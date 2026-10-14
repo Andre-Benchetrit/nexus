@@ -26,12 +26,17 @@ const {
   possuiTextoResposta,
   resolverModoAssistente
 } = require('../agentes/assistente_nexus');
-const { sanitizarMetadados } = require('../nexus/auditoria_ia');
+const { codigoErro, sanitizarMetadados } = require('../nexus/auditoria_ia');
 const { lerArgumentos } = require('../agentes/consultor_nexus');
 
 function memoriaFalsa(tarefaAtiva = null) {
   return { obterTarefaAtiva: async () => tarefaAtiva, sessao: 'teste' };
 }
+
+test('auditoria distingue timeout de erro generico do provider', () => {
+  assert.equal(codigoErro(new Error('Request timed out after 20000ms')), 'LLM_TIMEOUT');
+  assert.equal(codigoErro(Object.assign(new Error('Falha desconhecida'), { name: 'Error' })), 'ERRO_LLM');
+});
 
 test('registro generalista habilita conversa, consulta corporativa e revisao governada', () => {
   assert.deepEqual(
@@ -322,6 +327,38 @@ test('assistente responde conversa geral sem executar agente corporativo', async
   });
   assert.equal(resultado.proveniencia, 'conhecimento_geral');
   assert.equal(corporativo, false);
+});
+
+test('assistente converte inventario de politicas em listagem documental tipada', async () => {
+  let argumentosRecebidos = null;
+  const resultado = await executarAssistente(
+    'Faça um resumo das políticas existentes de recursos humanos e entregue a listagem em PDF.', {
+      memoria: memoriaFalsa(), auditoriaIA: false, knowledgeMode: 'v1',
+      governanca: {
+        async avaliar() { return { permitida: true }; },
+        async iniciarTool() { return { callId: '00000000-0000-0000-0000-000000000001' }; },
+        async concluirTool() {}
+      },
+      executarConsultarDocumentacaoTool: async (argumentos) => {
+        argumentosRecebidos = argumentos;
+        return { status: 'sucesso', operacao: 'listar', total: 1,
+          resultados: [{ titulo: 'Política de RH', tipo: 'politica', versao: 1 }] };
+      },
+      generalistProvider: {
+        nome: 'mock', modelo: 'mock', async executar({ tools }) {
+          const tool = tools.find((item) => item.definicao.name === 'consultar_documentacao');
+          assert.ok(tool);
+          await tool.executar({ operacao: 'buscar', consulta: 'termos livres', tipo: 'todos',
+            limite: 12, analisar_visual: false });
+          return { texto: 'Encontrei uma política publicada.', provider: 'mock', modelo: 'mock' };
+        }
+      }
+    }
+  );
+  assert.equal(argumentosRecebidos.operacao, 'listar');
+  assert.equal(argumentosRecebidos.tipo, 'politica');
+  assert.equal(argumentosRecebidos.documento_id, undefined);
+  assert.equal(resultado.proveniencia, 'documentacao');
 });
 
 test('modo geral valida politica dinamicamente sem consultar fontes opcionais', async () => {

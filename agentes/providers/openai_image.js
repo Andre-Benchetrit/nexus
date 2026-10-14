@@ -16,8 +16,7 @@ function normalizarUsage(usage = {}) {
 }
 
 function resolverTimeoutImagem(opcoes = {}) {
-  const configurado = Number(opcoes.timeoutMs ?? process.env.NEXUS_IMAGE_REQUEST_TIMEOUT_MS ??
-    process.env.LLM_REQUEST_TIMEOUT_MS ?? 120_000);
+  const configurado = Number(opcoes.timeoutMs ?? process.env.NEXUS_IMAGE_REQUEST_TIMEOUT_MS ?? 120_000);
   return Number.isFinite(configurado) && configurado > 0 ? configurado : 120_000;
 }
 

@@ -51,6 +51,13 @@ test('checksum de migration independe do final de linha do sistema operacional',
   assert.equal(normalizarSqlMigration('SELECT 1;\rSELECT 2;'), 'SELECT 1;\nSELECT 2;');
 });
 
+test('migration de continuidade libera a etapa de telemetria de result_ref', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'nexus', 'migrations',
+    '027_result_ref_continuation_stage.sql'), 'utf8');
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS llm_calls_stage_check/i);
+  assert.match(sql, /'result_ref_continuation'/);
+});
+
 test('status acusa migration alterada depois da aplicacao', async (t) => {
   const diretorio = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-status-'));
   t.after(() => fs.rmSync(diretorio, { recursive: true, force: true }));

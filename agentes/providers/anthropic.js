@@ -17,7 +17,7 @@ function converterToolAnthropic(definicao) {
 
 function criarProviderAnthropic(opcoes = {}) {
   const modelo = opcoes.modelo || process.env.ANTHROPIC_MODEL || null;
-  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000);
+  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 60_000);
   const maxTokens = Number(opcoes.maxTokens || process.env.ANTHROPIC_MAX_OUTPUT_TOKENS || 8192);
   let cliente = opcoes.cliente;
 

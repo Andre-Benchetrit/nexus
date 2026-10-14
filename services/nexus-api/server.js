@@ -349,6 +349,13 @@ async function criarServidor(opcoes = {}) {
     servico(request).obterSolicitacao(request.params.id, request.params.requestId));
   app.post('/v1/conversations/:id/messages/:messageId/select', async (request) =>
     servico(request).selecionarVariante(request.params.id, request.params.messageId));
+  app.post('/v1/conversations/:id/messages/:messageId/reports', async (request, reply) => {
+    const reporte = await servico(request).criarReportePiloto(
+      request.params.id, request.params.messageId, request.body || {}
+    );
+    reply.code(reporte.duplicate ? 200 : 201);
+    return reporte;
+  });
 
   app.post('/v1/conversations/:id/attachments', async (request, reply) => {
     const inicio = Date.now();
@@ -490,6 +497,7 @@ async function criarServidor(opcoes = {}) {
     });
     let conectado = true;
     let ultimoStatus = null;
+    let turnIdAtivo = null;
     reply.raw.on('close', () => { conectado = false; });
     const enviar = (nome, dados) => {
       if (conectado && !reply.raw.destroyed) reply.raw.write(eventoSse(nome, dados));
@@ -558,6 +566,7 @@ async function criarServidor(opcoes = {}) {
         retryRootMessageId: retry?.rootMessageId || null,
         existingUserMessageId: retry?.userMessageId || null,
         onTurnStarted: async ({ turnId }) => {
+          turnIdAtivo = turnId;
           await hub.marcarSolicitacao(inicio.request.id, 'running', { turnId });
           if (!retry) await anexos(request).vincularTurno(attachmentIds, turnId);
         },
@@ -579,8 +588,17 @@ async function criarServidor(opcoes = {}) {
           expiresAt: resultado.memoria.candidato.expiraOfertaEm
         });
       }
+      let mensagemPersistida = null;
+      try {
+        const mensagens = await hub.listarMensagens(request.params.id, { limite: 20 });
+        mensagemPersistida = [...mensagens].reverse().find((item) =>
+          item.role === 'assistant' && String(item.turnId || '') === String(resultado.turnId || '')) || null;
+      } catch (erroMensagem) {
+        request.log.warn({ event: 'persisted_message_lookup_failed', traceId: resultado.traceId,
+          turnId: resultado.turnId, code: codigoErro(erroMensagem) });
+      }
       enviar('turn.completed', {
-        message: {
+        message: mensagemPersistida || {
           turnId: resultado.turnId,
           traceId: resultado.traceId,
           role: 'assistant',
@@ -596,7 +614,28 @@ async function criarServidor(opcoes = {}) {
       });
     } catch (erro) {
       await hub.marcarSolicitacao(inicio.request.id, 'error', { erro });
-      enviar('turn.failed', { code: codigoErro(erro),
+      const code = codigoErro(erro);
+      let autoReport = null;
+      try {
+        autoReport = await hub.criarReporteAutomatico(request.params.id, {
+          requestId: inicio.request.id,
+          traceId: inicio.request.trace_id,
+          turnId: turnIdAtivo || inicio.request.turn_id || null,
+          errorCode: code,
+          errorStage: ultimoStatus || 'processing'
+        });
+      } catch (reportError) {
+        request.log.error({ event: 'pilot_auto_report_failed', traceId: inicio.request.trace_id,
+          requestId: inicio.request.id, code: codigoErro(reportError) },
+        'automatic pilot report failed');
+      }
+      request.log.error({ event: 'turn_failed', traceId: inicio.request.trace_id,
+        requestId: inicio.request.id, turnId: turnIdAtivo, code, stage: ultimoStatus,
+        autoReportId: autoReport?.id || null }, 'turn processing failed');
+      enviar('turn.failed', { code,
+        traceId: inicio.request.trace_id,
+        autoReported: Boolean(autoReport?.id),
+        reportId: autoReport?.id || null,
         message: erro.status && erro.status < 500 ? erro.message : 'Nao foi possivel concluir esta resposta.' });
     } finally {
       if (conectado && !reply.raw.destroyed) reply.raw.end();
@@ -709,6 +748,20 @@ async function criarServidor(opcoes = {}) {
     servico(request).obterTrace(request.params.traceId));
   app.get('/v1/admin/audit', async (request) => servico(request).listarAuditoria(request.query || {}));
   app.get('/v1/admin/audit/:traceId', async (request) => servico(request).obterTrace(request.params.traceId));
+  app.get('/v1/admin/pilot-reports/export', async (request, reply) => {
+    const arquivo = await servico(request).exportarReportesPiloto(request.query || {});
+    reply.header('content-type', 'text/csv; charset=utf-8');
+    reply.header('content-disposition', `attachment; filename="${nomeDownloadSeguro(arquivo.name, 'problemas-piloto.csv')}"`);
+    return reply.send(arquivo.content);
+  });
+  app.get('/v1/admin/pilot-reports', async (request) =>
+    servico(request).listarReportesPiloto(request.query || {}));
+  app.get('/v1/admin/pilot-reports/:reportId', async (request) =>
+    servico(request).obterReportePiloto(request.params.reportId));
+  app.patch('/v1/admin/pilot-reports/:reportId', async (request) =>
+    servico(request).atualizarReportePiloto(request.params.reportId, request.body || {}));
+  app.delete('/v1/admin/pilot-reports/:reportId', async (request) =>
+    servico(request).excluirReportePiloto(request.params.reportId));
   app.get('/v1/admin/memory-candidates', async (request) =>
     servico(request).listarCandidaturasMemoria(request.query || {}));
   app.post('/v1/admin/memory-candidates/:id/review', async (request) =>

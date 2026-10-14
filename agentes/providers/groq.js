@@ -69,7 +69,7 @@ function converterTools(definicoes = []) {
 
 function criarProviderGroq(opcoes = {}) {
   const modelo = opcoes.modelo || process.env.GROQ_MODEL || MODELO_PADRAO;
-  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 20_000);
+  const timeoutMs = Number(opcoes.timeoutMs || process.env.LLM_REQUEST_TIMEOUT_MS || 60_000);
   let cliente = opcoes.cliente;
 
   function obterCliente() {

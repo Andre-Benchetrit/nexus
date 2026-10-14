@@ -5,12 +5,14 @@ const { processarImagemLocal } = require('../agentes/image_processing');
 const definicaoConsultarDocumentacao = {
   type: 'function',
   name: 'consultar_documentacao',
-  description: 'Consulta procedimentos, politicas e manuais publicados e autorizados para o setor ativo. Retorna trechos com documento, versao e pagina.',
+  description: 'Lista o catalogo ou consulta o conteudo de procedimentos, politicas e manuais publicados e autorizados para o setor ativo. Use operacao=listar para inventarios como "quais politicas existem"; use buscar para perguntas sobre o conteudo.',
   strict: true,
   parameters: {
     type: 'object',
     properties: {
+      operacao: { type: 'string', enum: ['buscar', 'listar'] },
       consulta: { type: 'string', minLength: 2, maxLength: 1000 },
+      tipo: { type: 'string', enum: ['todos', 'politica', 'procedimento', 'manual'] },
       documento_id: {
         type: 'string',
         description: 'Identificador de um documento ja consultado. E preenchido pelo Nexus em continuacoes sobre o mesmo documento.'
@@ -21,7 +23,7 @@ const definicaoConsultarDocumentacao = {
         description: 'Use true somente quando a pergunta depender de capturas, diagramas ou exemplos visuais do documento.'
       }
     },
-    required: ['consulta', 'limite', 'analisar_visual'],
+    required: ['operacao', 'limite', 'analisar_visual'],
     additionalProperties: false
   }
 };
@@ -178,6 +180,15 @@ async function executarConsultarDocumentacao(argumentos, dependencias = {}) {
     storage: dependencias.knowledgeStorage,
     embeddings: dependencias.knowledgeEmbeddings
   });
+  const operacao = argumentos.operacao === 'listar' ? 'listar' : 'buscar';
+  if (operacao === 'listar') {
+    const resultado = await servico.listarParaIA({
+      departmentId: dependencias.departamentoId || null,
+      tipo: argumentos.tipo || 'todos',
+      limite: argumentos.limite
+    });
+    return resultado;
+  }
   const resultado = await buscarDocumentacaoComRetry(servico, {
     consulta: argumentos.consulta,
     documentId: argumentos.documento_id || null,

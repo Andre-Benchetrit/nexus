@@ -29,7 +29,8 @@ type KnowledgeDocument = {
 type KnowledgeEdit = {
   document: KnowledgeDocument;
   version: { id?: string; numero?: number; status?: string; titulo: string; resumo?: string | null;
-    texto_extraido?: string; conteudo_estruturado?: {
+    texto_extraido?: string; paginas_extraidas?: Array<{ numero: number; texto: string;
+      possui_imagem?: boolean; metadados?: Record<string, unknown> }>; conteudo_estruturado?: {
     objetivo?: string; publico?: string; preRequisitos?: string[];
     passos?: Array<{ titulo?: string; descricao?: string }>; alertas?: string[];
   } };
@@ -46,6 +47,36 @@ type AuditActivity = { items: Array<Record<string, any>>; nextCursor?: string | 
 type AuditGlossary = { version: string; capabilities: Array<Record<string, string>>;
   modes: Array<Record<string, string>>; statuses: Array<Record<string, string>>;
   terms: Array<Record<string, string>> };
+type PilotReportItem = {
+  id: string; reporter_principal_id?: string | null; reporter_name: string;
+  department_id?: string | null; department_name?: string | null;
+  conversation_ref: string; conversation_title?: string | null; message_ref?: string | null;
+  trace_id: string; category: string; categoryLabel: string; comment: string;
+  report_origin?: "user" | "automatic"; request_ref?: string | null;
+  error_code?: string | null; error_stage?: string | null;
+  status: "new" | "in_review" | "resolved" | "dismissed"; statusLabel: string;
+  internal_note?: string | null; created_at: string; updated_at: string; resolved_at?: string | null;
+};
+type PilotReportList = {
+  summary: Record<string, number>;
+  items: PilotReportItem[];
+  nextCursor?: string | null;
+  facets: {
+    categories: Array<{ code: string; label: string }>;
+    statuses: Array<{ code: string; label: string }>;
+    users: Array<{ id: string; name: string }>;
+    departments: Array<{ id: string; name: string }>;
+  };
+};
+type PilotReportDetail = PilotReportItem & {
+  snapshot: { reportedMessageId: string | null; capturedAt: string; automatic?: boolean;
+    contentShared?: boolean; messages: Array<{
+    id: string; role: "user" | "assistant"; content: string; reported?: boolean;
+    traceId?: string | null; createdAt?: string; attachments?: Array<Record<string, any>>;
+    artifacts?: Array<Record<string, any>>;
+  }> };
+  trace?: { turn?: Record<string, any>; stages?: Array<Record<string, any>> } | null;
+};
 
 function parseKnowledgeSteps(value: FormDataEntryValue | null) {
   const paragraphs = String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -75,6 +106,7 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   const isAdmin = profile.permissoes.includes("governanca.administrar");
   const canAudit = profile.permissoes.includes("auditoria.consultar") || profile.setores.some((setor) =>
     setor.permissoes?.includes("auditoria.consultar.setor"));
+  const canPilot = profile.permissoes.includes("piloto.problemas.administrar");
   const canCost = profile.permissoes.some((item) => item.startsWith("custos.consultar"));
   const canMemory = profile.permissoes.some((item) =>
     item === "memoria.auditar" || item.startsWith("memoria.revisar") || item === "memoria.administrar");
@@ -119,9 +151,10 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
     isAdmin && ["departments", "Setores"],
     canMemory && ["memory", "Aprendizados"],
     canKnowledge && ["knowledge", "Base de conhecimento"],
+    canPilot && ["pilot", "Problemas do piloto"],
     canAudit && ["audit", "Auditoria"],
     isAdmin && ["lake", "Lake"]
-  ].filter(Boolean) as string[][], [canCost, isAdmin, canAudit, canMemory, canKnowledge]);
+  ].filter(Boolean) as string[][], [canCost, isAdmin, canAudit, canMemory, canKnowledge, canPilot]);
 
   async function load() {
     const sequence = ++loadSequence.current;
@@ -545,7 +578,7 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
             <label>Título<input name="title" required defaultValue={knowledgeEdit.version.titulo} /></label>
             <label>Resumo<input name="summary" defaultValue={knowledgeEdit.version.resumo || ""} /></label>
             <label>Objetivo e conteúdo principal<textarea name="objective" rows={8}
-              defaultValue={knowledgeEdit.version.conteudo_estruturado?.objetivo || knowledgeEdit.version.texto_extraido || ""} /></label>
+              defaultValue={knowledgeEdit.version.conteudo_estruturado?.objetivo || ""} /></label>
             <label>Público<input name="audience" defaultValue={knowledgeEdit.version.conteudo_estruturado?.publico || ""} /></label>
             <label>Pré-requisitos <small>Um por linha</small><textarea name="prerequisites" rows={3}
               defaultValue={(knowledgeEdit.version.conteudo_estruturado?.preRequisitos || []).join("\n")} /></label>
@@ -554,6 +587,15 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
                 .map((item) => item.descricao ? `${item.titulo}: ${item.descricao}` : item.titulo || "").join("\n")} /></label>
             <label>Alertas <small>Um por linha</small><textarea name="warnings" rows={3}
               defaultValue={(knowledgeEdit.version.conteudo_estruturado?.alertas || []).join("\n")} /></label>
+            {Boolean(knowledgeEdit.version.texto_extraido) && <details className="knowledge-extracted-source">
+              <summary>Texto original extraído da fonte</summary>
+              <p>Referência somente para revisão. Organize o conteúdo nos campos acima; o texto original não será colocado inteiro no campo Objetivo.</p>
+              <div>{(knowledgeEdit.version.paginas_extraidas?.length
+                ? knowledgeEdit.version.paginas_extraidas
+                : [{ numero: 1, texto: knowledgeEdit.version.texto_extraido || "" }]).map((page) =>
+                <section key={page.numero}><strong>Página {page.numero}</strong>
+                  <pre>{page.texto}</pre></section>)}</div>
+            </details>}
           </div><aside className="knowledge-version-history"><strong>Histórico de versões</strong>
             {knowledgeEdit.versions.map((version) => <div key={version.id}><span>v{version.numero}</span>
               <p>{version.status.replaceAll("_", " ")}</p>
@@ -643,6 +685,7 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
       </section>}
 
       {tab === "audit" && <AuditPanel />}
+      {tab === "pilot" && <PilotReportsPanel />}
       {tab === "lake" && lake && <><div className="metric-grid">
         <Metric label="Estado" value={lake.health?.saudavel ? "Saudável" : "Indisponível"} />
         <Metric label="Bronze" value={lake.health?.camadas?.bronze || 0} />
@@ -652,6 +695,164 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
       </>}
     </section>
   </main>;
+}
+
+function PilotReportsPanel() {
+  const emptyList: PilotReportList = { summary: {}, items: [], nextCursor: null,
+    facets: { categories: [], statuses: [], users: [], departments: [] } };
+  const [data, setData] = useState<PilotReportList>(emptyList);
+  const [detail, setDetail] = useState<PilotReportDetail | null>(null);
+  const [filters, setFilters] = useState({ from: "", to: "", departmentId: "",
+    principalId: "", category: "", status: "", traceId: "" });
+  const [applied, setApplied] = useState(filters);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reviewStatus, setReviewStatus] = useState<PilotReportItem["status"]>("new");
+  const [internalNote, setInternalNote] = useState("");
+
+  function query(extra: Record<string, string> = {}) {
+    const params = new URLSearchParams();
+    Object.entries(applied).forEach(([key, value]) => value && params.set(key, value));
+    Object.entries(extra).forEach(([key, value]) => value && params.set(key, value));
+    const text = params.toString();
+    return text ? `?${text}` : "";
+  }
+
+  async function load() {
+    setLoading(true); setError(null); setDetail(null);
+    try { setData(await nexusFetch<PilotReportList>(`admin/pilot-reports${query()}`)); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar os reportes."); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); }, [applied]);
+  useEffect(() => {
+    if (!detail) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !saving) setDetail(null); };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [detail, saving]);
+
+  async function loadMore() {
+    if (!data.nextCursor) return;
+    try {
+      const next = await nexusFetch<PilotReportList>(`admin/pilot-reports${query({ cursor: data.nextCursor })}`);
+      setData((current) => ({ ...current, items: [...current.items, ...next.items], nextCursor: next.nextCursor }));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar mais reportes."); }
+  }
+
+  async function openReport(id: string) {
+    setDetailLoading(id); setError(null);
+    try {
+      const item = await nexusFetch<PilotReportDetail>(`admin/pilot-reports/${id}`);
+      setDetail(item); setReviewStatus(item.status); setInternalNote(item.internal_note || "");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao abrir o reporte."); }
+    finally { setDetailLoading(null); }
+  }
+
+  async function saveReview() {
+    if (!detail || saving) return;
+    setSaving(true); setError(null);
+    try {
+      await nexusFetch(`admin/pilot-reports/${detail.id}`, {
+        method: "PATCH", body: JSON.stringify({ status: reviewStatus, internalNote })
+      });
+      setDetail(null); await load();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao atualizar o reporte."); }
+    finally { setSaving(false); }
+  }
+
+  async function deleteReport() {
+    if (!detail || saving || !["resolved", "dismissed"].includes(detail.status)) return;
+    if (!window.confirm("Excluir permanentemente este reporte e seu snapshot?")) return;
+    setSaving(true); setError(null);
+    try {
+      await nexusFetch(`admin/pilot-reports/${detail.id}`, { method: "DELETE" });
+      setDetail(null); await load();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao excluir o reporte."); }
+    finally { setSaving(false); }
+  }
+
+  const summary = data.summary || {};
+  const canDelete = detail && ["resolved", "dismissed"].includes(detail.status);
+  const allowedReviewStatuses = detail ? ({
+    new: ["new", "in_review"],
+    in_review: ["in_review", "resolved", "dismissed"],
+    resolved: ["resolved", "in_review"],
+    dismissed: ["dismissed", "in_review"]
+  }[detail.status] || [detail.status]) : [];
+  return <section className="pilot-reports-panel">
+    <div className="audit-heading"><div><p className="eyebrow">FEEDBACK CONTEXTUAL</p>
+      <h2>Problemas do piloto</h2><p>Reportes dos pilotos e falhas automáticas, sempre vinculados ao trace correspondente.</p></div>
+      <a className="secondary-button" href={`/api/nexus/admin/pilot-reports/export${query()}`} download>Exportar CSV</a></div>
+    <form className="audit-filters glass-panel" onSubmit={(event) => { event.preventDefault(); setApplied({ ...filters }); }}>
+      <label>De<input type="date" value={filters.from} onChange={(event) => setFilters({ ...filters, from: event.target.value })} /></label>
+      <label>Até<input type="date" value={filters.to} onChange={(event) => setFilters({ ...filters, to: event.target.value })} /></label>
+      <label>Setor<select value={filters.departmentId} onChange={(event) => setFilters({ ...filters, departmentId: event.target.value })}>
+        <option value="">Todos</option>{data.facets.departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label>Usuário<select value={filters.principalId} onChange={(event) => setFilters({ ...filters, principalId: event.target.value })}>
+        <option value="">Todos</option>{data.facets.users.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label>Motivo<select value={filters.category} onChange={(event) => setFilters({ ...filters, category: event.target.value })}>
+        <option value="">Todos</option>{data.facets.categories.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select></label>
+      <label>Status<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
+        <option value="">Todos</option>{data.facets.statuses.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select></label>
+      <label>Trace<input value={filters.traceId} placeholder="UUID completo"
+        onChange={(event) => setFilters({ ...filters, traceId: event.target.value.trim() })} /></label>
+      <button className="primary-button">Aplicar filtros</button>
+    </form>
+    {error && <p className="admin-error">{error}</p>}
+    {loading && <p className="audit-loading">Carregando problemas reportados…</p>}
+    {!loading && <>
+      <div className="metric-grid"><Metric label="Total" value={summary.total || 0} />
+        <Metric label="Novos" value={summary.new || 0} /><Metric label="Em análise" value={summary.in_review || 0} />
+        <Metric label="Resolvidos" value={summary.resolved || 0} /><Metric label="Descartados" value={summary.dismissed || 0} /></div>
+      <section className="data-section glass-panel"><h2>Reportes recebidos</h2><div className="table-scroll"><table>
+        <thead><tr><th>Quando</th><th>Origem</th><th>Usuário</th><th>Setor</th><th>Motivo</th><th>Comentário</th><th>Status</th><th>Trace</th><th>Detalhe</th></tr></thead>
+        <tbody>{data.items.map((item) => <tr key={item.id}><td>{new Date(item.created_at).toLocaleString("pt-BR")}</td>
+          <td>{item.report_origin === "automatic" ? "Automático" : "Piloto"}</td><td>{item.reporter_name}</td><td>{item.department_name || "Sem setor"}</td><td>{item.categoryLabel}</td>
+          <td className="pilot-report-comment-cell">{item.comment}</td><td>{item.statusLabel}</td><td><code>{item.trace_id.slice(0, 8)}</code></td>
+          <td><button className="text-button" disabled={Boolean(detailLoading)} aria-busy={detailLoading === item.id}
+            onClick={() => openReport(item.id)}>{detailLoading === item.id ? "Abrindo…" : "Analisar"}</button></td></tr>)}
+          {!data.items.length && <tr><td colSpan={9}>Nenhum reporte encontrado.</td></tr>}</tbody></table></div>
+        {data.nextCursor && <button className="secondary-button" onClick={loadMore}>Carregar mais</button>}
+      </section>
+    </>}
+    {detail && <div className="pilot-detail-backdrop" role="presentation" onMouseDown={() => !saving && setDetail(null)}>
+      <section className="pilot-detail glass-panel" role="dialog" aria-modal="true" aria-labelledby="pilot-detail-title"
+        onMouseDown={(event) => event.stopPropagation()}><header><div><p className="eyebrow">REPORTE DO PILOTO</p>
+          <h2 id="pilot-detail-title">{detail.categoryLabel}</h2><p>{detail.reporter_name} · {detail.department_name || "Sem setor"} · {new Date(detail.created_at).toLocaleString("pt-BR")}</p></div>
+          <button type="button" aria-label="Fechar reporte" disabled={saving} onClick={() => setDetail(null)}>×</button></header>
+        <div className="pilot-detail-grid"><section><h3>O que foi percebido</h3><p>{detail.comment}</p>
+          {detail.report_origin === "automatic" && <small>Falha: {detail.error_code || "não classificada"} · etapa {detail.error_stage || "não identificada"}</small>}
+          <small>Trace {detail.trace_id}</small></section><section className="pilot-review-form"><h3>Triagem</h3>
+          <label>Status<select value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value as PilotReportItem["status"])}>
+            {data.facets.statuses.filter((item) => allowedReviewStatuses.includes(item.code))
+              .map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}</select></label>
+          <label>Nota interna<textarea rows={4} maxLength={4000} value={internalNote}
+            onChange={(event) => setInternalNote(event.target.value)} /></label>
+          <div><button className="primary-button" disabled={saving} onClick={saveReview}>{saving ? "Salvando…" : "Salvar triagem"}</button>
+            {canDelete && <button className="danger-outline" disabled={saving} onClick={deleteReport}>Excluir reporte</button>}</div></section></div>
+        <section className="pilot-conversation"><h3>{detail.snapshot.contentShared === false ? "Contexto protegido" : "Conversa preservada"}</h3><p className="pilot-snapshot-note">
+          {detail.snapshot.contentShared === false
+            ? "Reporte automático: nenhum texto da conversa foi copiado. Use o trace técnico para investigar a falha."
+            : `Capturada em ${new Date(detail.snapshot.capturedAt).toLocaleString("pt-BR")}. A resposta reportada está destacada.`}</p>
+          <div>{detail.snapshot.messages.map((message) => <article key={message.id}
+            className={`${message.role} ${message.reported ? "reported" : ""}`}>
+            <header><strong>{message.role === "user" ? "Piloto" : "Nexus"}</strong>
+              {message.reported && <span>Resposta reportada</span>}</header><p>{message.content}</p>
+            {Boolean(message.attachments?.length || message.artifacts?.length) && <small>
+              {[...(message.attachments || []), ...(message.artifacts || [])]
+                .map((item) => item.name || item.title || item.format || "Arquivo").join(" · ")}</small>}
+          </article>)}</div></section>
+        <section className="pilot-trace"><h3>Etapas técnicas</h3>{detail.trace?.stages?.length
+          ? <ol>{detail.trace.stages.map((stage) => <li key={`${stage.tipo}-${stage.id}`}><strong>{stage.nome || stage.capability || "Processamento do modelo"}</strong>
+            <span>{stage.status || "sem estado"}{stage.duracao_ms == null ? "" : ` · ${stage.duracao_ms} ms`}</span>
+            {stage.erro_codigo && <small>Erro: {stage.erro_codigo}</small>}</li>)}</ol>
+          : <p>Nenhuma etapa técnica foi encontrada para este trace.</p>}</section>
+      </section></div>}
+  </section>;
 }
 
 function AuditPanel() {
