@@ -347,17 +347,22 @@ function criarOrcamentoPesquisa({ compositionLevel = 'medio', maximo } = {}) {
   const tetoConfigurado = Math.min(3, Math.max(1, Number(maximo || process.env.NEXUS_WEB_MAX_SEARCHES_PER_TURN || 3)));
   const tetoNivel = ['alto', 'extra_alto'].includes(compositionLevel) ? tetoConfigurado : Math.min(2, tetoConfigurado);
   let usadas = 0;
+  let limiteAtual = tetoNivel;
   return {
-    consumir() {
-      if (usadas >= tetoNivel) {
+    consumir({ coverage } = {}) {
+      // Um plano com varias frentes independentes precisa poder pesquisar a lacuna
+      // restante. A complexidade vem do plano semantico produzido pelo agente, e nao
+      // de palavras-chave ou assuntos cadastrados no codigo.
+      if (Array.isArray(coverage) && coverage.length >= 3) limiteAtual = tetoConfigurado;
+      if (usadas >= limiteAtual) {
         const erro = new Error('O orçamento de pesquisas web deste turno foi atingido.');
         erro.codigo = 'WEB_BUDGET_EXCEEDED';
         throw erro;
       }
       usadas += 1;
-      return { usadas, restantes: tetoNivel - usadas };
+      return { usadas, restantes: limiteAtual - usadas, maximo: limiteAtual };
     },
-    estado: () => ({ usadas, maximo: tetoNivel })
+    estado: () => ({ usadas, restantes: limiteAtual - usadas, maximo: limiteAtual })
   };
 }
 

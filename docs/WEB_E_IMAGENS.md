@@ -84,6 +84,19 @@ perfil da implantacao e `NEXUS_BRAND_LOGO` aponta para a logo aprovada. Os nomes
 `NEXUS_ARTIFACT_BRAND_JSON` e `NEXUS_ARTIFACT_BRAND_LOGO` continuam como fallback
 de compatibilidade.
 
+O Hub permite escolher a tipografia antes de criar ou editar uma imagem. A
+opcao automatica usa Montserrat nas pecas com identidade FID, conforme o
+`Manual da Marca FID 2025` publicado no Knowledge. Montserrat e distribuida com
+a aplicacao para produzir o mesmo resultado no desenvolvimento e no Railway.
+Os estilos Oswald, Playfair Display e Nexus Sans sao alternativas para pecas
+sem identidade obrigatoria; nao sao apresentados como fontes oficiais da FID.
+O manual tambem lista Adelia e Franie, mas elas somente poderao ser habilitadas
+quando os arquivos licenciados oficiais forem fornecidos.
+
+Cada camada de texto persiste familia, peso e tratamento de contraste. O Nexus
+usa sombra suave ou painel claro/escuro em vez do contorno grosso e orienta o
+agente a manter textos no espaco negativo, sem cobrir o produto.
+
 Toda criacao fica privada na conversa, recebe versao, preview autenticado,
 download e classificacao. A saida e marcada como rascunho e nao e publicada
 automaticamente. A Sprint 11 deve permanecer em `shadow` ou `off` em producao

@@ -161,6 +161,12 @@ test('API separa healthcheck publico de rotas autenticadas', async (t) => {
   assert.equal(live.statusCode, 200);
   assert.equal(ready.statusCode, 200);
   assert.equal(ready.json().capabilities.imageGeneration, 'off');
+  assert.deepEqual(ready.json().lifecycle, { draining: false, activeTurns: 0 });
   assert.equal(me.statusCode, 401);
   assert.equal(me.json().error.code, 'NAO_AUTENTICADO');
+
+  app.nexusDrain.iniciarDrenagem();
+  const draining = await app.inject({ method: 'GET', url: '/health/ready' });
+  assert.equal(draining.statusCode, 503);
+  assert.deepEqual(draining.json().lifecycle, { draining: true, activeTurns: 0 });
 });

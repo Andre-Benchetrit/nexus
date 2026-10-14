@@ -25,6 +25,9 @@ const { criarKnowledgeStorage } = require('../../nexus/knowledge_storage');
 const { criarKnowledgeOneDrivePublisher } = require('../../nexus/knowledge_onedrive_publisher');
 const { criarServicoDocumentacao } = require('../../nexus/documentacao');
 const { executarAssistente } = require('../../agentes/assistente_nexus');
+const {
+  criarControladorDrenagem, instalarEncerramentoGracioso
+} = require('./graceful_shutdown');
 
 function eventoSse(nome, dados) {
   return `event: ${nome}\ndata: ${JSON.stringify(dados)}\n\n`;
@@ -137,6 +140,9 @@ async function criarServidor(opcoes = {}) {
   const app = Fastify({ logger, trustProxy: true,
     bodyLimit: Math.max(64 * 1024, maxUploadBytes + 64 * 1024) });
   const pool = opcoes.pool || criarPoolNexus();
+  const nexusDrain = opcoes.nexusDrain || criarControladorDrenagem();
+  app.decorate('nexusDrain', nexusDrain);
+  app.decorate('nexusPool', pool);
   const lakeStorage = opcoes.lakeStorage || criarLakeStorage();
   const attachmentStorage = opcoes.attachmentStorage || criarAttachmentStorage();
   const artifactStorage = opcoes.artifactStorage || criarArtifactStorage();
@@ -280,15 +286,17 @@ async function criarServidor(opcoes = {}) {
     const exigeDados = String(process.env.NEXUS_LAKE_REQUIRE_DATA || '0') === '1';
     const dadosDisponiveis = !exigeDados || lake.possuiObjetos === true ||
       Number(lake.camadas?.silver || 0) + Number(lake.camadas?.gold || 0) > 0;
-    const pronto = banco && lake.saudavel && arquivos.saudavel && artefatosHealth.saudavel &&
-      datasetsHealth.saudavel && dadosDisponiveis;
+    const drenagem = nexusDrain.estado();
+    const pronto = !drenagem.drenando && banco && lake.saudavel && arquivos.saudavel &&
+      artefatosHealth.saudavel && datasetsHealth.saudavel && dadosDisponiveis;
     if (!pronto) reply.code(503);
     return { status: pronto ? 'ready' : 'not_ready', database: banco,
       lake: { healthy: lake.saudavel, type: lake.tipo, datasets: lake.camadas || {} },
       files: { healthy: arquivos.saudavel, type: arquivos.tipo },
       artifacts: { healthy: artefatosHealth.saudavel, type: artefatosHealth.tipo },
       temporaryDatasets: { healthy: datasetsHealth.saudavel, type: datasetsHealth.tipo },
-      capabilities: { imageGeneration: imageGenerationMode } };
+      capabilities: { imageGeneration: imageGenerationMode },
+      lifecycle: { draining: drenagem.drenando, activeTurns: drenagem.turnosAtivos } };
   });
 
   app.post('/v1/auth/resolve', async (request) => resolverIdentidadeMicrosoft(pool, {
@@ -437,6 +445,11 @@ async function criarServidor(opcoes = {}) {
   app.post('/v1/conversations/:id/turns', {
     config: { rateLimit: { max: Number(process.env.NEXUS_TURN_RATE_LIMIT_PER_MINUTE || 20), timeWindow: '1 minute' } }
   }, async (request, reply) => {
+    const turnoAtivo = nexusDrain.iniciarTurno({
+      conversationId: request.params.id,
+      principalId: request.ator.pid
+    });
+    try {
     const hub = servico(request);
     const retryMessageId = request.body?.retryMessageId ? String(request.body.retryMessageId) : null;
     const retry = retryMessageId
@@ -452,6 +465,9 @@ async function criarServidor(opcoes = {}) {
     const imageOutputFormatRaw = String(retry?.imageOutputFormat || request.body?.imageOutputFormat || 'png').toLowerCase();
     const imageOutputFormat = ['png', 'jpeg', 'webp'].includes(imageOutputFormatRaw)
       ? imageOutputFormatRaw : 'png';
+    const imageFontFamilyRaw = String(retry?.imageFontFamily || request.body?.imageFontFamily || 'auto').toLowerCase();
+    const imageFontFamily = ['auto','montserrat','oswald','playfair','nexus-sans'].includes(imageFontFamilyRaw)
+      ? imageFontFamilyRaw : 'auto';
     const conversaTurno = await hub.obterConversa(request.params.id);
     const imageContextRaw = retry?.imageContext || request.body?.imageContext || null;
     const imageContext = imageContextRaw?.artifactId ? {
@@ -488,6 +504,7 @@ async function criarServidor(opcoes = {}) {
       clientRequestId: request.body?.clientRequestId,
       compositionLevel: request.body?.compositionLevel
     });
+    turnoAtivo.atualizar({ requestId: inicio.request.id, traceId: inicio.request.trace_id });
     reply.hijack();
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -552,6 +569,7 @@ async function criarServidor(opcoes = {}) {
         sourceMode,
         imageContext,
         imageOutputFormat,
+        imageFontFamily,
         traceId: inicio.request.trace_id,
         anexos: anexosTurno,
         servicoAnexos: anexos(request),
@@ -567,6 +585,7 @@ async function criarServidor(opcoes = {}) {
         existingUserMessageId: retry?.userMessageId || null,
         onTurnStarted: async ({ turnId }) => {
           turnIdAtivo = turnId;
+          turnoAtivo.atualizar({ turnId });
           await hub.marcarSolicitacao(inicio.request.id, 'running', { turnId });
           if (!retry) await anexos(request).vincularTurno(attachmentIds, turnId);
         },
@@ -639,6 +658,9 @@ async function criarServidor(opcoes = {}) {
         message: erro.status && erro.status < 500 ? erro.message : 'Nao foi possivel concluir esta resposta.' });
     } finally {
       if (conectado && !reply.raw.destroyed) reply.raw.end();
+    }
+    } finally {
+      turnoAtivo.concluir();
     }
   });
 
@@ -814,9 +836,12 @@ async function criarServidor(opcoes = {}) {
 }
 
 if (require.main === module) {
-  criarServidor().then((app) => app.listen({
-    port: Number(process.env.PORT || process.env.NEXUS_API_PORT || 3001), host: '0.0.0.0'
-  })).catch((erro) => {
+  criarServidor().then(async (app) => {
+    await app.listen({
+      port: Number(process.env.PORT || process.env.NEXUS_API_PORT || 3001), host: '0.0.0.0'
+    });
+    instalarEncerramentoGracioso(app, { pool: app.nexusPool });
+  }).catch((erro) => {
     process.stderr.write(`Falha ao iniciar Nexus API: ${codigoErro(erro)}\n`);
     process.exitCode = 1;
   });

@@ -22,6 +22,25 @@ Configure o Hub com `NEXUS_API_INTERNAL_URL=http://nexus-api.railway.internal:30
 e a API com `PORT=3001`. Use `npm run nexus:db:migrate` como comando de
 pre-deploy da API.
 
+Para que um deploy nao interrompa uma consulta ou geracao em andamento,
+configure no servico `nexus-api`:
+
+```env
+RAILWAY_DEPLOYMENT_DRAINING_SECONDS=300
+NEXUS_API_DRAIN_TIMEOUT_MS=290000
+```
+
+Ao receber `SIGTERM`, a API passa a retornar `503 DEPLOY_DRAINING` para novos
+turnos, aguarda por ate 290 segundos os turnos ativos e somente entao fecha as
+conexoes. Os dez segundos restantes ficam reservados para o fechamento do
+Fastify, do pool PostgreSQL e dos storages. Se o limite for excedido, somente
+as solicitacoes ainda ativas nessa instancia sao marcadas como interrompidas.
+O endpoint `/health/ready` tambem retorna 503 durante a drenagem.
+
+Como a API usa um Volume, mantenha uma unica replica. O draining evita cortar
+trabalho em andamento, mas nao torna possivel montar o mesmo Volume em dois
+deploys simultaneamente.
+
 O cron do Worker é `15 * * * *`. O processo inicia a cada hora, mas executa
 somente a carga completa às 02h ou as cargas intradiárias configuradas. A agenda
 do Railway usa UTC; a decisão final ocorre no código usando

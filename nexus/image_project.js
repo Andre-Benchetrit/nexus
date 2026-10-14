@@ -1,5 +1,10 @@
 const crypto = require('node:crypto');
 const sharp = require('sharp');
+const { createCanvas } = require('@napi-rs/canvas');
+const { familiaFonteImagem, normalizarFonteImagem,
+  registrarFontesImagem } = require('./image_fonts');
+
+registrarFontesImagem();
 
 class ErroProjetoImagem extends Error {
   constructor(codigo, mensagem, status = 400) {
@@ -24,11 +29,6 @@ function texto(valor, maximo = 4000) {
 function limitar(numero, minimo, maximo, fallback) {
   const n = Number(numero); return Number.isFinite(n) ? Math.min(maximo, Math.max(minimo, n)) : fallback;
 }
-function escaparSvg(valor) {
-  return texto(valor, 1000).replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
-
 function normalizarSpecImagem(spec = {}) {
   const action = ['generate', 'edit', 'variation'].includes(spec.action) ? spec.action : 'generate';
   const preset = PRESETS[spec.preset] ? spec.preset : 'square';
@@ -41,6 +41,11 @@ function normalizarSpecImagem(spec = {}) {
       anchor: ANCHORS.has(item.anchor) ? item.anchor : 'center',
       widthPercent: limitar(item.widthPercent, 10, 90, 70),
       fontSizePercent: limitar(item.fontSizePercent, 1, 12, 4),
+      fontFamily: normalizarFonteImagem(item.fontFamily),
+      fontWeight: [400, 500, 600, 700, 800].includes(Number(item.fontWeight))
+        ? Number(item.fontWeight) : 700,
+      treatment: ['none', 'shadow', 'dark-panel', 'light-panel'].includes(item.treatment)
+        ? item.treatment : 'shadow',
       color: /^#[0-9a-f]{6}$/i.test(String(item.color || '')) ? item.color : '#ffffff',
       align: ['left', 'center', 'right'].includes(item.align) ? item.align : 'center'
     })).filter((item) => item.text);
@@ -86,23 +91,95 @@ function posicaoAncora(anchor, canvas, item, margin) {
   return { left: Math.max(0, Math.round(x)), top: Math.max(0, Math.round(y)) };
 }
 
-function svgTexto(bloco, width, height) {
+function quebrarLinhaLonga(ctx, valor, larguraMaxima) {
+  const partes = [];
+  let atual = '';
+  for (const caractere of [...valor]) {
+    const candidato = `${atual}${caractere}`;
+    if (atual && ctx.measureText(candidato).width > larguraMaxima) {
+      partes.push(atual); atual = caractere;
+    } else atual = candidato;
+  }
+  if (atual) partes.push(atual);
+  return partes;
+}
+
+function quebrarTexto(ctx, valor, larguraMaxima) {
+  const linhas = [];
+  for (const paragrafo of String(valor || '').split(/\r?\n/)) {
+    const palavras = paragrafo.trim().split(/\s+/).filter(Boolean);
+    if (!palavras.length) { linhas.push(''); continue; }
+    let atual = '';
+    for (const palavra of palavras) {
+      const fragmentos = ctx.measureText(palavra).width > larguraMaxima
+        ? quebrarLinhaLonga(ctx, palavra, larguraMaxima) : [palavra];
+      for (const fragmento of fragmentos) {
+        const candidato = atual ? `${atual} ${fragmento}` : fragmento;
+        if (atual && ctx.measureText(candidato).width > larguraMaxima) {
+          linhas.push(atual); atual = fragmento;
+        } else atual = candidato;
+      }
+    }
+    if (atual) linhas.push(atual);
+  }
+  return linhas.length ? linhas : [''];
+}
+
+function renderizarTexto(bloco, width, height) {
   const fontSize = Math.max(14, Math.round(height * bloco.fontSizePercent / 100));
   const lineHeight = Math.round(fontSize * 1.18);
-  const maxChars = Math.max(8, Math.floor(bloco.widthPercent / 100 * width / (fontSize * .58)));
-  const palavras = bloco.text.split(/\s+/); const linhas = []; let atual = '';
-  for (const palavra of palavras) {
-    const candidata = atual ? `${atual} ${palavra}` : palavra;
-    if (candidata.length > maxChars && atual) { linhas.push(atual); atual = palavra; }
-    else atual = candidata;
-  }
-  if (atual) linhas.push(atual);
   const boxWidth = Math.round(width * bloco.widthPercent / 100);
+  const familia = `"${familiaFonteImagem(bloco.fontFamily)}"`;
+  const peso = bloco.fontWeight || 700;
+  const medicao = createCanvas(1, 1).getContext('2d');
+  medicao.font = `${peso} ${fontSize}px ${familia}`;
+  const linhas = quebrarTexto(medicao, bloco.text, Math.max(1, boxWidth - 16));
   const boxHeight = Math.max(lineHeight + 16, linhas.length * lineHeight + 24);
-  const textAnchor = bloco.align === 'left' ? 'start' : bloco.align === 'right' ? 'end' : 'middle';
+  const canvas = createCanvas(boxWidth, boxHeight);
+  const ctx = canvas.getContext('2d');
+  if (bloco.treatment === 'dark-panel' || bloco.treatment === 'light-panel') {
+    ctx.fillStyle = bloco.treatment === 'dark-panel' ? 'rgba(20,24,29,0.72)' : 'rgba(255,255,255,0.78)';
+    ctx.beginPath(); ctx.roundRect(0, 0, boxWidth, boxHeight, Math.max(8, Math.round(fontSize * .22))); ctx.fill();
+  }
+  ctx.font = `${peso} ${fontSize}px ${familia}`;
+  ctx.textAlign = bloco.align;
+  ctx.textBaseline = 'top';
+  if (bloco.treatment === 'shadow') {
+    ctx.shadowColor = 'rgba(0,0,0,0.58)';
+    ctx.shadowBlur = Math.max(3, Math.round(fontSize * .1));
+    ctx.shadowOffsetX = Math.max(1, Math.round(fontSize * .025));
+    ctx.shadowOffsetY = Math.max(1, Math.round(fontSize * .04));
+  }
+  ctx.fillStyle = bloco.color;
   const x = bloco.align === 'left' ? 8 : bloco.align === 'right' ? boxWidth - 8 : boxWidth / 2;
-  const tspans = linhas.map((linha, i) => `<tspan x="${x}" y="${18 + fontSize + i * lineHeight}">${escaparSvg(linha)}</tspan>`).join('');
-  return { width: boxWidth, height: boxHeight, buffer: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${boxWidth}" height="${boxHeight}"><text font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="${bloco.color}" text-anchor="${textAnchor}" paint-order="stroke" stroke="rgba(0,0,0,.32)" stroke-width="2">${tspans}</text></svg>`) };
+  linhas.forEach((linha, indice) => {
+    const y = 12 + indice * lineHeight;
+    ctx.fillText(linha, x, y);
+  });
+  return { width: boxWidth, height: boxHeight, buffer: canvas.toBuffer('image/png') };
+}
+
+function posicionarTextos(renderizados, canvas, margin, gap = 12) {
+  const grupos = new Map();
+  renderizados.forEach((item, indice) => {
+    const lista = grupos.get(item.bloco.anchor) || [];
+    lista.push({ ...item, indice }); grupos.set(item.bloco.anchor, lista);
+  });
+  const posicoes = new Array(renderizados.length);
+  for (const [anchor, itens] of grupos.entries()) {
+    const alturaTotal = itens.reduce((soma, item) => soma + item.render.height, 0) +
+      Math.max(0, itens.length - 1) * gap;
+    const vertical = anchor === 'center' ? 'center' : anchor.split('-')[0];
+    let top = vertical === 'top' ? margin : vertical === 'bottom'
+      ? canvas.height - margin - alturaTotal : (canvas.height - alturaTotal) / 2;
+    top = Math.max(0, top);
+    for (const item of itens) {
+      const base = posicaoAncora(anchor, canvas, item.render, margin);
+      posicoes[item.indice] = { left: base.left, top: Math.round(top) };
+      top += item.render.height + gap;
+    }
+  }
+  return posicoes;
 }
 
 async function comporProjetoImagem({ baseBuffer, spec: entrada, brandProvider }) {
@@ -150,14 +227,18 @@ async function comporProjetoImagem({ baseBuffer, spec: entrada, brandProvider })
       constraints: { minWidthPercent: brand.logoMinWidthPercent,
         clearSpacePercent: Math.max(brand.clearSpacePercent, spec.logo.marginPercent) } });
   }
-  for (const [indice, bloco] of spec.textBlocks.entries()) {
-    const svg = svgTexto(bloco, canvas.width, canvas.height);
-    const margin = Math.round(canvas.width * .04);
-    const position = posicaoAncora(bloco.anchor, canvas, svg, margin);
-    composites.push({ input: svg.buffer, ...position });
+  const marginTexto = Math.round(canvas.width * .04);
+  const textosRenderizados = spec.textBlocks.map((bloco) => ({ bloco,
+    render: renderizarTexto(bloco, canvas.width, canvas.height) }));
+  const posicoesTexto = posicionarTextos(textosRenderizados, canvas, marginTexto);
+  for (const [indice, item] of textosRenderizados.entries()) {
+    const { bloco, render } = item;
+    const position = posicoesTexto[indice];
+    composites.push({ input: render.buffer, ...position });
     layers.push({ id: bloco.id || `text-${indice + 1}`, type: 'text', text: bloco.text,
+      fontFamily: bloco.fontFamily, fontWeight: bloco.fontWeight, treatment: bloco.treatment,
       position: { x: position.left / canvas.width, y: position.top / canvas.height },
-      size: { width: svg.width / canvas.width, height: svg.height / canvas.height },
+      size: { width: render.width / canvas.width, height: render.height / canvas.height },
       rotation: 0, opacity: 1, zIndex: 50 + indice, locked: false,
       constraints: { safeAreaPercent: 4 } });
   }
@@ -179,7 +260,10 @@ async function comporProjetoImagem({ baseBuffer, spec: entrada, brandProvider })
   return { buffer, spec, projeto, validacao: { width: metadata.width, height: metadata.height,
     format: metadata.format, brandMode: spec.brandMode, layers: layers.length,
     hasLogo: layers.some((x) => x.type === 'logo'), hasText: layers.some((x) => x.type === 'text'),
+    textRenderer: layers.some((x) => x.type === 'text') ? 'embedded-font' : null,
+    fontFamilies: [...new Set(layers.filter((x) => x.type === 'text').map((x) => x.fontFamily))],
     draft: true, brandCompliant: spec.brandMode !== 'full_brand' || layers.some((x) => x.type === 'logo') } };
 }
 
-module.exports = { ANCHORS, ErroProjetoImagem, PRESETS, comporProjetoImagem, normalizarSpecImagem };
+module.exports = { ANCHORS, ErroProjetoImagem, PRESETS, comporProjetoImagem,
+  normalizarSpecImagem, posicionarTextos, renderizarTexto };

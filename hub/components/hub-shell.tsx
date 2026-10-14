@@ -10,7 +10,7 @@ import { MarkdownMessage } from "./markdown-message";
 import { NexusLogo } from "./nexus-logo";
 import {
   Artifact, Attachment, AttachmentStatusEvent, CompositionLevel, Conversation, FileProcessingStage, ImageContext, ImageOutputFormat, MemoryOffer,
-  Message, NexusProfile, SourceMode, TurnRequest, TurnStageEvent, nexusFetch
+  ImageFontFamily, Message, NexusProfile, SourceMode, TurnRequest, TurnStageEvent, nexusFetch
 } from "@/lib/types";
 
 const COMPOSITIONS: Array<{ value: CompositionLevel; label: string; hint: string }> = [
@@ -77,6 +77,7 @@ type SendMessageOptions = {
   retryMessageId?: string;
   imageContext?: ImageContext | null;
   imageOutputFormat?: ImageOutputFormat;
+  imageFontFamily?: ImageFontFamily;
 };
 
 function isImage(mediaType?: string) { return String(mediaType || "").startsWith("image/"); }
@@ -260,6 +261,7 @@ export function HubShell({ profile, initialConversationId }: {
   const [sourceMode, setSourceMode] = useState<SourceMode>("automatico");
   const [imageContext, setImageContext] = useState<ImageContext | null>(null);
   const [imageOutputFormat, setImageOutputFormat] = useState<ImageOutputFormat>("png");
+  const [imageFontFamily, setImageFontFamily] = useState<ImageFontFamily>("auto");
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
   const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null);
   const [reportingMessage, setReportingMessage] = useState<Message | null>(null);
@@ -609,6 +611,7 @@ export function HubShell({ profile, initialConversationId }: {
     const isRetry = Boolean(options.retryMessageId);
     const turnImageContext = options.imageContext === undefined ? imageContext : options.imageContext;
     const turnImageOutputFormat = options.imageOutputFormat || imageOutputFormat;
+    const turnImageFontFamily = options.imageFontFamily || imageFontFamily;
     const initialTurnKey = activeId || NEW_CHAT_TURN_KEY;
     const files = isRetry ? [] : options.files ? [...options.files] : [...pendingFiles];
     if ((!text && !files.length && !turnImageContext) || turnProgressRef.current[initialTurnKey]) return;
@@ -629,7 +632,7 @@ export function HubShell({ profile, initialConversationId }: {
     let turnKey = initialTurnKey;
     let turnAccepted = false;
     if (!options.preserveComposer && !isRetry) {
-      setInput(""); setPendingFiles([]); setSourceMode("automatico"); setImageContext(null); setImageOutputFormat("png");
+      setInput(""); setPendingFiles([]); setSourceMode("automatico"); setImageContext(null); setImageOutputFormat("png"); setImageFontFamily("auto");
     }
     setError(null); setComposerMenuOpen(false);
     setTurnStage(turnKey, files.length ? "Preparando arquivos" : "Interpretando sua solicitação");
@@ -662,6 +665,7 @@ export function HubShell({ profile, initialConversationId }: {
           sourceMode: turnSourceMode,
           imageContext: turnImageContext || undefined,
           imageOutputFormat: turnImageOutputFormat,
+          imageFontFamily: turnImageFontFamily,
           retryMessageId: options.retryMessageId || undefined,
           clientRequestId: crypto.randomUUID() })
       });
@@ -839,6 +843,7 @@ export function HubShell({ profile, initialConversationId }: {
         logoAnchor: "bottom-right", logoWidthPercent: 12, logoMarginPercent: 4
       } : undefined });
     setSourceMode("imagem");
+    setImageFontFamily(artifact.validation?.fontFamilies?.[0] || "auto");
     setInput("");
     setTimeout(() => textareaRef.current?.focus(), 0);
   }
@@ -1069,6 +1074,12 @@ export function HubShell({ profile, initialConversationId }: {
             <option value="2">Compacta</option><option value="4">Padrão</option><option value="6">Ampla</option></select></label></>}
           <button type="button" onClick={() => setImageContext(null)} aria-label="Cancelar edição">×</button></div>}
         {(sourceMode === "imagem" || imageContext) && <div className="image-format-control">
+          <label>Fonte do texto<select value={imageFontFamily}
+            onChange={(event) => setImageFontFamily(event.target.value as ImageFontFamily)}>
+            <option value="auto">Automática</option><option value="montserrat">Montserrat · FID</option>
+            <option value="oswald">Oswald · impacto</option><option value="playfair">Playfair Display · editorial</option>
+            <option value="nexus-sans">Nexus Sans · neutra</option>
+          </select></label>
           <label>Formato da imagem<select value={imageOutputFormat}
             onChange={(event) => setImageOutputFormat(event.target.value as ImageOutputFormat)}>
             <option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option>

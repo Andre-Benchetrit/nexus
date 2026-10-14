@@ -5,7 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 const sharp = require('sharp');
 const { criarArtifactStorage } = require('../nexus/artifact_storage');
-const { comporProjetoImagem, normalizarSpecImagem } = require('../nexus/image_project');
+const { comporProjetoImagem, normalizarSpecImagem,
+  renderizarTexto } = require('../nexus/image_project');
 const { criarProviderImagemOpenAI, resolverTimeoutImagem } = require('../agentes/providers/openai_image');
 const { executarGerarImagem } = require('../tools/gerar_imagem');
 const { possuiMudancaLocalEfetiva, decidirRegeneracaoBase,
@@ -44,6 +45,30 @@ test('renderiza JPEG e WebP e preserva formas como camadas editáveis', async ()
     assert.equal((await sharp(resultado.buffer).metadata()).format, format);
     assert.equal(resultado.projeto.layers[0].type, 'shape');
   }
+});
+
+test('texto usa fonte incorporada e renderiza glifos diferentes em vez de quadradinhos', async () => {
+  const comum = { anchor: 'top-left', widthPercent: 60, fontSizePercent: 5,
+    color: '#123B66', align: 'left' };
+  const casa = renderizarTexto({ ...comum, text: 'Casa prática com ação' }, 1024, 1280);
+  const mesa = renderizarTexto({ ...comum, text: 'Mesa prática com ação' }, 1024, 1280);
+  assert.equal((await sharp(casa.buffer).metadata()).format, 'png');
+  assert.notDeepEqual(casa.buffer, mesa.buffer);
+});
+
+test('camadas de texto na mesma âncora são empilhadas sem sobreposição', async () => {
+  const base = await sharp({ create: { width: 1024, height: 1280, channels: 4,
+    background: '#f5f1ea' } }).png().toBuffer();
+  const resultado = await comporProjetoImagem({ baseBuffer: base, spec: spec({ preset: 'portrait',
+    textBlocks: [
+      { id: 'subheadline', text: 'Lava e Seca Philco 11 kg', anchor: 'bottom-left',
+        widthPercent: 62, fontSizePercent: 3.2, color: '#123B66', align: 'left' },
+      { id: 'cta', text: 'Sua rotina mais leve.', anchor: 'bottom-left',
+        widthPercent: 48, fontSizePercent: 2.6, color: '#D99A24', align: 'left' }
+    ] }) });
+  const [primeiro, segundo] = resultado.projeto.layers.filter((item) => item.type === 'text');
+  assert.ok(primeiro.position.y + primeiro.size.height < segundo.position.y);
+  assert.equal(resultado.validacao.textRenderer, 'embedded-font');
 });
 
 test('logo oficial é composta como camada local e não integra o prompt da imagem-base', async () => {
@@ -122,17 +147,31 @@ test('controles do Hub prevalecem sobre a proposta de composição do modelo', a
       mediaType: 'image/png' }],
     servicoImagens: { gerar: async (_conversation, _turn, entrada, opcoes) => {
       recebido = entrada; opcoesRecebidas = opcoes; return { id: 'new-artifact' };
-    } }, imageOutputFormat: 'webp'
+    } }, imageOutputFormat: 'webp', imageFontFamily: 'montserrat'
   });
   assert.equal(retorno.id, 'new-artifact');
   assert.equal(recebido.logo.anchor, 'top-left');
   assert.equal(recebido.logo.widthPercent, 18);
   assert.equal(recebido.logo.marginPercent, 6);
   assert.equal(recebido.format, 'webp');
+  assert.ok(recebido.textBlocks.every((item) => item.fontFamily === 'montserrat'));
   assert.equal(recebido.sourceArtifactId, '');
   assert.equal(opcoesRecebidas.imageContext.artifactId, 'artifact');
   assert.equal(opcoesRecebidas.referenceImages.length, 1);
   assert.equal(opcoesRecebidas.referenceImages[0].attachmentId, 'ref-1');
+});
+
+test('fonte escolhida no Hub prevalece sobre a proposta tipográfica do modelo', async () => {
+  let recebido;
+  await executarGerarImagem(spec({ textBlocks: [{ id: 'headline', text: 'Oferta',
+    anchor: 'top-left', widthPercent: 60, fontSizePercent: 5, fontFamily: 'playfair',
+    fontWeight: 700, treatment: 'shadow', color: '#ffffff', align: 'left' }] }), {
+    conversationId: 'conversation', turnoIA: { id: 'turn' }, imageFontFamily: 'oswald',
+    servicoImagens: { gerar: async (_conversation, _turn, entrada) => {
+      recebido = entrada; return { id: 'new-artifact' };
+    } }
+  });
+  assert.equal(recebido.textBlocks[0].fontFamily, 'oswald');
 });
 
 test('anexo visual não é confundido com artifactId de projeto', async () => {

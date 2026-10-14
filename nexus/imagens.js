@@ -19,7 +19,7 @@ function nomeArquivo(titulo, formato = 'png') {
 function promptComMarca(spec, brand, opcoes = {}) {
   const regras = [
     'Crie somente a imagem-base. Não desenhe logotipos, marcas d’água ou assinaturas.',
-    'Não inclua textos que não tenham sido explicitamente pedidos.',
+    'Não desenhe nenhum texto na imagem-base; todo texto solicitado será composto depois pelo Nexus.',
     'Preserve espaço visual seguro para as camadas que serão compostas depois pelo sistema.'
   ];
   if (spec.brandMode !== 'none' && brand) {

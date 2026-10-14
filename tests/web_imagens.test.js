@@ -92,6 +92,51 @@ test('automatico sempre oferece geracao de imagem para decisao semantica do agen
   assert.ok(ferramentas.includes('gerar_imagem'));
 });
 
+test('pedido visual explicito nao herda consulta corporativa apenas por dizer esse produto', async () => {
+  let consultasCorporativas = 0;
+  let imagensGeradas = 0;
+  const resultado = await executarAssistente(
+    'Vamos gerar uma imagem de mockup para esse produto em uma cozinha clean.', {
+      memoria: { ...memoriaFalsa(), pool: {} }, governanca: governancaFalsa(),
+      conversationId: 'conversation', sourceMode: 'automatico', imageGenerationMode: 'v1',
+      auditoriaIA: {
+        async iniciarTurno() { return { id: 'turn-visual', traceId: 'trace-visual', iniciadoEm: new Date() }; },
+        paraTelemetria() { return null; },
+        async listarMensagens() { return [
+          { role: 'user', content: 'Quais modelos de micro-ondas estão disponíveis no estoque?' },
+          { role: 'assistant', content: 'Há dois modelos disponíveis.', provenance: 'dados_nexus' }
+        ]; },
+        async registrarMensagem(_turno, mensagem) {
+          return { id: mensagem.papel === 'user' ? 'message-visual-user' : 'message-visual-assistant' };
+        },
+        async registrarEvento() {}, async registrarUsoServico() {}, async concluirTurno() { return null; }
+      },
+      executarAgenteCorporativo: async () => {
+        consultasCorporativas += 1;
+        throw new Error('consulta corporativa nao deveria ser executada');
+      },
+      servicoImagens: { async gerar() {
+        imagensGeradas += 1;
+        return { id: 'mockup-1', kind: 'image', provider: 'mock', model: 'mock-image',
+          bytes: 10, brandMode: 'none', validation: {} };
+      } },
+      generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools, toolChoice }) {
+        assert.equal(toolChoice, 'gerar_imagem');
+        const gerar = tools.find((item) => item.definicao.name === 'gerar_imagem');
+        await gerar.executar({ action: 'generate', title: 'Mockup de produto',
+          prompt: 'Produto sobre uma bancada em uma cozinha clean.', format: 'png',
+          preset: 'square', quality: 'medium', brandMode: 'none', regenerateBase: true,
+          replaceTextLayers: false, sourceArtifactId: '', referenceImageAliases: [],
+          logo: { enabled: false, anchor: 'bottom-right', widthPercent: 12,
+            marginPercent: 4, contrastTreatment: 'none' }, textBlocks: [], shapeBlocks: [] });
+        return { texto: 'Gerei o mockup solicitado.', provider: 'mock', modelo: 'mock' };
+      } }
+    });
+  assert.equal(consultasCorporativas, 0);
+  assert.equal(imagensGeradas, 1);
+  assert.equal(resultado.proveniencia, 'imagem');
+});
+
 test('anexo visual e geracao usam a mesma referencia no mesmo turno', async () => {
   const imagem = await sharp({ create: { width: 20, height: 20, channels: 3,
     background: '#ffffff' } }).png().toBuffer();
@@ -600,13 +645,49 @@ test('fallback web prefere trecho curto e nao despeja pagina bruta', () => {
   assert.match(texto, /não trouxeram evidência suficiente/i);
 });
 
-test('orcamento de busca limita medio a duas e extra-alto a tres', () => {
+test('orcamento de busca limita medio simples a duas e libera a terceira para cobertura composta', () => {
   const medio = criarOrcamentoPesquisa({ compositionLevel: 'medio', maximo: 3 });
   medio.consumir(); medio.consumir();
   assert.throws(() => medio.consumir(), (erro) => erro.codigo === 'WEB_BUDGET_EXCEEDED');
+  const composto = criarOrcamentoPesquisa({ compositionLevel: 'medio', maximo: 3 });
+  composto.consumir({ coverage: ['trecho inicial', 'conexao', 'trecho final'] });
+  composto.consumir();
+  const terceira = composto.consumir();
+  assert.deepEqual(terceira, { usadas: 3, restantes: 0, maximo: 3 });
   const extra = criarOrcamentoPesquisa({ compositionLevel: 'extra_alto', maximo: 3 });
   extra.consumir(); extra.consumir(); extra.consumir();
   assert.equal(extra.estado().usadas, 3);
+});
+
+test('pesquisa composta informa cobertura pendente e orçamento restante ao agente', async () => {
+  let controle;
+  await executarAssistente('Calcule uma rota completa com conexoes e custo total.', {
+    memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar(spec) { return {
+      status: 'complete', provider: 'tavily', profundidade: 'basic', creditos: 1,
+      atualizadoEm: new Date().toISOString(), fontes: [{ id: 'f1', titulo: 'Operador oficial',
+        url: 'https://transporte.example.gov.br/linha', dominio: 'transporte.example.gov.br',
+        trecho: 'Linha e tarifa do primeiro trecho.' }],
+      avaliacaoRelevancia: { evidenciaSuficiente: true },
+      planoPesquisa: { cobertura: spec.coverage }
+    }; } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools }) {
+      const pesquisar = tools.find((item) => item.definicao.name === 'pesquisar_web');
+      controle = JSON.parse(await pesquisar.executar({
+        query: 'transporte origem conexao destino tarifa', objective: 'Validar o trajeto completo',
+        coverage: ['origem ate conexao', 'conexao ate destino', 'tarifas e integracoes'],
+        sourceStrategy: 'oficiais', riskLevel: 'medio', minimumSources: 1,
+        preferredDomains: ['transporte.example.gov.br'], recency: null, searchDepth: 'basic'
+      })).controlePesquisa;
+      return { texto: 'O primeiro trecho custa o valor publicado ' +
+        '[Operador oficial](https://transporte.example.gov.br/linha).', provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.equal(controle.restantes, 2);
+  assert.equal(controle.coberturaValidadaAutomaticamente, false);
+  assert.deepEqual(controle.coberturaPlanejada,
+    ['origem ate conexao', 'conexao ate destino', 'tarifas e integracoes']);
+  assert.match(controle.instrucao, /cada item planejado/i);
 });
 
 test('imagem e reencodada sem metadados e com formato seguro', async () => {

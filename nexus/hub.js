@@ -490,7 +490,8 @@ function criarServicoHub(opcoes = {}) {
       rootMessageId: resposta.root_message_id, userMessageId: resposta.user_message_id,
       originalTurnId: resposta.turn_id, attachmentIds,
       imageContext: resposta.metadata?.imageContext || null,
-      imageOutputFormat: resposta.metadata?.imageOutputFormat || 'png' };
+      imageOutputFormat: resposta.metadata?.imageOutputFormat || 'png',
+      imageFontFamily: resposta.metadata?.imageFontFamily || 'auto' };
   }
 
   async function selecionarVariante(conversationId, messageId) {

@@ -107,6 +107,22 @@ async function relatorioExecutivo(pool, opcoes = {}) {
 }
 
 async function relatorioTrace(pool, traceId) {
+  const referencia = String(traceId || '').trim().toLowerCase();
+  if (!/^[0-9a-f-]{8,36}$/.test(referencia)) {
+    throw new Error('Trace invalido. Informe ao menos os 8 primeiros caracteres hexadecimais.');
+  }
+  let traceResolvido = referencia;
+  if (referencia.length < 36) {
+    const candidatos = (await pool.query(`
+      SELECT trace_id::text AS trace_id
+      FROM nexus.ai_turns
+      WHERE trace_id::text LIKE $1
+      ORDER BY criado_em DESC
+      LIMIT 2
+    `, [`${referencia}%`])).rows;
+    if (candidatos.length > 1) throw new Error(`Prefixo de trace ambiguo: ${referencia}`);
+    if (candidatos.length === 1) traceResolvido = candidatos[0].trace_id;
+  }
   const turno = (await pool.query(`
     SELECT t.*, p.slug AS principal, d.slug AS setor, c.chave_sessao AS sessao
     FROM nexus.ai_turns t
@@ -114,7 +130,7 @@ async function relatorioTrace(pool, traceId) {
     LEFT JOIN nexus.departments d ON d.id=t.department_id
     LEFT JOIN nexus.conversations c ON c.id=t.conversation_id
     WHERE t.trace_id=$1
-  `, [traceId])).rows[0];
+  `, [traceResolvido])).rows[0];
   if (!turno) throw new Error(`Trace nao encontrado: ${traceId}`);
   const chamadas = (await pool.query(`
     SELECT id AS call_id, parent_call_id, fallback_from_call_id, 'llm' AS tipo, stage, purpose,
@@ -129,7 +145,7 @@ async function relatorioTrace(pool, traceId) {
       '{}'::jsonb, NULL, NULL, NULL, NULL, duracao_ms, erro_codigo, criada_em
     FROM nexus.tool_executions WHERE trace_id=$1
     ORDER BY criada_em, call_id
-  `, [traceId])).rows;
+  `, [traceResolvido])).rows;
   const eventos = (await pool.query(`
     SELECT tipo,recurso,resultado,metadados,call_id,criado_em
     FROM nexus.audit_events WHERE trace_id=$1
@@ -140,7 +156,7 @@ async function relatorioTrace(pool, traceId) {
          'document_retrieval_retry','document_retrieval_failure'
       )
     ORDER BY criado_em,id
-  `, [traceId])).rows;
+  `, [traceResolvido])).rows;
   const consumoServicos = (await pool.query(`
     SELECT call_id,provider,servico,modelo,metrica,quantidade,custo_usd,custo_brl,pricing_status,criado_em
     FROM nexus.usage_line_items WHERE turn_id=$1 AND tipo_chamada='service'

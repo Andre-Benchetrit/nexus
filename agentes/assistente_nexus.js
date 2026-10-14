@@ -80,7 +80,11 @@ busca, defina objetivo, cobertura necessaria, estrategia de fontes, nivel de ris
 fontes; envie esse plano na propria capability. Formule consultas curtas e eficazes, sem copiar mecanicamente
 a pergunta. Se faltarem elementos realmente indispensaveis para distinguir o fato solicitado, faca uma unica
 pergunta de esclarecimento. Se a evidencia deixar uma lacuna da cobertura, reformule uma vez especificamente
-para essa lacuna. No modo Automatico, pesquisar_web e uma capability de verificacao factual do agente, nao
+para essa lacuna. Em pedidos compostos ou com etapas dependentes, como um deslocamento de origem ate destino
+com conexoes, trate cada etapa solicitada como parte obrigatoria da cobertura. Encontrar fontes para apenas uma
+etapa nao conclui a tarefa: confronte as evidencias com todos os itens de cobertura e use as pesquisas restantes
+para as lacunas, com consultas separadas quando necessario. Um ponto de integracao, baldeacao ou transferencia
+nao deve ser tratado como destino final. No modo Automatico, pesquisar_web e uma capability de verificacao factual do agente, nao
 um mecanismo para transformar o Nexus em uma pagina de resultados. Use-a para fatos publicos que precisem
 ser confirmados; nao use para conversa comum nem para dados internos. Considere risco alto quando uma resposta
 puder orientar decisoes materiais sobre direitos, obrigacoes, conformidade, seguranca, saude ou dinheiro.
@@ -131,7 +135,10 @@ visual imediatamente anterior sao referencias autorizadas e serao entregues auto
 quando houver AUTHORIZED_IMAGE_CATALOG, resolva referencias como "imagem original", "primeira imagem" ou
 "arte anterior" semanticamente e informe em referenceImageAliases apenas os aliases realmente necessarios.
 Nao invente aliases, nao diga que nao consegue usar imagens catalogadas e nao solicite novo upload sem uma falha explicita. Uma operacao gera
-apenas uma imagem; variacoes sao novos pedidos.`;
+apenas uma imagem; variacoes sao novos pedidos. Para textos, use Montserrat em pecas com identidade FID.
+Em pecas sem marca, escolha Montserrat para comunicacao comercial moderna, Oswald para chamadas curtas de impacto,
+Playfair Display para linguagem editorial e Nexus Sans apenas para composicoes neutras. Evite texto cru sobre o produto:
+priorize espaco negativo, hierarquia entre titulo e apoio e treatment=shadow, dark-panel ou light-panel conforme o contraste.`;
 
 const INSTRUCOES_GRAFICOS = `Quando gerar_grafico estiver disponivel, use-o para pedidos de grafico,
 visualizacao de tendencia ou comparacao visual dos dados corporativos ja consultados. Essa capability
@@ -788,7 +795,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
         auditoria?.registrarMensagem(turno, { papel: 'user', conteudo: pergunta,
           metadados: {
             ...(dependencias.imageContext ? { imageContext: dependencias.imageContext } : {}),
-            ...(dependencias.imageOutputFormat ? { imageOutputFormat: dependencias.imageOutputFormat } : {})
+            ...(dependencias.imageOutputFormat ? { imageOutputFormat: dependencias.imageOutputFormat } : {}),
+            ...(dependencias.imageFontFamily ? { imageFontFamily: dependencias.imageFontFamily } : {})
           } }) || Promise.resolve()
     ]);
     const userMessageId = dependencias.existingUserMessageId || mensagemUsuarioRegistrada?.id || null;
@@ -850,6 +858,9 @@ async function executarAssistente(pergunta, dependencias = {}) {
       ultimaPergunta: ultimaPergunta?.content || ''
     });
     const modoFonte = resolverModoFonte(dependencias.sourceMode);
+    const pedidoVisualExplicito = modoFonte === 'imagem' ||
+      Boolean(dependencias.imageContext?.artifactId) ||
+      intencaoCriarImagem(pergunta) || continuacaoImagem;
     const instrucoesTurno = [instrucoesGeneralista, instrucoesDoModoFonte(modoFonte)]
       .filter(Boolean).join('\n\n');
     const modoArquivos = String(dependencias.filesMode || process.env.NEXUS_FILES_MODE || 'off').toLowerCase();
@@ -1009,7 +1020,7 @@ async function executarAssistente(pergunta, dependencias = {}) {
       pergunta, modoFonte, modoDatasets, referencia: referenciaGraficoAnterior
     });
     let selecaoProdutosAnterior = null;
-    if (modoDatasets === 'v1' && referenciaCoorteProdutos(pergunta) &&
+    if (!pedidoVisualExplicito && modoDatasets === 'v1' && referenciaCoorteProdutos(pergunta) &&
         dependencias.servicoDatasets?.lerLinhas) {
       const referenciaProdutos = referenciasDadosRecentes.find((item) => {
         if (item.tipo !== 'result_ref' || item.status !== 'ready') return false;
@@ -1051,6 +1062,14 @@ async function executarAssistente(pergunta, dependencias = {}) {
       ultimaPergunta: ultimaPergunta?.content || null,
       ultimaResposta: ultimaResposta?.content || null
     });
+    // Um pedido visual pode referenciar naturalmente "esse produto" depois de uma
+    // consulta corporativa. Essa anafora serve para compor a imagem, mas nao torna
+    // obrigatoria uma nova consulta ao Sysemp. Sinais corporativos presentes no
+    // pedido atual (SKU, estoque, venda etc.) continuam prevalecendo normalmente.
+    const politicaInferidaAplicavel = modoFonte === 'automatico' && pedidoVisualExplicito &&
+      politicaInferida.motivo === 'continuacao_corporativa'
+      ? { obrigatoria: false, motivo: 'pedido_visual_com_contexto_anterior' }
+      : politicaInferida;
     const contextoFonte = {
       ultimaProveniencia: ultimaResposta?.provenance || ultimaResposta?.proveniencia || null,
       ultimaPergunta: ultimaPergunta?.content || null,
@@ -1077,7 +1096,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
             ? { obrigatoria: true, motivo: 'consulta_corporativa_com_exportacao' }
           : ['exportar_resultado', 'enriquecer_resultado'].includes(fluxoDatasets.fluxo)
             ? { obrigatoria: false, motivo: 'exportacao_resultado_anterior' }
-            : possuiArquivoDocumento ? { obrigatoria: false, motivo: 'arquivo_anexado' } : politicaInferida;
+            : possuiArquivoDocumento ? { obrigatoria: false, motivo: 'arquivo_anexado' }
+              : politicaInferidaAplicavel;
     const decisaoWeb = modoFonte === 'web'
       ? classificarIntencaoPesquisa(`Pesquise na web: ${pergunta}`, contextoFonte)
       : ['geral', 'dados', 'documentacao', 'imagem'].includes(modoFonte)
@@ -1099,7 +1119,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
         ? 'documentacao'
       : politica.obrigatoria ? 'dados_nexus'
         : possuiArquivoDocumento ? 'arquivo'
-      : modoFonte === 'imagem' ? 'imagem' : intencaoWeb ? 'web' : 'conhecimento_geral';
+      : pedidoVisualExplicito ? 'imagem'
+        : modoFonte === 'imagem' ? 'imagem' : intencaoWeb ? 'web' : 'conhecimento_geral';
     await auditoria?.registrarEvento(turno, {
       tipo: 'source_policy_decision', recurso: classificacaoFonte, resultado: 'selected',
       metadados: {
@@ -1110,6 +1131,7 @@ async function executarAssistente(pergunta, dependencias = {}) {
         reason_code: politica.motivo === 'grafico_resultado_autorizado_anterior'
           ? politica.motivo
           : politica.obrigatoria ? politica.motivo
+            : politica.motivo === 'pedido_visual_com_contexto_anterior' ? politica.motivo
             : intencaoWeb ? 'pedido_ou_contexto_web' : 'general_chat'
       }
     });
@@ -1333,8 +1355,7 @@ async function executarAssistente(pergunta, dependencias = {}) {
     const modoArtefatos = String(dependencias.artifactsMode || process.env.NEXUS_ARTIFACTS_MODE || 'off').toLowerCase();
     const modoGeracaoImagem = String(dependencias.imageGenerationMode ||
       process.env.NEXUS_IMAGE_GENERATION_MODE || 'off').toLowerCase();
-    const precisaCatalogoImagens = modoFonte === 'imagem' || Boolean(dependencias.imageContext?.artifactId) ||
-      continuacaoImagem || intencaoCriarImagem(pergunta) ||
+    const precisaCatalogoImagens = pedidoVisualExplicito ||
       /\b(imagem|foto|arte|an[uú]ncio|banner|refer[eê]ncia visual)\b/iu.test(pergunta);
     const catalogoImagens = ['shadow', 'v1'].includes(modoGeracaoImagem) && precisaCatalogoImagens
       ? await catalogoImagensAutorizadas(dependencias) : [];
@@ -1788,6 +1809,7 @@ async function executarAssistente(pergunta, dependencias = {}) {
         }
         const retorno = await executarGerarImagem(argumentos, { ...dependencias, turnoIA: turno,
           imageOutputFormat: dependencias.imageOutputFormat, imageClassification,
+          imageFontFamily: dependencias.imageFontFamily,
           imageReferenceAttachments: referenciasImagem,
           onImageStage: (tipo) => estadoExecucao.checkpoint(tipo, {
             etapa: tipo === 'gerando_imagem' ? 'image_generation'
@@ -1859,10 +1881,7 @@ async function executarAssistente(pergunta, dependencias = {}) {
     const toolImagem = ['shadow', 'v1'].includes(modoGeracaoImagem) && pedidoImagem ? [{
       definicao: definicaoGerarImagem, terminal: true, executar: gerarImagem
     }] : [];
-    const imagemObrigatoria = toolImagem.length > 0 && (
-      modoFonte === 'imagem' || Boolean(dependencias.imageContext?.artifactId) ||
-      intencaoCriarImagem(pergunta) || continuacaoImagem
-    );
+    const imagemObrigatoria = toolImagem.length > 0 && pedidoVisualExplicito;
     await auditoria?.registrarEvento(turno, {
       tipo: 'tool_routing', recurso: 'gerar_imagem',
       resultado: toolImagem.length ? imagemObrigatoria ? 'forced' : 'available' : 'disabled',
@@ -1887,7 +1906,7 @@ async function executarAssistente(pergunta, dependencias = {}) {
     const requisitosWeb = {};
 
     async function pesquisarWeb(spec) {
-      orcamentoWeb.consumir();
+      const consumoOrcamento = orcamentoWeb.consumir({ coverage: spec.coverage });
       const contextoExecucao = await governanca?.iniciarTool('pesquisar_web', {
         query: spec.query, recency: spec.recency, searchDepth: spec.searchDepth
       }, {
@@ -1935,7 +1954,12 @@ async function executarAssistente(pergunta, dependencias = {}) {
         estadoExecucao.checkpoint('pesquisa_web_concluida', {
           etapa: 'web_search', fontes: resultadoWeb.fontes.length
         });
-        return resultadoWeb;
+        return { ...resultadoWeb, controlePesquisa: {
+          ...consumoOrcamento,
+          coberturaPlanejada: Array.isArray(spec.coverage) ? spec.coverage : [],
+          coberturaValidadaAutomaticamente: false,
+          instrucao: 'A quantidade de fontes nao comprova a cobertura. Antes de concluir, relacione a evidencia a cada item planejado e pesquise separadamente qualquer lacuna enquanto houver pesquisas restantes.'
+        } };
       } catch (erro) {
         await governanca?.concluirTool(contextoExecucao, { sucesso: false, duracaoMs: Date.now() - inicio, erro });
         estadoExecucao.checkpoint('pesquisa_web_falhou', { etapa: 'web_search', codigo: erro.codigo || erro.name });

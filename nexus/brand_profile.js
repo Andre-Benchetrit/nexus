@@ -3,8 +3,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const CORES_PADRAO = Object.freeze({
-  primaria: '#0b6b45', secundaria: '#153c2c', destaque: '#19e68c',
-  texto: '#ffffff', superficie: '#07100b'
+  primaria: '#1F2035', secundaria: '#343849', destaque: '#64B048',
+  texto: '#FFFFFF', superficie: '#293046'
 });
 
 function corSegura(valor, fallback) {
@@ -33,7 +33,7 @@ function criarBrandProfileProvider(opcoes = {}) {
     nome: String(configurado.nome || 'FID').slice(0, 100),
     versao: String(configurado.versao || '1').slice(0, 80),
     cores,
-    tipografia: String(configurado.tipografia || 'Arial').slice(0, 80),
+    tipografia: String(configurado.tipografia || 'Montserrat').slice(0, 80),
     logo: logo ? path.resolve(String(logo)) : null,
     logoMinWidthPercent: Math.min(30, Math.max(4, Number(configurado.logoMinWidthPercent || 8))),
     clearSpacePercent: Math.min(12, Math.max(1, Number(configurado.clearSpacePercent || 4)))

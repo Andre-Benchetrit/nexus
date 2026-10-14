@@ -32,8 +32,12 @@ const definicaoGerarImagem = Object.freeze({
           anchor: { type: 'string', enum: ['top-left','top-center','top-right','center-left','center','center-right','bottom-left','bottom-center','bottom-right'] },
           widthPercent: { type: 'number', minimum: 10, maximum: 90 },
           fontSizePercent: { type: 'number', minimum: 1, maximum: 12 },
+          fontFamily: { type: 'string', enum: ['montserrat','oswald','playfair','nexus-sans'] },
+          fontWeight: { type: 'integer', enum: [400,500,600,700,800] },
+          treatment: { type: 'string', enum: ['none','shadow','dark-panel','light-panel'] },
           color: { type: 'string' }, align: { type: 'string', enum: ['left','center','right'] } },
-        required: ['id','text','anchor','widthPercent','fontSizePercent','color','align'] } },
+        required: ['id','text','anchor','widthPercent','fontSizePercent','fontFamily','fontWeight',
+          'treatment','color','align'] } },
       shapeBlocks: { type: 'array', maxItems: 12, items: { type: 'object', additionalProperties: false,
         properties: { id: { type: 'string' }, shape: { type: 'string', enum: ['rectangle','ellipse'] },
           anchor: { type: 'string', enum: ['top-left','top-center','top-right','center-left','center','center-right','bottom-left','bottom-center','bottom-right'] },
@@ -59,6 +63,10 @@ async function executarGerarImagem(argumentos, dependencias = {}) {
     // servico recebe o artifactId autorizado separadamente em imageContext.
     sourceArtifactId: '',
     ...(dependencias.imageOutputFormat ? { format: dependencias.imageOutputFormat } : {}),
+    textBlocks: (Array.isArray(argumentos.textBlocks) ? argumentos.textBlocks : []).map((item) => ({ ...item,
+      ...(dependencias.imageFontFamily && dependencias.imageFontFamily !== 'auto'
+        ? { fontFamily: dependencias.imageFontFamily } : {})
+    })),
     logo: { ...argumentos.logo,
     ...(patch.logoAnchor ? { anchor: patch.logoAnchor } : {}),
     ...(patch.logoWidthPercent ? { widthPercent: patch.logoWidthPercent } : {}),

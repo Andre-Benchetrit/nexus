@@ -56,7 +56,7 @@ export type Artifact = { id: string; format: "xlsx" | "docx" | "pdf" | "png" | "
   version?: number; brandMode?: "none" | "visual_identity" | "full_brand"; draft?: boolean; chart?: boolean;
   validation?: { width?: number; height?: number; layers?: number; brandCompliant?: boolean;
     hasLogo?: boolean; hasText?: boolean; series?: number; categories?: number;
-    deterministic?: boolean; metric?: string; source?: string } };
+    deterministic?: boolean; metric?: string; source?: string; fontFamilies?: ImageFontFamily[] } };
 export type KnowledgeSource = { kind: "knowledge-source"; documentId: string; title: string;
   version: number; format?: string | null; size?: number | null; url: string };
 export type CompositionLevel = "baixo" | "medio" | "alto" | "extra_alto";
@@ -65,6 +65,7 @@ export type ImageContext = { artifactId: string; action: "edit" | "variation"; c
   logoAnchor?: string; logoWidthPercent?: number; logoMarginPercent?: number;
 }; hasLogo?: boolean };
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
+export type ImageFontFamily = "auto" | "montserrat" | "oswald" | "playfair" | "nexus-sans";
 export type MemoryOffer = { id: string; statement: string; expiresAt?: string };
 export type TurnRequest = {
   id: string; traceId: string; turnId?: string | null;
