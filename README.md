@@ -130,6 +130,7 @@ As variáveis completas e seus valores de exemplo ficam em [.env.example](.env.e
 | Imagens geradas | `NEXUS_IMAGE_GENERATION_MODE`, `NEXUS_IMAGE_GENERATION_PROVIDER`, `NEXUS_IMAGE_GENERATION_MODEL`, `NEXUS_IMAGE_EDIT_MODEL`, `NEXUS_BRAND_PROFILE_JSON`, `NEXUS_BRAND_LOGO` |
 | Arquivos, conjuntos e artefatos | `NEXUS_FILES_MODE`, `NEXUS_FILES_ROOT`, `NEXUS_ATTACHMENT_INTELLIGENCE_MODE`, `NEXUS_ATTACHMENT_EVIDENCE_MAX_BYTES`, `NEXUS_DATASETS_MODE`, `NEXUS_DATASETS_ROOT`, `NEXUS_ARTIFACTS_MODE`, `NEXUS_ARTIFACTS_ROOT`, `NEXUS_ARTIFACT_BRAND_JSON` |
 | Base de conhecimento | `NEXUS_KNOWLEDGE_MODE`, `NEXUS_KNOWLEDGE_ROOT`, `NEXUS_KNOWLEDGE_EMBEDDING_MODE`, `NEXUS_KNOWLEDGE_VISION_MODEL` |
+| MCP governado | `NEXUS_MCP_MODE`, `NEXUS_MCP_SERVERS_JSON`, `NEXUS_MCP_LAB_TOKEN`, `NEXUS_MCP_*_TIMEOUT_MS` |
 | Hub | `AUTH_SECRET`, `NEXUS_HUB_*`, `NEXUS_API_INTERNAL_URL` |
 
 Para o piloto, o Hub opera com `NEXUS_AUTHZ_MODE=enforce`. O CLI pode permanecer em `audit` enquanto a governança é calibrada.
@@ -176,6 +177,10 @@ npm run nexus:knowledge:import-local -- "C:\caminho\para\PROCEDIMENTOS"
 # Qualidade do Hub
 npm run nexus:hub:build
 npm test
+
+# Laboratorio MCP local (requer NEXUS_MCP_LAB_TOKEN)
+npm run nexus:mcp:lab
+npm run nexus:mcp:check
 ```
 
 ## Documentação
@@ -192,6 +197,7 @@ npm test
 - [Gold e definições de negócio](docs/GOLD.md)
 - [Automação do lake](docs/AUTOMACAO.md)
 - [Produção no Railway](docs/PRODUCAO_RAILWAY.md)
+- [Fundação MCP governada](docs/MCP.md)
 - [OneDrive como fonte corporativa](docs/ONEDRIVE.md)
 - [Roadmap](docs/ROADMAP.md)
 

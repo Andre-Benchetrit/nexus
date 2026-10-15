@@ -226,6 +226,58 @@ function formatarRespostaCorporativaDeterministica(resultadosTools = []) {
     || null;
 }
 
+function extrairAtualizacoesCorporativas(resultadosTools = []) {
+  const atualizacoes = [];
+  const coletar = (valor, ferramenta) => {
+    if (Array.isArray(valor)) {
+      valor.forEach((item) => coletar(item, ferramenta));
+      return;
+    }
+    if (valor && typeof valor === 'object') {
+      for (const [chave, item] of Object.entries(valor)) {
+        if (/^(?:atualizado_em|ultimaConstrucao|estoque_atualizado_em|processado_em|extraido_em)$/.test(chave)) {
+          coletar(item, ferramenta);
+        } else if (['cobertura', 'cobertura_fontes', 'fontes'].includes(chave)) {
+          coletar(item, ferramenta);
+        }
+      }
+      return;
+    }
+    if (valor && !Number.isNaN(new Date(valor).getTime())) {
+      atualizacoes.push({ ferramenta, instante: valor });
+    }
+  };
+  for (const item of resultadosTools) {
+    const resultado = item?.resultado;
+    if (!resultado || typeof resultado !== 'object') continue;
+    coletar(resultado, item.nome);
+  }
+  return atualizacoes;
+}
+
+function adicionarRodapeAtualizacao(texto, resultadosTools = []) {
+  const resposta = String(texto || '').trim();
+  const atualizacoes = extrairAtualizacoesCorporativas(resultadosTools);
+  if (!resposta || !atualizacoes.length) return resposta;
+  const instantes = [...new Set(atualizacoes.map((item) => (
+    new Date(item.instante).toISOString()
+  )))].sort();
+  const formatados = instantes.map((instante) => formatarInstanteParaUsuario(instante));
+  const snapshotAntigo = resultadosTools.some((item) => (
+    item?.resultado?.cobertura_fontes?.possivelmente_desatualizado === true
+  ));
+  const jaTemAtualizacoes = formatados.every((instante) => resposta.includes(instante));
+  const jaTemRessalva = /snapshot possivelmente desatualizado/i.test(resposta);
+  if (jaTemAtualizacoes && (!snapshotAntigo || jaTemRessalva)) return resposta;
+  const rodape = formatados.length === 1
+    ? `Fonte: Dados do Sysemp, atualizados em ${formatados[0]}.`
+    : `Fontes do Sysemp atualizadas em horários diferentes, de ${formatados[0]} a ${formatados.at(-1)}.`;
+  const ressalva = snapshotAntigo
+    ? '\nAtenção: este resultado vem de um snapshot possivelmente desatualizado e pode não incluir alterações posteriores.'
+    : '';
+  return `${resposta}${jaTemAtualizacoes ? '' : `\n\n${rodape}`}${ressalva}`;
+}
+
 function corrigirAlegacaoAusenciaDocumental(texto, resultadosTools = []) {
   const consultouDocumentacao = resultadosTools.some((item) =>
     item.nome === 'consultar_documentacao');
@@ -275,7 +327,7 @@ function aplicarGarantiasResposta(texto, resultadosTools = []) {
   ) {
     resposta += `\n\nNotas fiscais de entrada: ${notas.join(', ')}.`;
   }
-  return resposta;
+  return adicionarRodapeAtualizacao(resposta, resultadosTools);
 }
 
 function normalizarResultadoTool(resultado) {
@@ -321,7 +373,8 @@ function possuiSinalParcial(valor) {
   if (Array.isArray(valor)) return valor.some(possuiSinalParcial);
   if (
     valor.resultado_truncado === true || valor.truncado === true ||
-    valor.dados_parciais === true || valor.status_conflitante === true
+    valor.dados_parciais === true || valor.status_conflitante === true ||
+    valor.possivelmente_desatualizado === true
   ) return true;
   return Object.values(valor).some(possuiSinalParcial);
 }
@@ -493,8 +546,10 @@ function validarSinteseCorporativa(texto, envelope) {
   }
   const integridadeComprovada = (manifesto.valoresPorCampo?.comprova_integridade_da_carga || [])
     .includes('true');
-  if (usaInteligenciaProduto && !integridadeComprovada &&
-      /(?:cobertura|carga|dados|periodo)\s+(?:esta\s+|estao\s+|e\s+|sao\s+)?complet[oa]s?|sem (?:qualquer )?(?:indicacao|sinal) de (?:periodo )?parcial/.test(textoNormalizado)) {
+  const integridadeNegada = (manifesto.valoresPorCampo?.comprova_integridade_da_carga || [])
+    .includes('false');
+  if (!integridadeComprovada && (usaInteligenciaProduto || integridadeNegada) &&
+      /(?:cobertura|carga|dados|periodo|lista|resultado)\s+(?:esta\s+|estao\s+|e\s+|sao\s+)?complet[oa]s?|\b(?:lista completa|todos os registros|nao houve mudanca|sao somente|existem somente|sem (?:qualquer )?(?:indicacao|sinal) de (?:periodo )?parcial)\b/.test(textoNormalizado)) {
     motivos.push('integridade_carga_nao_comprovada');
   }
   if (['complete', 'partial', 'empty'].includes(status) && textoIndicaIndisponibilidade(texto)) {
@@ -542,6 +597,7 @@ function validarSinteseCorporativa(texto, envelope) {
 }
 
 module.exports = {
+  adicionarRodapeAtualizacao,
   aplicarGarantiasResposta,
   avaliarSustentacaoFactual,
   classificarEvidencia,
@@ -549,6 +605,7 @@ module.exports = {
   criarManifestoFactual,
   corrigirAlegacaoAusenciaDocumental,
   extrairIdentificadoresNegocio,
+  extrairAtualizacoesCorporativas,
   formatarDatasResposta,
   formatarEvolucaoProdutos,
   formatarPainelFocado,

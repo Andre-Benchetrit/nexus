@@ -43,6 +43,17 @@ function intencaoCatalogoDocumental(pergunta) {
   return { operacao: 'listar', tipo };
 }
 
+function solicitaReconferenciaDeColecao(pergunta) {
+  const texto = normalizarTexto(pergunta);
+  if (!texto) return false;
+  const repeticao = /\b(?:novamente|de novo|outra vez|refa(?:ca|zer)|reconte|recontar|reverifique|revalidar)\b/.test(texto);
+  const contestacaoForte = /\b(?:faltaram|faltou (?:um|uma|algum|alguma) (?:pedido|registro|item)|nao (?:veio|vieram|trouxe|listou|mostrou) (?:tudo|todos|todas)|eu contei|contei \d+|reconte|recontar)\b/.test(texto);
+  const contestacao = /\b(?:faltou|faltando|resultado (?:esta|parece) errado|divergencia|deveria(?:m)? (?:ser|ter|vir))\b/.test(texto);
+  const alvoColecao = /\b(?:lista|listagem|resultado|resultados|pedidos|registros|quantidade|total|todos|todas|bloqueios)\b/.test(texto);
+  const acaoConferencia = /\b(?:verifique|confira|consulte|conte|valide|revise|compare)\b/.test(texto);
+  return contestacaoForte || (alvoColecao && (contestacao || (repeticao && acaoConferencia)));
+}
+
 function consultaDocumentalContextual(pergunta, contexto = {}) {
   const atual = String(pergunta || '').trim();
   if (!atual || atual.length > 1000) return null;
@@ -74,16 +85,29 @@ function consultaDocumentalAncorada(pergunta) {
 
 function aplicarPoliticaArgumentos(nome, argumentos, contexto = {}) {
   const normalizados = { ...(argumentos || {}) };
+  const pergunta = contexto.perguntaAtual || contexto.pergunta ||
+    contexto.decisao?.perguntaAutonoma || '';
   if (/^(consultar|agregar)_(gold|silver|bronze)$/.test(nome)) {
     if (normalizados.combinacao_filtros === 'e') normalizados.combinacao_filtros = 'todos';
     if (normalizados.combinacao_filtros === 'ou') normalizados.combinacao_filtros = 'qualquer';
-    const pergunta = contexto.perguntaAtual || contexto.pergunta ||
-      contexto.decisao?.perguntaAutonoma || '';
     if (normalizados.visao === 'historico' && !solicitaHistoricoTecnico(pergunta, contexto)) {
       normalizados.visao = 'atual';
     }
   }
   if (
+    nome === 'consultar_bloqueios_sem_estoque' &&
+    solicitaReconferenciaDeColecao(pergunta)
+  ) {
+    // Uma lista anterior e apenas evidencia historica, nao o universo da nova
+    // conferencia. Limpar os identificadores permite descobrir entradas que
+    // chegaram depois do snapshot ou que faltaram na resposta anterior.
+    normalizados.operacao = 'listar';
+    normalizados.marketplace_pedido = null;
+    normalizados.marketplace_pedidos = null;
+    normalizados.id_nota_saida = null;
+    normalizados.ids_notas_saida = null;
+    normalizados.limite = 50;
+  } else if (
     nome === 'consultar_bloqueios_sem_estoque' &&
     contexto.decisao?.intencao === 'enriquecer'
   ) {
@@ -194,5 +218,5 @@ function validarPoliticaExecucao(nome, contexto = {}) {
 
 module.exports = { aplicarPoliticaArgumentos, consultaDocumentalAncorada,
   consultaDocumentalContextual, continuacaoDocumental, intencaoCatalogoDocumental, novaBuscaDocumental,
-  solicitaEnderecoDocumental, solicitaHistoricoTecnico,
+  solicitaEnderecoDocumental, solicitaHistoricoTecnico, solicitaReconferenciaDeColecao,
   validarPoliticaExecucao };

@@ -7,7 +7,10 @@ export const runtime = "nodejs";
 
 async function forward(request: Request, context: RouteContext) {
   const session = await auth();
-  if (!session?.nexus) return Response.json({ error: { code: "NAO_AUTENTICADO" } }, { status: 401 });
+  if (!session?.nexus) return Response.json({ error: {
+    code: "NAO_AUTENTICADO",
+    message: "Você precisa entrar novamente no Nexus para continuar. A mensagem ficou no campo de digitação."
+  } }, { status: 401 });
   const { path } = await context.params;
   const incoming = new URL(request.url);
   const target = new URL(`/v1/${path.join("/")}`, process.env.NEXUS_API_INTERNAL_URL);

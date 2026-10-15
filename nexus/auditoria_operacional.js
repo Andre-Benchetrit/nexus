@@ -44,6 +44,7 @@ const CATALOGO_AUDITORIA = Object.freeze({
     editar_imagem: ['Editar imagem', 'Cria uma nova versão de uma imagem existente.'],
     solicitar_revisao_memoria: ['Propor aprendizado', 'Encaminha um possível aprendizado para revisão governada; não o aprova automaticamente.'],
     semantic_router: ['Identificar a intenção', 'Escolhe as capacidades adequadas para a pergunta.'],
+    mcp_consultar_item_laboratorio: ['Teste de conector MCP', 'Consulta o catálogo estático do laboratório administrativo.'],
     ia_conversar: ['Responder no chat', 'Autoriza o uso do assistente na conversa.']
   }),
   modes: Object.freeze({

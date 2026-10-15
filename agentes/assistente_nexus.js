@@ -1881,6 +1881,20 @@ async function executarAssistente(pergunta, dependencias = {}) {
     const toolImagem = ['shadow', 'v1'].includes(modoGeracaoImagem) && pedidoImagem ? [{
       definicao: definicaoGerarImagem, terminal: true, executar: gerarImagem
     }] : [];
+    // Apenas bindings explicitamente homologados para `assistant` podem entrar
+    // no catálogo do modelo. O laboratório usa `admin_lab` e, portanto, nunca
+    // aparece aqui. Modos de fonte explícitos permanecem isolados.
+    const toolsMcpAssistente = modoFonte === 'automatico' && dependencias.mcpManager
+      ? await dependencias.mcpManager.criarFerramentasAssistente({
+        governanca,
+        principalId: dependencias.principalId,
+        conversationId: dependencias.conversationId,
+        turnId: turno.id,
+        traceId: turno.traceId,
+        parentCallId: telemetria?.ultimoCallId || null,
+        stage: 'generalist_response',
+        purpose: 'external_read'
+      }) : [];
     const imagemObrigatoria = toolImagem.length > 0 && pedidoVisualExplicito;
     await auditoria?.registrarEvento(turno, {
       tipo: 'tool_routing', recurso: 'gerar_imagem',
@@ -2373,7 +2387,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
           }]),
           instrucoes: `${instrucoesTurno}\n${INSTRUCOES_ARQUIVOS}\n${INSTRUCOES_IMAGENS}\n${INSTRUCOES_GRAFICOS}\n${INSTRUCOES_RESULT_REF}`,
           tools: [...toolsRevisaoSeguras, ...toolsValidacaoPoliticas, ...toolsArquivos,
-            ...toolGeracao, ...toolGrafico, ...toolResultado, ...toolImagem],
+            ...toolGeracao, ...toolGrafico, ...toolResultado, ...toolImagem,
+            ...toolsMcpAssistente],
           toolChoice: graficoObrigatorio ? 'gerar_grafico' : imagemObrigatoria ? 'gerar_imagem' : null,
           maxRodadas: 2,
           telemetria,
@@ -2422,7 +2437,7 @@ async function executarAssistente(pergunta, dependencias = {}) {
         tools: resultadosWeb.length ? []
           : [...toolsRevisaoSeguras, ...toolsWeb, ...toolsDocumentacaoContextual,
             ...toolsValidacaoPoliticas, ...toolsArquivos, ...toolGeracao, ...toolGrafico,
-            ...toolResultado, ...toolImagem],
+            ...toolResultado, ...toolImagem, ...toolsMcpAssistente],
         toolChoice: !resultadosWeb.length && graficoObrigatorio ? 'gerar_grafico'
           : transformacaoResultadoObrigatoria && !resultadosWeb.length ? 'consultar_resultado_nexus'
           : imagemObrigatoria && !resultadosWeb.length ? 'gerar_imagem' : null,

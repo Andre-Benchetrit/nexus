@@ -77,6 +77,22 @@ type PilotReportDetail = PilotReportItem & {
   }> };
   trace?: { turn?: Record<string, any>; stages?: Array<Record<string, any>> } | null;
 };
+type McpToolBinding = {
+  id: string; remote_tool_name: string; nexus_tool_name: string;
+  capability_code: string; permission_code: string; description: string;
+  effect: "read"; exposure: "admin_lab" | "assistant"; enabled: boolean;
+  status: string; input_schema_hash: string; output_schema_hash?: string | null;
+  observed_input_schema_hash?: string | null; observed_output_schema_hash?: string | null;
+  timeout_ms: number; max_result_bytes: number; observed_at?: string | null;
+};
+type McpServer = {
+  id: string; server_key: string; nome: string; descricao?: string | null;
+  transport: string; network_scope: string; enabled: boolean; status: string;
+  manifest_version: string; observed_server_name?: string | null;
+  observed_server_version?: string | null; observed_protocol_version?: string | null;
+  last_error_code?: string | null; last_checked_at?: string | null;
+  tools: McpToolBinding[];
+};
 
 function parseKnowledgeSteps(value: FormDataEntryValue | null) {
   const paragraphs = String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -107,17 +123,21 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   const canAudit = profile.permissoes.includes("auditoria.consultar") || profile.setores.some((setor) =>
     setor.permissoes?.includes("auditoria.consultar.setor"));
   const canPilot = profile.permissoes.includes("piloto.problemas.administrar");
+  const canMcp = profile.permissoes.includes("mcp.administrar");
   const canCost = profile.permissoes.some((item) => item.startsWith("custos.consultar"));
   const canMemory = profile.permissoes.some((item) =>
     item === "memoria.auditar" || item.startsWith("memoria.revisar") || item === "memoria.administrar");
   const canKnowledge = profile.permissoes.some((item) => item.startsWith("documentacao."));
   const canGlobalKnowledge = profile.permissoes.includes("documentacao.administrar.global");
-  const [tab, setTab] = useState(canCost ? "overview" : canAudit ? "audit" : "people");
+  const [tab, setTab] = useState(canCost ? "overview" : canAudit ? "audit" : canMcp ? "mcp" : "people");
   const [usage, setUsage] = useState<Usage | null>(null);
   const [people, setPeople] = useState<Principal[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [lake, setLake] = useState<Record<string, any> | null>(null);
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  const [mcpLabCode, setMcpLabCode] = useState("LAB-001");
+  const [mcpLabResult, setMcpLabResult] = useState<Record<string, any> | null>(null);
   const [memoryCandidates, setMemoryCandidates] = useState<MemoryCandidate[]>([]);
   const [knowledge, setKnowledge] = useState<KnowledgeDocument[]>([]);
   const [knowledgeEdit, setKnowledgeEdit] = useState<KnowledgeEdit | null>(null);
@@ -153,8 +173,9 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
     canKnowledge && ["knowledge", "Base de conhecimento"],
     canPilot && ["pilot", "Problemas do piloto"],
     canAudit && ["audit", "Auditoria"],
+    canMcp && ["mcp", "Conectores MCP"],
     isAdmin && ["lake", "Lake"]
-  ].filter(Boolean) as string[][], [canCost, isAdmin, canAudit, canMemory, canKnowledge, canPilot]);
+  ].filter(Boolean) as string[][], [canCost, isAdmin, canAudit, canMemory, canKnowledge, canPilot, canMcp]);
 
   async function load() {
     const sequence = ++loadSequence.current;
@@ -185,6 +206,7 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
         setKnowledge(documentos);
         if (setores) setDepartments(setores.filter((item) => item.ativo !== false));
       }
+      if (tab === "mcp") setMcpServers(await nexusFetch<McpServer[]>("admin/mcp/servers"));
       if (tab === "lake") setLake(await nexusFetch("admin/lake"));
     } catch (cause) {
       if (sequence === loadSequence.current) {
@@ -686,6 +708,69 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
 
       {tab === "audit" && <AuditPanel />}
       {tab === "pilot" && <PilotReportsPanel />}
+      {tab === "mcp" && <section className="mcp-admin">
+        <div className="section-heading"><div><h2>Conectores MCP</h2>
+          <p>Catálogo governado. Endpoints, tools e permissões vêm da allowlist versionada.</p></div></div>
+        {!mcpServers.length && !loading && <div className="glass-panel empty-admin">
+          Nenhum servidor do manifesto está configurado neste ambiente.
+        </div>}
+        <div className="mcp-server-list">{mcpServers.map((server) => <article
+          className="glass-panel mcp-server-card" key={server.id}>
+          <header><div><h3>{server.nome}</h3><p>{server.descricao}</p></div>
+            <span className={`status-pill status-${server.status}`}>{server.status}</span></header>
+          <div className="mcp-facts">
+            <span><strong>Transporte</strong>{server.transport}</span>
+            <span><strong>Rede</strong>{server.network_scope}</span>
+            <span><strong>Protocolo</strong>{server.observed_protocol_version || "Não verificado"}</span>
+            <span><strong>Versão</strong>{server.observed_server_version || "Não verificada"}</span>
+            <span><strong>Última verificação</strong>{server.last_checked_at
+              ? new Date(server.last_checked_at).toLocaleString("pt-BR") : "Nunca"}</span>
+            <span><strong>Erro</strong>{server.last_error_code || "—"}</span>
+          </div>
+          <div className="button-row">
+            <button className="secondary-button" disabled={Boolean(pendingAction)}
+              onClick={() => runAction(`mcp-check-${server.id}`, async () => {
+                await nexusFetch(`admin/mcp/servers/${server.id}/check`, { method: "POST" });
+              })}>{pendingAction === `mcp-check-${server.id}` ? "Verificando…" : "Verificar"}</button>
+            <button className="secondary-button" disabled={Boolean(pendingAction)}
+              onClick={() => runAction(`mcp-server-${server.id}`, async () => {
+                await nexusFetch(`admin/mcp/servers/${server.id}`, {
+                  method: "PATCH", body: JSON.stringify({ enabled: !server.enabled })
+                });
+              })}>{server.enabled ? "Desabilitar servidor" : "Habilitar servidor"}</button>
+          </div>
+          <div className="mcp-tool-list">{server.tools.map((tool) => <div className="mcp-tool" key={tool.id}>
+            <div><strong>{tool.nexus_tool_name}</strong><small>{tool.description}</small>
+              <small>{tool.permission_code} · {tool.exposure} · {tool.status}</small>
+              <code title={`Entrada aprovada: ${tool.input_schema_hash}\nEntrada observada: ${tool.observed_input_schema_hash || "—"}\nSaída aprovada: ${tool.output_schema_hash || "—"}\nSaída observada: ${tool.observed_output_schema_hash || "—"}`}>
+                entrada {tool.input_schema_hash.slice(0, 12)}… · saída {tool.output_schema_hash?.slice(0, 12) || "—"}…
+              </code></div>
+            <button className="secondary-button" disabled={Boolean(pendingAction) ||
+              (!tool.enabled && tool.status !== "approved")}
+              onClick={() => runAction(`mcp-tool-${tool.id}`, async () => {
+                await nexusFetch(`admin/mcp/servers/${server.id}/tools/${encodeURIComponent(tool.remote_tool_name)}`, {
+                  method: "PATCH", body: JSON.stringify({ enabled: !tool.enabled })
+                });
+              })}>{tool.enabled ? "Desabilitar" : "Habilitar"}</button>
+          </div>)}</div>
+        </article>)}</div>
+        <article className="glass-panel mcp-lab-panel"><div><h3>Laboratório MCP</h3>
+          <p>Consulta determinística, sem banco, arquivos ou internet. O teste percorre autorização e auditoria reais.</p></div>
+          <div className="inline-form"><label>Código<select value={mcpLabCode}
+            onChange={(event) => setMcpLabCode(event.target.value)}>
+            <option>LAB-001</option><option>LAB-002</option><option>LAB-003</option>
+          </select></label><button className="primary-button" disabled={Boolean(pendingAction) ||
+            !mcpServers.some((server) => server.server_key === "laboratorio" && server.enabled &&
+              server.tools.some((tool) => tool.enabled && tool.status === "approved"))}
+            onClick={() => runAction("mcp-lab", async () => {
+              const result = await nexusFetch<Record<string, any>>("admin/mcp/lab/run", {
+                method: "POST", body: JSON.stringify({ codigo: mcpLabCode })
+              });
+              setMcpLabResult(result);
+            })}>{pendingAction === "mcp-lab" ? "Executando…" : "Executar teste"}</button></div>
+          {mcpLabResult && <pre className="mcp-lab-result">{JSON.stringify(mcpLabResult, null, 2)}</pre>}
+        </article>
+      </section>}
       {tab === "lake" && lake && <><div className="metric-grid">
         <Metric label="Estado" value={lake.health?.saudavel ? "Saudável" : "Indisponível"} />
         <Metric label="Bronze" value={lake.health?.camadas?.bronze || 0} />

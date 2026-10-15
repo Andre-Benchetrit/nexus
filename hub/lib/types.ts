@@ -74,6 +74,18 @@ export type TurnRequest = {
   errorCode?: string | null;
 };
 
+function isLoginRedirect(response: Response) {
+  if (!response.redirected) return false;
+  try { return new URL(response.url).pathname === "/login"; }
+  catch { return false; }
+}
+
+function assertNotLoginRedirect(response: Response) {
+  if (isLoginRedirect(response)) {
+    throw new Error("Você precisa entrar novamente no Nexus para continuar. A mensagem ficou no campo de digitação.");
+  }
+}
+
 export async function nexusFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers || {});
   if (init?.body != null && !(init.body instanceof FormData) && !headers.has("content-type")) {
@@ -84,6 +96,7 @@ export async function nexusFetch<T>(path: string, init?: RequestInit): Promise<T
     headers,
     cache: "no-store"
   });
+  assertNotLoginRedirect(response);
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
     throw new Error(body?.error?.message || "Não foi possível concluir a operação.");

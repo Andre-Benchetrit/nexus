@@ -9,7 +9,8 @@ export default async function AdminPage() {
   const allowed = auditAllowed || profile.permissoes.some((code) =>
     ["governanca.administrar", "custos.consultar.setor", "custos.consultar.global",
       "documentacao.criar.setor", "documentacao.editar.setor", "documentacao.publicar.setor",
-      "documentacao.administrar.global", "documentacao.auditar", "piloto.problemas.administrar"].includes(code)
+      "documentacao.administrar.global", "documentacao.auditar", "piloto.problemas.administrar",
+      "mcp.administrar"].includes(code)
   );
   if (!allowed) redirect("/");
   return <AdminDashboard profile={profile} />;

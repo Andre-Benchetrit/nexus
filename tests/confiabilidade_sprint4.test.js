@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  adicionarRodapeAtualizacao,
   classificarEvidencia,
   criarEnvelopeEvidencia,
   validarSinteseCorporativa
@@ -11,6 +12,7 @@ const { validarPlanoSugerido, obterCapacidade } = require('../agentes/capacidade
 const { extrairContextoTemporal } = require('../agentes/contexto_temporal');
 const {
   aplicarPoliticaArgumentos,
+  solicitaReconferenciaDeColecao,
   solicitaHistoricoTecnico,
   validarPoliticaExecucao
 } = require('../agentes/politicas_tools');
@@ -137,6 +139,52 @@ test('continuidade de bloqueios força enriquecimento em lote com referencias an
   );
   assert.equal(argumentos.operacao, 'listar_itens');
   assert.deepEqual(argumentos.marketplace_pedidos, ['PED-1', 'PED-2']);
+});
+
+test('reconferencia de bloqueios redescobre a colecao sem limitar pelos pedidos anteriores', () => {
+  assert.equal(solicitaReconferenciaDeColecao('Verifique novamente, eu contei 8 pedidos.'), true);
+  assert.equal(solicitaReconferenciaDeColecao('Verifique o pedido PED-1, ele deveria ter estoque.'), false);
+  const argumentos = aplicarPoliticaArgumentos(
+    'consultar_bloqueios_sem_estoque',
+    {
+      operacao: 'listar_itens', marketplace_pedido: 'PED-1',
+      marketplace_pedidos: ['PED-1', 'PED-2'], id_nota_saida: 10,
+      ids_notas_saida: [10, 11], limite: 4
+    },
+    {
+      perguntaAtual: 'Verifique novamente, eu contei 8 pedidos.',
+      decisao: { intencao: 'enriquecer' },
+      referenciasAnteriores: { marketplace_pedido: ['PED-1', 'PED-2'] }
+    }
+  );
+  assert.deepEqual(argumentos, {
+    operacao: 'listar', marketplace_pedido: null, marketplace_pedidos: null,
+    id_nota_saida: null, ids_notas_saida: null, limite: 50
+  });
+});
+
+test('respostas corporativas recebem data e horario reais da ultima atualizacao', () => {
+  const resposta = adicionarRodapeAtualizacao('Foram encontrados 7 pedidos.', [{
+    nome: 'consultar_bloqueios_sem_estoque',
+    resultado: { atualizado_em: '2026-10-15T05:35:17.956Z' }
+  }]);
+  assert.match(resposta, /Dados do Sysemp, atualizados em 15\/10\/2026 às 02:35/);
+  assert.equal((resposta.match(/15\/10\/2026 às 02:35/g) || []).length, 1);
+});
+
+test('sintese nao declara lista completa quando a fonte nao comprova integridade', () => {
+  const envelope = criarEnvelopeEvidencia([{
+    nome: 'consultar_bloqueios_sem_estoque',
+    resultado: {
+      dados: [{ marketplace_pedido: 'PED-1' }],
+      cobertura_fontes: { comprova_integridade_da_carga: false }
+    }
+  }]);
+  const validacao = validarSinteseCorporativa(
+    'A lista está completa e não houve mudança.', envelope
+  );
+  assert.equal(validacao.valida, false);
+  assert.ok(validacao.motivos.includes('integridade_carga_nao_comprovada'));
 });
 
 test('politica temporal preserva a faixa completa de meses na inteligencia de produto', () => {

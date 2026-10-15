@@ -104,6 +104,44 @@ function montarWhereResumo(filtros, citar) {
   };
 }
 
+function coberturaDoSnapshot(atualizadoEm, dependencias = {}) {
+  const agora = dependencias.agora instanceof Date
+    ? dependencias.agora
+    : new Date(dependencias.agora || Date.now());
+  const instante = new Date(atualizadoEm);
+  const limiteMinutosConfigurado = Number(
+    dependencias.maxAgeMinutes ?? process.env.NEXUS_BLOCKING_DATA_MAX_AGE_MINUTES ?? 180
+  );
+  const limiteMinutos = Number.isFinite(limiteMinutosConfigurado) && limiteMinutosConfigurado > 0
+    ? limiteMinutosConfigurado : 180;
+  const idadeMinutos = Number.isNaN(instante.getTime()) || Number.isNaN(agora.getTime())
+    ? null
+    : Math.max(0, Math.floor((agora.getTime() - instante.getTime()) / 60000));
+  const possivelmenteDesatualizado = idadeMinutos == null || idadeMinutos > limiteMinutos;
+  return {
+    conclusao: possivelmenteDesatualizado
+      ? 'snapshot_possivelmente_desatualizado'
+      : 'snapshot_observado',
+    comprova_integridade_da_carga: false,
+    consulta_em_tempo_real: false,
+    atualizado_em: atualizadoEm || null,
+    idade_minutos: idadeMinutos,
+    limite_recencia_minutos: limiteMinutos,
+    possivelmente_desatualizado: possivelmenteDesatualizado,
+    aviso: possivelmenteDesatualizado
+      ? 'O resultado reflete um snapshot antigo e pode nao conter alteracoes posteriores.'
+      : 'O resultado reflete o snapshot indicado e nao comprova, isoladamente, a integridade da carga.'
+  };
+}
+
+function comCobertura(resultado, atualizadoEm, dependencias) {
+  return {
+    ...resultado,
+    atualizado_em: atualizadoEm || null,
+    cobertura_fontes: coberturaDoSnapshot(atualizadoEm, dependencias)
+  };
+}
+
 async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
   validarObjeto(argumentos);
   if (!['resumir', 'listar', 'listar_itens', 'detalhar_pedido'].includes(argumentos.operacao)) {
@@ -142,7 +180,7 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
         })
       ]);
       const total = totais || {};
-      return {
+      return comCobertura({
         operacao: 'resumir',
         id_bloqueio: 58,
         descricao_bloqueio: 'PRODUTOS SEM ESTOQUE',
@@ -165,9 +203,8 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
           quantidade_unidades_bloqueadas: 'soma da quantidade pedida nas ocorrências'
         },
         regra_meli_coleta_ext:
-          'ignorado, exceto quando dt_limite_expedicao e hoje em America/Sao_Paulo',
-        atualizado_em: pedidos.ultimaConstrucao
-      };
+          'ignorado, exceto quando dt_limite_expedicao e hoje em America/Sao_Paulo'
+      }, pedidos.ultimaConstrucao, dependencias);
     }
 
     if (argumentos.operacao === 'listar') {
@@ -183,13 +220,12 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
         ordenacao: { campo: 'primeiro_bloqueio_em', direcao: 'desc' },
         limite
       });
-      return {
+      return comCobertura({
         operacao: 'listar',
         id_bloqueio: 58,
         quantidade_retornada: resultado.dados.length,
-        dados: resultado.dados,
-        atualizado_em: resultado.ultimaConstrucao
-      };
+        dados: resultado.dados
+      }, resultado.ultimaConstrucao, dependencias);
     }
 
     if (argumentos.operacao === 'listar_itens') {
@@ -240,7 +276,7 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
           await leitorSilver.fechar();
         }
       }
-      return {
+      return comCobertura({
         operacao: 'listar_itens',
         id_bloqueio: 58,
         quantidade_retornada: dados.length,
@@ -252,9 +288,8 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
           total + Number(linha.quantidade_pedida || 0), 0),
         dados,
         candidatos_produto_inferidos: candidatosProdutoInferidos,
-        possui_inferencia: candidatosProdutoInferidos.length > 0,
-        atualizado_em: resultado.ultimaConstrucao
-      };
+        possui_inferencia: candidatosProdutoInferidos.length > 0
+      }, resultado.ultimaConstrucao, dependencias);
     }
 
     if (!Object.keys(filtros).length) {
@@ -304,7 +339,7 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
         await leitorSilver.fechar();
       }
     }
-    return {
+    return comCobertura({
       operacao: 'detalhar_pedido',
       id_bloqueio: 58,
       encontrado: resultado.dados.length > 0,
@@ -313,9 +348,8 @@ async function obterBloqueiosSemEstoque(argumentos, dependencias = {}) {
         produto_inferido: false
       })),
       candidatos_produto_inferidos: candidatosInferidos,
-      possui_inferencia: candidatosInferidos.length > 0,
-      atualizado_em: resultado.ultimaConstrucao
-    };
+      possui_inferencia: candidatosInferidos.length > 0
+    }, resultado.ultimaConstrucao, dependencias);
   } finally {
     await leitorGold.fechar();
   }
@@ -328,6 +362,7 @@ async function executarConsultarBloqueiosSemEstoque(argumentos, dependencias = {
 module.exports = {
   definicaoConsultarBloqueiosSemEstoque,
   executarConsultarBloqueiosSemEstoque,
+  coberturaDoSnapshot,
   montarFiltros,
   obterBloqueiosSemEstoque
 };

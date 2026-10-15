@@ -171,6 +171,24 @@ A Sprint 11 esta implementada na branch de trabalho e deve ser considerada
 O editor visual de arrastar camadas e a edicao de objetos internos da imagem-base
 nao fazem parte da versao atual.
 
+### Fundacao MCP
+
+A Sprint 13 esta implementada e aguarda rollout controlado em `shadow` antes de
+`v1`:
+
+- cliente MCP independente de OpenAI, Anthropic e Gemini;
+- Streamable HTTP em producao e fixture stdio somente em desenvolvimento;
+- manifesto versionado com identidade, protocolo, schemas, hashes, capability e
+  permissao de cada binding;
+- painel administrativo **Conectores MCP** para verificar, habilitar,
+  desabilitar e executar o laboratorio;
+- validacao de argumentos e saidas, DLP, limites, timeout, cancelamento,
+  concorrencia, circuito e bloqueio de drift;
+- laboratorio deterministico sem acesso a banco, arquivos ou internet.
+
+O laboratorio e `admin_lab`: ele nao aparece nos chats. Ainda nao existem
+conectores Microsoft, automacoes ou actions externas. Consulte [MCP.md](MCP.md).
+
 ## Governanca e isolamento
 
 - login pelo Microsoft Entra;
@@ -242,6 +260,7 @@ realmente compartilhado.
 | Imagens geradas | `NEXUS_IMAGE_GENERATION_MODE` | `off`, `shadow`, `v1` |
 | Datasets temporarios | `NEXUS_DATASETS_MODE` | `off`, `shadow`, `v1` |
 | Knowledge | `NEXUS_KNOWLEDGE_MODE` | `off`, `shadow`, `v1` |
+| MCP | `NEXUS_MCP_MODE` | `off`, `shadow`, `v1` |
 | Lake | `NEXUS_LAKE_STORAGE` | `filesystem`, `s3` |
 
 Use [.env.example](../.env.example) como contrato de configuracao e nunca copie
@@ -254,5 +273,6 @@ o `.env` local inteiro para producao.
 - [Governanca](GOVERNANCA.md)
 - [Knowledge](CONHECIMENTO.md)
 - [Pesquisa web e imagens](WEB_E_IMAGENS.md)
+- [Fundacao MCP](MCP.md)
 - [Producao no Railway](PRODUCAO_RAILWAY.md)
 - [Comandos](COMANDOS.md)

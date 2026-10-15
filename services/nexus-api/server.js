@@ -24,6 +24,9 @@ const { criarServicoDatasets, processarFilaLimpezaDatasets } = require('../../ne
 const { criarKnowledgeStorage } = require('../../nexus/knowledge_storage');
 const { criarKnowledgeOneDrivePublisher } = require('../../nexus/knowledge_onedrive_publisher');
 const { criarServicoDocumentacao } = require('../../nexus/documentacao');
+const { criarServicoGovernanca } = require('../../nexus/governanca');
+const { criarServicoMcpAdmin } = require('../../nexus/mcp_admin');
+const { McpClientManager } = require('../../nexus/mcp_runtime');
 const { executarAssistente } = require('../../agentes/assistente_nexus');
 const {
   criarControladorDrenagem, instalarEncerramentoGracioso
@@ -140,9 +143,11 @@ async function criarServidor(opcoes = {}) {
   const app = Fastify({ logger, trustProxy: true,
     bodyLimit: Math.max(64 * 1024, maxUploadBytes + 64 * 1024) });
   const pool = opcoes.pool || criarPoolNexus();
+  const mcpManager = opcoes.mcpManager || new McpClientManager({ pool });
   const nexusDrain = opcoes.nexusDrain || criarControladorDrenagem();
   app.decorate('nexusDrain', nexusDrain);
   app.decorate('nexusPool', pool);
+  app.decorate('nexusMcpManager', mcpManager);
   const lakeStorage = opcoes.lakeStorage || criarLakeStorage();
   const attachmentStorage = opcoes.attachmentStorage || criarAttachmentStorage();
   const artifactStorage = opcoes.artifactStorage || criarArtifactStorage();
@@ -228,6 +233,15 @@ async function criarServidor(opcoes = {}) {
       principalId: request.ator.pid,
       principalSlug: request.ator.sub
     });
+  }
+
+  async function mcpAdmin(request) {
+    const governanca = criarServicoGovernanca({ pool, principalId: request.ator.pid,
+      principalSlug: request.ator.sub, modo: 'enforce', semConversa: true });
+    const decisao = await governanca.avaliar('mcp_administrar', null, 'mcp.administrar', 'integracao');
+    if (!decisao.permitida) throw new ErroHub('ACESSO_NEGADO', 'Acesso negado aos conectores MCP.', 403);
+    return criarServicoMcpAdmin({ pool,
+      ator: { principalId: request.ator.pid, principalSlug: request.ator.sub }, manager: mcpManager });
   }
 
   function anexos(request, departmentId = null, onStatus = null) {
@@ -558,6 +572,7 @@ async function criarServidor(opcoes = {}) {
         conversationId: inicio.conversation.id,
         departamentoId: inicio.conversation.department_id,
         poolNexus: pool,
+        mcpManager,
         memoryBackend: 'postgres',
         authzMode: 'enforce',
         interactionMode: 'v1',
@@ -784,6 +799,20 @@ async function criarServidor(opcoes = {}) {
     servico(request).atualizarReportePiloto(request.params.reportId, request.body || {}));
   app.delete('/v1/admin/pilot-reports/:reportId', async (request) =>
     servico(request).excluirReportePiloto(request.params.reportId));
+  app.get('/v1/admin/mcp/servers', async (request) =>
+    (await mcpAdmin(request)).listarServidores());
+  app.get('/v1/admin/mcp/servers/:serverId', async (request) =>
+    (await mcpAdmin(request)).obterServidor(request.params.serverId));
+  app.post('/v1/admin/mcp/servers/:serverId/check', async (request) =>
+    (await mcpAdmin(request)).verificarServidor(request.params.serverId));
+  app.patch('/v1/admin/mcp/servers/:serverId', async (request) =>
+    (await mcpAdmin(request)).alterarServidor(request.params.serverId, request.body || {}));
+  app.patch('/v1/admin/mcp/servers/:serverId/tools/:toolName', async (request) =>
+    (await mcpAdmin(request)).alterarBinding(
+      request.params.serverId, request.params.toolName, request.body || {}
+    ));
+  app.post('/v1/admin/mcp/lab/run', async (request) =>
+    (await mcpAdmin(request)).executarLaboratorio(request.body || {}));
   app.get('/v1/admin/memory-candidates', async (request) =>
     servico(request).listarCandidaturasMemoria(request.query || {}));
   app.post('/v1/admin/memory-candidates/:id/review', async (request) =>
@@ -810,6 +839,11 @@ async function criarServidor(opcoes = {}) {
     await pool.query(`UPDATE nexus.hub_turn_requests SET status='interrupted',
       erro_codigo='PROCESS_RESTART',concluido_em=now()
       WHERE status IN ('accepted','running') AND criado_em<now()-interval '30 minutes'`);
+    if (mcpManager.mode !== 'off') {
+      await mcpManager.syncManifest().catch((erro) => app.log.warn({
+        event: 'mcp_manifest_sync_failed', code: codigoErro(erro)
+      }, 'MCP catalog unavailable; API health is not affected'));
+    }
     agendador?.iniciar?.();
     timerLimpezaAnexos = setInterval(() => processarFilaLimpeza({ pool, storage: attachmentStorage })
       .catch((erro) => app.log.warn({ event: 'attachment_cleanup_error', code: codigoErro(erro) })), 5 * 60 * 1000);
@@ -828,6 +862,7 @@ async function criarServidor(opcoes = {}) {
     if (timerLimpezaAnexos) clearInterval(timerLimpezaAnexos);
     if (timerLimpezaArtefatos) clearInterval(timerLimpezaArtefatos);
     if (timerLimpezaDatasets) clearInterval(timerLimpezaDatasets);
+    await mcpManager.close();
     if (!opcoes.lakeStorage) await lakeStorage.fechar?.();
     if (!opcoes.pool) await pool.end();
   });

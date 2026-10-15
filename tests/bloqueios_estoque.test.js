@@ -20,8 +20,20 @@ const entidadeItemNota = require(
   '../exportadores/postgres/entidades/nota_saida_itens'
 );
 const {
+  coberturaDoSnapshot,
   obterBloqueiosSemEstoque
 } = require('../tools/consultar_bloqueios_sem_estoque');
+
+test('cobertura do bloqueio identifica snapshot antigo e preserva o horario da fonte', () => {
+  const cobertura = coberturaDoSnapshot('2026-10-15T05:35:17.956Z', {
+    agora: new Date('2026-10-15T12:53:00.000Z'),
+    maxAgeMinutes: 180
+  });
+  assert.equal(cobertura.atualizado_em, '2026-10-15T05:35:17.956Z');
+  assert.equal(cobertura.idade_minutos, 437);
+  assert.equal(cobertura.possivelmente_desatualizado, true);
+  assert.equal(cobertura.comprova_integridade_da_carga, false);
+});
 const {
   classificarProduto,
   DIAS_REPOSICAO_PROXIMA,

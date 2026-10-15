@@ -14,6 +14,7 @@ No ambiente `production`, mantenha os seguintes recursos:
 | `nexus-hub` | domínio público | `npm run start --workspace @nexus/hub` |
 | `nexus-api` | somente rede privada | `npm run nexus:api` |
 | `nexus-lake-worker` | cron, sem domínio | `npm run lake:worker` |
+| `nexus-mcp-lab` | somente rede privada | `npm run nexus:mcp:lab` |
 | PostgreSQL | somente rede privada | serviço gerenciado Railway |
 | `nexus-lake` | Bucket privado | credenciais S3 por referências |
 | `nexus-runtime` | Volume na API | anexos, Knowledge, datasets e artefatos |
@@ -177,6 +178,47 @@ NEXUS_BRAND_LOGO=/data/nexus-runtime/brand/logo.png
 Valide primeiro em `shadow`; somente depois altere para `v1`. A logo deve estar
 no Volume da API e nunca deve ser embutida no repositorio ou inventada pelo
 modelo.
+
+## Laboratorio MCP
+
+Aplique a migration `028_mcp_foundation.sql` antes de publicar a API da Sprint
+13. Crie um servico Railway separado usando
+`services/nexus-mcp-lab/Dockerfile`. Ele nao usa banco nem volume.
+
+Gere um segredo aleatorio de pelo menos 32 caracteres e configure o mesmo valor
+em `nexus-api` e `nexus-mcp-lab`:
+
+```env
+NEXUS_MCP_LAB_TOKEN=<segredo-aleatorio>
+```
+
+No servico do laboratorio:
+
+```env
+PORT=3010
+NEXUS_MCP_LAB_ALLOWED_HOSTS=nexus-mcp-lab.railway.internal
+```
+
+Na API:
+
+```env
+NEXUS_MCP_MODE=shadow
+NEXUS_MCP_SERVERS_JSON=[{"key":"laboratorio","url":"http://nexus-mcp-lab.railway.internal:3010/mcp","transport":"streamable_http","networkScope":"railway_private"}]
+NEXUS_MCP_CONNECT_TIMEOUT_MS=5000
+NEXUS_MCP_CALL_TIMEOUT_MS=15000
+NEXUS_MCP_MAX_RESULT_BYTES=262144
+NEXUS_MCP_MAX_CONCURRENCY_PER_SERVER=4
+```
+
+O hostname privado e fixado na allowlist do codigo. Se o nome real do servico
+Railway for diferente, altere e revise o manifesto antes do deploy; nao abra a
+allowlist para todo o dominio privado.
+
+Em `shadow`, abra **Administracao > Conectores MCP** e execute **Verificar**.
+Somente depois de confirmar protocolo `2026-07-28`, identidade, versao e hashes
+aprovados, habilite servidor e binding, mude a API para `NEXUS_MCP_MODE=v1` e
+execute o laboratorio. A indisponibilidade desse servico nao deve derrubar o
+health check principal da API. O procedimento completo esta em [MCP.md](MCP.md).
 
 ## Limpeza dos chats de pré-produção
 

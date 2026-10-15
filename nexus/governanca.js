@@ -73,7 +73,10 @@ function resolverModoAutorizacao(valor = process.env.NEXUS_AUTHZ_MODE || 'audit'
 function permissaoDaFerramenta(nome) {
   if (PERMISSOES_ESPECIAIS[nome]) return PERMISSOES_ESPECIAIS[nome];
   const capacidade = obterCapacidade(nome);
-  return capacidade ? `${capacidade.dominio}.consultar` : 'produto.consultar';
+  if (capacidade) return `${capacidade.dominio}.consultar`;
+  const erro = new Error(`Ferramenta sem permissao explicitamente configurada: ${nome}.`);
+  erro.codigo = 'TOOL_PERMISSION_NOT_CONFIGURED';
+  throw erro;
 }
 
 function permissaoDoDominioDataset(dominio) {
@@ -119,6 +122,7 @@ function criarServicoGovernanca(opcoes) {
   const modo = resolverModoAutorizacao(opcoes.modo);
   const principalId = opcoes.principalId || null;
   const conversationId = opcoes.conversationId || null;
+  const semConversa = opcoes.semConversa === true;
 
   async function contexto() {
     const principal = (await pool.query(
@@ -128,7 +132,7 @@ function criarServicoGovernanca(opcoes) {
       [principalId || principalSlug]
     )).rows[0];
     if (!principal) throw new Error(`Principal de governanca nao encontrado: ${principalSlug}`);
-    if (conversationId) return { principal, conversationId };
+    if (conversationId || semConversa) return { principal, conversationId };
     const conversa = (await pool.query(`
       INSERT INTO nexus.conversations (principal_id, chave_sessao)
       VALUES ($1, $2)
@@ -138,7 +142,7 @@ function criarServicoGovernanca(opcoes) {
   return { principal, conversationId: conversa.id };
   }
 
-  async function avaliar(nome, departamentoSlug = null, permissaoForcada = null) {
+  async function avaliar(nome, departamentoSlug = null, permissaoForcada = null, camadaForcada = null) {
     const permissao = permissaoForcada || permissaoDaFerramenta(nome);
     const { principal, conversationId } = await contexto();
     let override = null;
@@ -178,13 +182,13 @@ function criarServicoGovernanca(opcoes) {
     const { permitida, motivo } = resolucao;
     const decisao = modo === 'off' ? 'off' : permitida ? 'allow' :
       modo === 'audit' ? 'would_deny' : 'deny';
-    const camada = ['ia_conversar', 'consultar_nexus', 'solicitar_revisao_memoria',
+    const camada = camadaForcada || (['ia_conversar', 'consultar_nexus', 'solicitar_revisao_memoria',
       'pesquisar_web', 'processar_imagem_local', 'interpretar_imagem',
       'analisar_arquivo', 'processar_arquivo_local', 'gerar_arquivo',
       'consultar_evidencia_anexo',
       'exportar_resultado', 'consultar_conjunto_nexus', 'consultar_resultado_nexus',
       'baixar_fonte_documentacao'].includes(nome)
-      ? 'generalista' : obterCapacidade(nome)?.camada || 'negocio';
+      ? 'generalista' : obterCapacidade(nome)?.camada || 'negocio');
     const registro = (await pool.query(`
       INSERT INTO nexus.authorization_decisions
         (principal_id, conversation_id, permission_code, tool_name, camada, modo, decisao, motivo_codigo)
@@ -199,8 +203,13 @@ function criarServicoGovernanca(opcoes) {
 
   async function iniciarTool(nome, argumentos = {}, metadados = {}) {
     const decisoes = [];
-    for (const permissao of permissoesDaFerramenta(nome, argumentos)) {
-      const decisao = await avaliar(nome, metadados.departamentoSlug, permissao);
+    const permissoesExplicitas = metadados.permissionCode
+      ? [metadados.permissionCode]
+      : Array.isArray(metadados.permissionCodes) && metadados.permissionCodes.length
+        ? metadados.permissionCodes : null;
+    for (const permissao of permissoesExplicitas || permissoesDaFerramenta(nome, argumentos)) {
+      const decisao = await avaliar(nome, metadados.departamentoSlug, permissao,
+        metadados.camada || null);
       if (decisao.permitida) {
         decisoes.push(decisao);
         continue;

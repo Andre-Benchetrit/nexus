@@ -30,7 +30,7 @@ sera um executor abaixo das capabilities governadas do Nexus, e as automacoes
 poderao usar tanto tools locais quanto conectores MCP. Nenhum conector externo
 substituira permissoes, aprovacao, DLP ou auditoria.
 
-### Sprint 13 - Fundacao MCP
+### Sprint 13 - Fundacao MCP (implementada; rollout pendente)
 
 - adicionar um cliente MCP independente do provider de LLM;
 - suportar Streamable HTTP em producao e stdio apenas em desenvolvimento;
@@ -40,6 +40,11 @@ substituira permissoes, aprovacao, DLP ou auditoria.
 - validar schemas, aplicar timeout, limite de resultado, sanitizacao, health
   check e auditoria;
 - permitir somente servidores e versoes presentes em allowlist.
+
+O codigo, a migration, o laboratorio e o painel administrativo foram
+entregues. O rollout segue o procedimento em [MCP.md](MCP.md): primeiro
+`shadow`, verificacao de identidade e hashes, depois `v1` apenas para o smoke
+administrativo.
 
 ### Sprint 14 - Microsoft 365 somente leitura
 

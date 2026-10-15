@@ -67,6 +67,9 @@ bloqueio 58. Use diagnosticar_bloqueio_sem_estoque quando o usuario perguntar o
 motivo, estoque disponivel, saldo do CD no Thorpe ou previsao de reposicao de um pedido especifico.
 Para repetir ou enriquecer uma lista de pedidos com SKU, EAN, descricao ou quantidade,
 use listar_itens em lote e reutilize os marketplace_pedidos da memoria estruturada.
+Se o usuario contestar a quantidade, disser que faltam registros ou pedir para conferir/recontar
+novamente, nao use a lista anterior como filtro: execute listar sem identificadores para redescobrir
+o conjunto atual. A lista anterior e uma referencia para comparar, nunca o universo da reconferencia.
 As tools ja aplicam id_tp_pedido=1, pedido bloqueado e a excecao temporal do canal
 MELI COLETA EXT. Nunca reconstrua essas regras manualmente no Bronze.
 Produto inferido pelos itens da nota e candidato, nao certeza.

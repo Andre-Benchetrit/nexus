@@ -73,6 +73,10 @@ usar o leitor DuckDB.
 - `agentes/escalonamento_semantico.js`: pontuacao, faixas e politica de provider/dados.
 - `nexus/auditoria_ia.js`: traces, usage real, custos e mensagens visiveis.
 - `nexus/memoria_governada.js`: candidaturas, confirmacao, revisao e publicacao.
+- `nexus/mcp_manifest.js`: allowlist e contratos canonicos dos conectores MCP.
+- `nexus/mcp_runtime.js`: transporte, descoberta, drift, DLP e execucao MCP.
+- `nexus/mcp_admin.js`: operacoes administrativas e laboratorio governado.
+- `services/nexus-mcp-lab/`: servidor MCP deterministico para smoke ponta a ponta.
 - `agentes/consultor_nexus.js`: facade de orquestracao e entrada de linha de comando.
 
 ## Padroes utilizados
@@ -102,6 +106,12 @@ esse contrato aos seus formatos sem alterar tools ou regras de negocio.
 
 `agentes/ferramentas.js` concentra definicoes e executores. Testes podem injetar
 implementacoes falsas sem alterar o agente.
+
+Bindings MCP entram no mesmo formato de tool, mas somente depois de serem
+resolvidos pelo manifesto do Nexus. Descricao, schema entregue ao modelo,
+capability e permissao nunca sao copiados cegamente do servidor remoto. O
+schema observado serve para detectar drift, e a execucao recebe a permissao do
+binding explicitamente para nao cair em permissao padrao.
 
 ### Router hibrido
 

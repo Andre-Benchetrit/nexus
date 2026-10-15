@@ -669,9 +669,15 @@ export function HubShell({ profile, initialConversationId }: {
           retryMessageId: options.retryMessageId || undefined,
           clientRequestId: crypto.randomUUID() })
       });
+      if (response.redirected && new URL(response.url).pathname === "/login") {
+        throw new Error("Você precisa entrar novamente no Nexus para continuar. A mensagem ficou no campo de digitação.");
+      }
       if (!response.ok) {
         const body = await response.json().catch(() => null);
         throw new Error(body?.error?.message || "Não foi possível iniciar a resposta.");
+      }
+      if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+        throw new Error("O Nexus retornou uma resposta inválida ao iniciar o turno. A mensagem continua no campo de digitação.");
       }
       if (!response.body) throw new Error("A resposta foi aceita sem um canal de acompanhamento.");
       const reader = response.body.getReader();

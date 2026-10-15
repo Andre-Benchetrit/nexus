@@ -909,6 +909,7 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
     : '';
   const instrucoesComuns = [
     instrucoesBase,
+    'Em toda resposta corporativa, informe a data e o horario reais da ultima atualizacao retornada pela fonte. Nao confunda o horario da consulta com o horario dos dados.',
     ...instrucoesDominiosSecundarios,
     contextoRota,
     contextoContratoAnalitico,
