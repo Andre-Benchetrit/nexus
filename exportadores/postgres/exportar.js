@@ -63,6 +63,7 @@ async function exportarPostgres(entidade, opcoes = {}) {
 
   if (
     entidade.extracao?.modo === 'incremental_data' &&
+    opcoes.snapshotCompleto !== true &&
     !opcoes.forcar &&
     (await storage.listarVersoes(entidade.destino.camada, entidade.nome)).some(({ manifesto }) =>
       manifesto.status === 'sucesso' && manifesto.janela?.inicio === opcoes.inicio &&
@@ -177,12 +178,16 @@ async function exportarPostgres(entidade, opcoes = {}) {
       entidade: entidade.nome,
       fonte: entidade.fonte,
       modo: entidade.extracao?.modo || 'snapshot',
+      tipoCarga: opcoes.snapshotCompleto === true
+        ? 'snapshot_completo'
+        : entidade.extracao?.modo === 'incremental_data' ? 'incremental' : 'snapshot',
       status: 'sucesso',
       inicio: inicio.toISOString(),
       fim: fim.toISOString(),
       totalLinhas,
       checksum,
       janela: entidade.extracao?.modo === 'incremental_data'
+        && opcoes.snapshotCompleto !== true
         ? { inicio: opcoes.inicio, fim: opcoes.fim }
         : null,
       chavePrimaria: entidade.extracao?.chavePrimaria || null,

@@ -85,8 +85,25 @@ function consultaDocumentalAncorada(pergunta) {
 
 function aplicarPoliticaArgumentos(nome, argumentos, contexto = {}) {
   const normalizados = { ...(argumentos || {}) };
-  const pergunta = contexto.perguntaAtual || contexto.pergunta ||
-    contexto.decisao?.perguntaAutonoma || '';
+  if (nome === 'analisar_vendas') {
+    const pergunta = normalizarTexto(contexto.perguntaAtual || contexto.pergunta ||
+      contexto.decisao?.perguntaAutonoma || '');
+    const solicitaMaiorPedido = /\b(?:maior|mais alto|mais elevado)\s+pedido\b|\bpedidos?\s+(?:de|com)\s+(?:maior|mais alto|mais elevado)\s+valor\b/.test(pergunta);
+    if (solicitaMaiorPedido) {
+      normalizados.operacao = 'ranquear';
+      normalizados.nivel = 'pedido';
+      normalizados.agrupar_por = 'marketplace_pedido';
+      normalizados.metricas = ['valor'];
+      normalizados.ordenar_por = 'valor';
+      normalizados.data_campo = 'pedido';
+      normalizados.limite = 1;
+      const filtros = Array.isArray(normalizados.filtros) ? normalizados.filtros : [];
+      if (!filtros.some((filtro) => filtro.campo === 'marketplace_pedido')) {
+        filtros.push({ campo: 'marketplace_pedido', operador: 'nao_esta_vazio', valor: null });
+      }
+      normalizados.filtros = filtros;
+    }
+  }
   if (/^(consultar|agregar)_(gold|silver|bronze)$/.test(nome)) {
     if (normalizados.combinacao_filtros === 'e') normalizados.combinacao_filtros = 'todos';
     if (normalizados.combinacao_filtros === 'ou') normalizados.combinacao_filtros = 'qualquer';

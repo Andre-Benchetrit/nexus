@@ -345,6 +345,24 @@ test('periodo deterministico prevalece sobre ano inventado pelo roteador e pela 
   assert.equal(argumentos.data_final, '2026-07-31');
 });
 
+test('pedido de maior valor força ranking pelo identificador do pedido e preserva período', () => {
+  const argumentos = aplicarPoliticaArgumentos('analisar_vendas', {
+    operacao: 'ranquear', nivel: 'pedido', agrupar_por: 'cliente',
+    metricas: ['pedidos'], ordenar_por: 'pedidos', limite: 10,
+    data_inicial: '2026-10-12', data_final: '2026-10-15', filtros: []
+  }, { perguntaAtual: 'Qual o pedido de maior valor em reais feito essa semana?' });
+  assert.equal(argumentos.operacao, 'ranquear');
+  assert.equal(argumentos.nivel, 'pedido');
+  assert.equal(argumentos.agrupar_por, 'marketplace_pedido');
+  assert.deepEqual(argumentos.metricas, ['valor']);
+  assert.equal(argumentos.ordenar_por, 'valor');
+  assert.equal(argumentos.limite, 1);
+  assert.deepEqual(argumentos.filtros, [{ campo: 'marketplace_pedido',
+    operador: 'nao_esta_vazio', valor: null }]);
+  assert.equal(argumentos.data_inicial, '2026-10-12');
+  assert.equal(argumentos.data_final, '2026-10-15');
+});
+
 test('ano curto corrige o mes da consulta corporativa anterior', () => {
   assert.deepEqual(resolverContextoTemporalDaSolicitacao(
     'e de fato 2025.',

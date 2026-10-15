@@ -7,7 +7,8 @@ const path = require('path');
 const {
   criarConexaoDuckDB,
   fecharConexaoDuckDB,
-  runDuckDB
+  runDuckDB,
+  allDuckDB
 } = require('../duckdb/connections');
 const { criarLeitorSilver } = require('../duckdb/silver');
 const dimGrupo = require('../silver/postgres/dimensoes/dim_grupo');
@@ -194,10 +195,63 @@ test('limpa textos e converte flags T/F em regras de negocio', async () => {
   ]);
 });
 
+test('snapshots Bronze antigos sem campos logisticos continuam consultaveis', async () => {
+  const resultado = await leitor.consultar('dim_produto', {
+    colunas: ['id_produto', 'peso_bruto', 'altura_produto_m', 'embalagem_altura_m'],
+    filtros: { id_produto: 1 }
+  });
+  assert.deepEqual(resultado.dados, [{
+    id_produto: 1, peso_bruto: null, altura_produto_m: null, embalagem_altura_m: null
+  }]);
+});
+
+test('separa dimensoes sem embalagem e da embalagem em metros e preserva os pesos', async () => {
+  const conexao = criarConexaoDuckDB();
+  try {
+    await runDuckDB(conexao, `CREATE TABLE bronze_produto AS SELECT
+      99 AS id_produto, 'Produto teste' AS descricao, 'SKU-99' AS codigo_auxiliar,
+      '123456' AS cod_barra, 'FAB-99' AS cod_fabrica, 0 AS composicao_estoque,
+      10::DECIMAL(15,4) AS custo, 100 AS id_fornecedor, 200 AS id_comprador,
+      2 AS prazo_separacao, 10 AS id_grupo, 20 AS id_subgrupo, 30 AS id_marca,
+      40 AS id_categoria, 5::DECIMAL(15,4) AS estoque, 'F' AS inativo,
+      'T' AS disponivel, 'T' AS envia_site, DATE '2026-01-01' AS dt_cadastro,
+      DATE '2026-07-16' AS dt_alteracao, 6.25 AS peso_bruto, 5.75 AS peso_liquido,
+      0.31 AS altura, 0.22 AS largura, 0.18 AS comprimento,
+      0.5 AS embalagem_altura, 0.4 AS embalagem_largura, 0.3 AS embalagem_comprimento`);
+    await runDuckDB(conexao, `CREATE TABLE dim_grupo(id_grupo INTEGER, grupo VARCHAR)`);
+    await runDuckDB(conexao, `CREATE TABLE dim_subgrupo(id_subgrupo INTEGER, subgrupo VARCHAR)`);
+    await runDuckDB(conexao, `CREATE TABLE dim_marca(id_marca INTEGER, marca VARCHAR)`);
+    await runDuckDB(conexao, `CREATE TABLE dim_categoria(id_categoria INTEGER, categoria VARCHAR)`);
+    const contextoBronze = new Map([['produto', {
+      viewAtual: 'bronze_produto',
+      colunas: new Set(['peso_bruto', 'peso_liquido', 'altura', 'largura', 'comprimento',
+        'embalagem_altura', 'embalagem_largura', 'embalagem_comprimento'])
+    }]]);
+    const contextoSilver = new Map([
+      ['dim_grupo', { viewAtual: 'dim_grupo' }],
+      ['dim_subgrupo', { viewAtual: 'dim_subgrupo' }],
+      ['dim_marca', { viewAtual: 'dim_marca' }],
+      ['dim_categoria', { viewAtual: 'dim_categoria' }]
+    ]);
+    const [linha] = await allDuckDB(conexao, dimProduto.construirSql(contextoBronze, contextoSilver));
+    assert.equal(linha.altura_produto_m, 0.31);
+    assert.equal(linha.largura_produto_m, 0.22);
+    assert.equal(linha.comprimento_produto_m, 0.18);
+    assert.equal(linha.embalagem_altura_m, 0.5);
+    assert.equal(linha.embalagem_largura_m, 0.4);
+    assert.equal(linha.embalagem_comprimento_m, 0.3);
+    assert.equal(linha.peso_bruto, '6.25');
+    assert.equal(linha.peso_liquido, '5.75');
+    assert.equal(linha.altura, '0.31');
+  } finally {
+    await fecharConexaoDuckDB(conexao);
+  }
+});
+
 test('publica manifesto somente depois das validacoes', async () => {
   const manifesto = JSON.parse(await fs.readFile(resultadoConstrucao.caminhos.manifesto, 'utf8'));
   assert.equal(manifesto.status, 'sucesso');
-  assert.equal(manifesto.versaoContrato, 2);
+  assert.equal(manifesto.versaoContrato, 3);
   assert.equal(manifesto.totalLinhas, 2);
   assert.equal(manifesto.fontesBronze.length, 1);
   assert.equal(manifesto.fontesSilver.length, 4);

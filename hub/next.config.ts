@@ -6,10 +6,20 @@ const maiorUploadPermitido = Math.max(
   Number(process.env.NEXUS_FILES_MAX_BYTES || 25 * mib),
   Number(process.env.NEXUS_KNOWLEDGE_MAX_BYTES || 50 * mib)
 );
+const limiteImportacaoConhecimento = Number(
+  process.env.NEXUS_KNOWLEDGE_MAX_BYTES || 50 * mib
+);
 
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  env: {
+    NEXT_PUBLIC_NEXUS_KNOWLEDGE_MAX_BYTES: String(
+      Number.isFinite(limiteImportacaoConhecimento) && limiteImportacaoConhecimento > 0
+        ? limiteImportacaoConhecimento
+        : 50 * mib
+    )
+  },
   experimental: {
     optimizePackageImports: ["react-markdown"],
     // O proxy de autenticação do Next também intercepta uploads. Sem este ajuste,

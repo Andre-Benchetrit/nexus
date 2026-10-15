@@ -35,6 +35,10 @@ const {
   executarAnalisarCatalogo
 } = require('../tools/analisar_catalogo');
 const {
+  definicaoListarProdutosAtivosComCubagem,
+  executarListarProdutosAtivosComCubagem
+} = require('../tools/listar_produtos_ativos_com_cubagem');
+const {
   definicaoAnalisarPessoas,
   executarAnalisarPessoas
 } = require('../tools/analisar_pessoas');
@@ -126,6 +130,7 @@ const FERRAMENTAS_NEGOCIO = Object.freeze([
   'analisar_operacao',
   'analisar_vendas',
   'analisar_catalogo',
+  'listar_produtos_ativos_com_cubagem',
   'analisar_pessoas',
   'analisar_evolucao_produto',
   'diagnosticar_produto_360',
@@ -148,6 +153,7 @@ const PERFIL_POR_FERRAMENTA = Object.freeze({
   analisar_operacao: 'operacao',
   analisar_vendas: 'vendas',
   analisar_catalogo: 'catalogo',
+  listar_produtos_ativos_com_cubagem: 'catalogo',
   analisar_pessoas: 'pessoas',
   analisar_evolucao_produto: 'inteligencia_produto',
   diagnosticar_produto_360: 'inteligencia_produto',
@@ -187,7 +193,7 @@ const PERFIS_TOOLS = Object.freeze({
   frete: ['analisar_frete'],
   operacao: ['analisar_operacao'],
   vendas: ['analisar_vendas'],
-  catalogo: ['analisar_catalogo'],
+  catalogo: ['analisar_catalogo', 'listar_produtos_ativos_com_cubagem'],
   pessoas: ['analisar_pessoas'],
   documentacao: ['consultar_documentacao'],
   sql: ['construir_sql'],
@@ -289,6 +295,12 @@ function criarRegistroFerramentas(dependencias = {}) {
       terminal: true,
       executar: dependencias.executarAnalisarCatalogoTool || executarAnalisarCatalogo
     }],
+    ['listar_produtos_ativos_com_cubagem', {
+      definicao: definicaoListarProdutosAtivosComCubagem,
+      terminal: true,
+      executar: dependencias.executarListarProdutosAtivosComCubagemTool || ((argumentos) =>
+        executarListarProdutosAtivosComCubagem(argumentos, dependencias))
+    }],
     ['analisar_pessoas', {
       definicao: definicaoAnalisarPessoas,
       terminal: true,
@@ -370,8 +382,15 @@ function criarRegistroFerramentas(dependencias = {}) {
 }
 
 function obterFerramentasDoPerfil(perfil, dependencias = {}) {
-  const nomes = PERFIS_TOOLS[perfil];
-  if (!nomes) throw new Error(`Perfil de tools desconhecido: ${perfil}`);
+  const nomesBase = PERFIS_TOOLS[perfil];
+  if (!nomesBase) throw new Error(`Perfil de tools desconhecido: ${perfil}`);
+  const pergunta = String(dependencias.perguntaRoteamento || dependencias.perguntaAtual || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const pedeCatalogoLogistico = /\b(cubagem|cubico|volume da embalagem|dimens(?:ao|oes) da embalagem|medidas? da embalagem|dimens(?:ao|oes) embalad[oa]s?)\b/i.test(pergunta) &&
+    /\b(produto|produtos|sku|ean|embalagem)\b/i.test(pergunta);
+  const nomes = pedeCatalogoLogistico
+    ? nomesBase.filter((nome) => nome === 'listar_produtos_ativos_com_cubagem')
+    : nomesBase.filter((nome) => nome !== 'listar_produtos_ativos_com_cubagem');
   const registro = criarRegistroFerramentas(dependencias);
   const permiteMultiplasChamadas = nomes.length > 1;
   return nomes.map((nome) => {

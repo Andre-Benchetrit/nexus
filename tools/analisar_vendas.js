@@ -31,6 +31,7 @@ const DIMENSOES = Object.freeze({
   subgrupo: { campo: 'subgrupo', nivel: 'item' },
   categoria: { campo: 'categoria', nivel: 'item' },
   cliente: { campo: 'cliente' },
+  marketplace_pedido: { campos: ['id_empresa', 'id_pedido_vda_importado', 'marketplace_pedido'], nivel: 'pedido' },
   tipo_pedido: { campo: 'tipo_pedido' },
   plataforma: { campo: 'plataforma' },
   transportadora: { campos: ['id_transportadora', 'transporte_regras'] },
@@ -146,7 +147,7 @@ const definicaoAnalisarVendas = {
       operacao: {
         type: 'string',
         enum: OPERACOES,
-        description: 'resumir totais; ranquear grupos; listar linhas; localizar_notas busca NFs.'
+        description: 'resumir totais; ranquear grupos (pedidos individuais por marketplace_pedido usam chave empresa+pedido+marketplace); listar linhas; localizar_notas busca NFs.'
       },
       nivel: {
         type: 'string',
@@ -293,6 +294,10 @@ function renomearAgregacao(resultado, dimensao, regraDimensao, metricas) {
       saida.produto = linha.grupo_2;
       saida.descricao_produto = linha.grupo_2;
       saida.sku = linha.grupo_3;
+    } else if (dimensao === 'marketplace_pedido') {
+      saida.id_empresa = linha.grupo_1;
+      saida.id_pedido_vda_importado = linha.grupo_2;
+      saida.marketplace_pedido = linha.grupo_3;
     } else if (dimensao) {
       saida[dimensao] = linha.grupo_1;
     }

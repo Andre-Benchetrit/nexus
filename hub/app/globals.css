@@ -363,10 +363,14 @@ select:focus, input:focus, textarea:focus { border-color: rgba(66,255,155,.48); 
 .knowledge-version-history span { grid-row: span 2; color: var(--glow); font-weight: 800; }.knowledge-version-history p, .knowledge-version-history small { margin: 0 !important; overflow-wrap: anywhere; }
 .knowledge-version-history p { color: var(--text) !important; text-transform: capitalize; }.knowledge-version-history small { color: var(--muted); font-size: 9px; }
 .knowledge-editor-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
-.knowledge-file-picker { min-height: 68px; padding: 11px; border: 1px dashed rgba(66,255,155,.27); border-radius: 12px; background: rgba(66,255,155,.035); display: grid !important; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px !important; cursor: pointer; }
-.knowledge-file-picker input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.knowledge-file-picker span { padding: 8px 10px; border-radius: 8px; color: #06140c; background: var(--glow); font-size: 10px; font-weight: 800; white-space: nowrap; }
+.knowledge-file-picker { min-height: 68px; padding: 11px; border: 1px dashed rgba(66,255,155,.27); border-radius: 12px; background: rgba(66,255,155,.035); display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
+.knowledge-file-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.knowledge-file-select { padding: 8px 10px; border: 0; border-radius: 8px; color: #06140c; background: var(--glow); font-size: 10px; font-weight: 800; white-space: nowrap; cursor: pointer; }
+.knowledge-file-select:disabled { opacity: .55; cursor: not-allowed; }
 .knowledge-file-picker strong { min-width: 0; color: var(--text); font-size: 10px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-import-error { margin: 0; }
+.knowledge-import-fallback { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; border-radius: 14px; }
+.knowledge-import-fallback p { margin: 0; color: var(--muted); }
 .audit-panel { display: grid; gap: 18px; }
 .audit-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
 .audit-heading h2 { margin: 4px 0; }.audit-heading p { margin: 0; color: var(--muted); }.audit-heading > small { color: var(--muted); }

@@ -178,7 +178,7 @@ test('delega a execução para um provider com contrato comum', async () => {
   assert.equal(contexto.pergunta, 'Quais dados temos?');
   assert.deepEqual(
     contexto.tools.map((ferramenta) => ferramenta.definicao.name),
-    [...FERRAMENTAS_NEGOCIO, 'solicitar_aprofundamento']
+    [...FERRAMENTAS_NEGOCIO.filter((nome) => nome !== 'listar_produtos_ativos_com_cubagem'), 'solicitar_aprofundamento']
   );
   assert.equal(typeof contexto.tools.find(
     (item) => item.definicao.name === 'analisar_vendas'

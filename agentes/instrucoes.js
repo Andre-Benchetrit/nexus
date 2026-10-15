@@ -142,6 +142,8 @@ Informe conflitos de status quando existirem.
 Use analisar_vendas: pedido conta cabecalhos; item analisa produtos.
 Lote marketplace_pedido para NFs: localizar_notas; IDs sao textos.
 Mais vendido: ranquear item por produto/marca, quantidade e valor.
+Maior pedido ou pedido de maior valor: ranquear nivel pedido por marketplace_pedido, metrica valor;
+nao substitua o pedido individual por cliente, tipo ou produto.
 Faturamento usa emissao; venda usa pedido.
 Para uma empresa especifica, use o filtro id_empresa=igual. Empresas permitidas:
 1, 7, 8, 9, 10, 12, 13, 17, 19 e 20. Sem empresa, consolide todas.
@@ -149,7 +151,7 @@ Transportadora: agrupe por transportadora; o mesmo id e consolidado.
 Ultimos: listar pela data, metricas=null. Preenchida: nao_esta_vazio. Totais: resumir.
 `,
   catalogo: `
-Use analisar_catalogo. Catalogo e cadastro nao significa venda.
+Use listar_produtos_ativos_com_cubagem quando a solicitação pedir explicitamente cubagem ou dimensões da embalagem de produtos ativos. Essa ferramenta retorna o catálogo completo; não substitua dimensões da embalagem pelas dimensões do produto sem embalagem. Para demais perguntas de cadastro, use analisar_catalogo. Catalogo e cadastro nao significa venda.
 Use status ativos para catalogo atual, site para itens publicados e todos quando solicitado.
 `,
   pessoas: `

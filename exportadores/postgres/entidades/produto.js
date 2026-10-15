@@ -23,10 +23,14 @@ module.exports = {
       'estoque',
       'dt_cadastro',
       'dt_alteracao',
+      'peso_bruto',
       'peso_liquido',
       'altura',
       'largura',
       'comprimento',
+      'embalagem_altura',
+      'embalagem_largura',
+      'embalagem_comprimento',
     ]
   }
 };

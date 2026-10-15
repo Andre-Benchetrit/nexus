@@ -54,6 +54,22 @@ test('politica web deterministica reconhece apenas pedido explicito ou continuac
   assert.equal(classificarIntencaoPesquisa('Tente novamente agora', {
     ultimaProveniencia: 'conhecimento_geral'
   }).modo, 'nenhuma');
+  const consultaCnpj = classificarIntencaoPesquisa('Qual o CNPJ da FID COMÉRCIO EXTERIOR LTDA?');
+  assert.equal(consultaCnpj.modo, 'delegada');
+  assert.equal(consultaCnpj.registroPublico, true);
+  assert.equal(consultaCnpj.consultaSugerida, 'Qual o CNPJ da FID COMÉRCIO EXTERIOR LTDA?');
+  assert.equal(classificarIntencaoPesquisa('O que significa a sigla CNPJ?').modo, 'nenhuma');
+  assert.equal(classificarIntencaoPesquisa('Qual o CNPJ da empresa?').modo, 'nenhuma');
+});
+
+test('pesquisa automatica de CNPJ filtra paginas da marca sem evidencia cadastral', () => {
+  const resultado = normalizarResultadoTavily({ results: [
+    { title: 'FID Comex — FAQ', url: 'https://fidcomex.com.br/faq', content: 'Atendimento e políticas comerciais da marca.' },
+    { title: 'FID Comércio Exterior Ltda — CNPJ 12.345.678/0001-90',
+      url: 'https://registro.example/empresa', content: 'CNPJ: 12.345.678/0001-90' }
+  ] }, { query: 'Qual o CNPJ da FID Comércio Exterior Ltda?', searchDepth: 'basic' });
+  assert.equal(resultado.fontes.length, 1);
+  assert.match(resultado.fontes[0].titulo, /CNPJ/);
 });
 
 test('modo de fonte explicito e validado antes da execucao', () => {
@@ -513,6 +529,35 @@ test('automatico oferece web como tool de verificacao factual sem depender de pa
     }
   );
   assert.equal(buscas, 1);
+  assert.equal(resultado.proveniencia, 'web');
+  assert.equal(resultado.validacaoWeb.valida, true);
+});
+
+test('automatico pesquisa CNPJ empresarial sem depender de chamada de tool pelo modelo', async () => {
+  let buscas = 0;
+  let chamadasModelo = 0;
+  const resultado = await executarAssistente('Qual o CNPJ da FID COMÉRCIO EXTERIOR LTDA?', {
+    memoria: memoriaFalsa(), auditoriaIA: false, governanca: governancaFalsa(), webMode: 'v1',
+    webSearchProvider: { nome: 'mock', async pesquisar(spec) {
+      buscas += 1;
+      assert.match(spec.query, /CNPJ.*FID COMÉRCIO EXTERIOR LTDA/i);
+      return { status: 'complete', provider: 'tavily', profundidade: 'basic', creditos: 1,
+        atualizadoEm: new Date().toISOString(), fontes: [{ id: 'f1',
+          titulo: 'FID Comércio Exterior Ltda — CNPJ 12.345.678/0001-90',
+          url: 'https://registro.example/empresa', dominio: 'registro.example',
+          trecho: 'CNPJ: 12.345.678/0001-90' }],
+        avaliacaoRelevancia: { evidenciaSuficiente: true } };
+    } },
+    generalistProvider: { nome: 'mock', modelo: 'mock', async executar({ tools, stage }) {
+      chamadasModelo += 1;
+      assert.equal(stage, 'web_synthesis');
+      assert.equal(tools.some((item) => item.definicao.name === 'pesquisar_web'), false);
+      return { texto: 'O registro consultado informa o CNPJ 12.345.678/0001-90 ' +
+        '[FID Comércio Exterior Ltda](https://registro.example/empresa).', provider: 'mock', modelo: 'mock' };
+    } }
+  });
+  assert.equal(buscas, 1);
+  assert.equal(chamadasModelo, 1);
   assert.equal(resultado.proveniencia, 'web');
   assert.equal(resultado.validacaoWeb.valida, true);
 });

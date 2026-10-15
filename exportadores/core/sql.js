@@ -58,7 +58,7 @@ function montarConsultaPostgres(entidade, opcoes = {}, alias = 'pg_db') {
 
   let consulta = `SELECT ${selecao} FROM ${origem}`;
 
-  if (extracao.modo === 'incremental_data') {
+  if (extracao.modo === 'incremental_data' && opcoes.snapshotCompleto !== true) {
     validarDataISO(opcoes.inicio, 'inicio');
     validarDataISO(opcoes.fim, 'fim');
     if (opcoes.inicio >= opcoes.fim) {

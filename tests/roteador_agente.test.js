@@ -8,6 +8,7 @@ const {
   resolverPerfil,
   resolverPerfilComContexto
 } = require('../agentes/roteador');
+const { obterFerramentasDoPerfil } = require('../agentes/ferramentas');
 
 test('reconhece continuacao contextual com outros bloqueios e tambem no fim', () => {
   assert.equal(referenciaContextual('Você consegue verificar outros bloqueios também?'), true);
@@ -29,6 +30,20 @@ test('roteia vendas, catalogo e auditoria sem usar modelo', () => {
   assert.equal(classificarPergunta('Quais tipos de pedido existem?'), 'silver');
   assert.equal(classificarPergunta('Quantos funcionarios eu tenho ativos no momento?'), 'pessoas');
   assert.equal(classificarPergunta('Quais transportadoras ativas temos cadastradas?'), 'pessoas');
+});
+
+test('roteia cubagem e dimensoes explicitas da embalagem ao catalogo', () => {
+  assert.equal(classificarPergunta('Liste os produtos ativos com cubagem da embalagem'), 'catalogo');
+  assert.equal(classificarPergunta('Quais são as dimensões da embalagem do SKU ABC?'), 'catalogo');
+  assert.equal(classificarPergunta('O que significa produto ativo no cadastro?'), 'catalogo');
+  assert.equal(resolverPerfilComContexto('Em metros.', [
+    { pergunta: 'Quais são as dimensões da embalagem por produto?', perfil: 'catalogo' }
+  ]), 'catalogo');
+  const generic = obterFerramentasDoPerfil('catalogo', { perguntaAtual: 'O que significa produto ativo?' });
+  assert.equal(generic.some((tool) => tool.definicao?.name === 'listar_produtos_ativos_com_cubagem'), false);
+  const explicit = obterFerramentasDoPerfil('catalogo', { perguntaAtual: 'Em metros.',
+    perguntaRoteamento: 'Quais são as dimensões da embalagem por produto? Em metros.' });
+  assert.equal(explicit.some((tool) => tool.definicao?.name === 'listar_produtos_ativos_com_cubagem'), true);
 });
 
 test('roteia explicacao de queda para analise de influencias', () => {

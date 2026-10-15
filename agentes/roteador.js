@@ -102,6 +102,9 @@ function classificarPorRegras(pergunta) {
   const cadastroSilver = /cliente|regras? de transporte|tipos? de pedido|plataformas? disponiveis/.test(texto);
   if (cadastroSilver) return 'silver';
 
+  const cubagemEmbalagem = /\b(cubagem|cubico|volume da embalagem|dimensoes? da embalagem|medidas? da embalagem|dimensoes? embalad[oa]s?)\b/.test(texto);
+  if (cubagemEmbalagem && /produto|produtos|sku|ean|embalagem/.test(texto)) return 'catalogo';
+
   if (/\bpedidos?\b/.test(texto)) return 'vendas';
 
   const catalogo = /catalog|produto|marca|grupo|subgrupo|categoria|sku|\bean\b|linha branca|composicao/.test(texto);
@@ -186,7 +189,10 @@ function resolverRoteamentoComContexto(
     }
   }
   const ultimaPergunta = historico.at(-1)?.pergunta;
-  const texto = ultimaPergunta && referenciaContextual(pergunta)
+  const esclarecimentoCatalogo = ultimaPergunta &&
+    /\b(cubagem|dimens(?:ao|oes)|medidas?)\b.{0,35}\b(embalagem|produto)\b|\b(embalagem|produto).{0,35}\b(cubagem|dimens(?:ao|oes)|medidas?)\b/.test(normalizarTexto(ultimaPergunta)) &&
+    /^(?:sim|isso|correto|correta|exato|exata|confirmo|em metros|sao medidas|sao as medidas|a embalagem|embalagem|do produto|sem embalagem)\b/.test(normalizarTexto(pergunta));
+  const texto = ultimaPergunta && (referenciaContextual(pergunta) || esclarecimentoCatalogo)
     ? `${ultimaPergunta} ${pergunta}`
     : pergunta;
   const roteamento = analisarRoteamento(texto);
