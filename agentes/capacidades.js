@@ -232,6 +232,15 @@ const REGISTRO_CAPACIDADES = Object.freeze({
     campos: ['sku', 'ean', 'descricao_produto', 'status', 'marca', 'categoria'],
     operacoes: ['resumir', 'listar', 'ranquear']
   }),
+  listar_produtos_ativos_com_cubagem: capacidade({
+    dominio: 'catalogo', intencoes: ['listar', 'detalhar'],
+    entidades: ['produto', 'sku', 'ean', 'embalagem'],
+    campos: ['sku', 'ean', 'descricao_produto', 'embalagem_altura_m',
+      'embalagem_largura_m', 'embalagem_comprimento_m', 'cubagem_m3', 'status_cubagem'],
+    operacoes: ['listar'],
+    transformacoesPermitidas: ['ordenar', 'formatar_tabela'],
+    derivacoesPermitidas: [], granularidades: ['produto']
+  }),
   analisar_pessoas: capacidade({
     dominio: 'pessoas', intencoes: ['resumir', 'listar', 'detalhar'],
     entidades: ['funcionario', 'transportadora'],

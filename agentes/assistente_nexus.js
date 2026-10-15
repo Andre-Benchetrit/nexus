@@ -53,6 +53,28 @@ const {
   limitarEnvelope, prepararContextoAnexos, resolverModoInteligenciaAnexos
 } = require('../nexus/attachment_analysis');
 
+function formatarEntregaCatalogoLogistico(resultado, exportacao) {
+  const linhas = Array.isArray(resultado?.previa) ? resultado.previa : [];
+  const resumo = [
+    `Produtos ativos: ${resultado?.total_produtos_ativos ?? 0}.`,
+    `Cubagens completas: ${resultado?.cubagens_completas ?? 0}; incompletas: ${resultado?.cubagens_incompletas ?? 0}; inválidas: ${resultado?.cubagens_invalidas ?? 0}.`,
+    `Dados atualizados em: ${resultado?.atualizado_em || 'horário não informado'}.`
+  ];
+  if (resultado?.status === 'sem_produtos') resumo.push('Não há produtos ativos para listar.');
+  else if (exportacao?.indisponivel) resumo.push('A planilha XLSX não foi gerada porque a geração de arquivos está desativada neste ambiente.');
+  else if (exportacao) resumo.push('A planilha XLSX completa está disponível para download.');
+
+  if (!linhas.length) return resumo.join('\n');
+  const valor = (item) => item == null ? '—' : String(item);
+  const tabela = [
+    '| Produto | SKU | Altura embalagem (m) | Largura (m) | Comprimento (m) | Cubagem (m³) | Status |',
+    '|---|---|---:|---:|---:|---:|---|',
+    ...linhas.map((linha) => `| ${valor(linha.descricao_produto)} | ${valor(linha.sku)} | ${valor(linha.embalagem_altura_m)} | ${valor(linha.embalagem_largura_m)} | ${valor(linha.embalagem_comprimento_m)} | ${valor(linha.cubagem_m3)} | ${valor(linha.status_cubagem)} |`)
+  ];
+  if (resultado?.resultado_truncado_no_prompt) tabela.push('', 'Prévia limitada a 20 linhas; o XLSX contém o catálogo completo.');
+  return `${resumo.join('\n')}\n\n${tabela.join('\n')}`;
+}
+
 const INSTRUCOES_GENERALISTA = `Voce e o Nexus, assistente corporativo generalista.
 Converse em portugues do Brasil, com clareza e objetividade.
 Isso é um pouco mais sobre sua origem e identidade, fale somente se perguntado: ${IDENTIDADE_NEXUS}
@@ -2199,6 +2221,27 @@ async function executarAssistente(pergunta, dependencias = {}) {
             dependencias.conversationId, turno.id, resultado._resultadosTools);
           if (resultRef) referenciasDadosTurno.push(resultRef);
         }
+        const resultadoCatalogoLogistico = resultado._resultadosTools?.find((item) =>
+          item.nome === 'listar_produtos_ativos_com_cubagem')?.resultado;
+        if (resultadoCatalogoLogistico) {
+          let exportacaoLogistica = null;
+          if (resultRef && resultRef.status !== 'sem_produtos') {
+            try {
+              exportacaoLogistica = await exportarReferencia(resultRef, {
+                formato: 'xlsx', titulo: 'Catálogo logístico de produtos ativos'
+              });
+            } catch (erroExportacao) {
+              exportacaoLogistica = { erro: erroExportacao.message };
+            }
+          }
+          respostaCorporativaDireta = formatarEntregaCatalogoLogistico(
+            resultadoCatalogoLogistico,
+            exportacaoLogistica?.erro ? null : exportacaoLogistica
+          );
+          if (exportacaoLogistica?.erro) {
+            respostaCorporativaDireta += '\nA geração da planilha falhou; os dados completos continuam preservados na referência estruturada desta conversa.';
+          }
+        }
         if (resultado.roteamento?.fontesDocumentais?.length) {
           resultadosDocumentacao.push({ status: 'sucesso',
             fontes_download: resultado.roteamento.fontesDocumentais });
@@ -2350,7 +2393,7 @@ async function executarAssistente(pergunta, dependencias = {}) {
       if (erroPesquisaWeb) mensagens = normalizarHistoricoVisivel([...mensagens, { role: 'user',
         content: `A parte de pesquisa web falhou com segurança: ${erroPesquisaWeb.message}. Responda a parte corporativa e declare a limitação.`
       }]);
-      if (modoDatasets === 'v1' && fluxoDatasets.fluxo === 'consultar_e_exportar') {
+      if (!respostaCorporativaDireta && modoDatasets === 'v1' && fluxoDatasets.fluxo === 'consultar_e_exportar') {
         const ref = consultaCache?.dataRef;
         if (ref) {
           const exportado = await exportarReferencia(ref);

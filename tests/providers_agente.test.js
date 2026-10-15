@@ -83,7 +83,7 @@ test('todas as tools do Nexus possuem contrato compativel com OpenAI strict', ()
     [...definicoesRegistro, ...definicoesDiretas].map((item) => [item.name, item])
   ).values()];
 
-  assert.equal(definicoes.length, 41);
+  assert.equal(definicoes.length, 42);
   for (const definicao of definicoes) {
     const convertida = converterToolParaOpenAI(definicao);
     assert.deepEqual(

@@ -21,6 +21,7 @@ evita oferecer ao modelo ferramentas que nao pertencem ao assunto.
 | `analisar_operacao` | `operacao` | Funil e status de pedidos por plataforma sem contar pedido e nota como registros diferentes. | Gold |
 | `analisar_vendas` | `vendas` | Totais, rankings, listagens de pedidos/notas e localizacao de NFs por `marketplace_pedido`. | Silver |
 | `analisar_catalogo` | `catalogo` | Composicao do cadastro atual por produto, marca, grupo, subgrupo ou categoria. | Silver |
+| `listar_produtos_ativos_com_cubagem` | `catalogo` (somente pedido explícito) | Catálogo completo de produtos ativos, dimensões da embalagem em metros, cubagem e planilha XLSX. | Gold |
 | `analisar_pessoas` | `pessoas` | Funcionarios e transportadoras cadastrados, ativos ou inativos, considerando todas as empresas. | Silver |
 | `consultar_bloqueios_sem_estoque` | `bloqueios_estoque` | Resume, lista, detalha ou enriquece em lote pedidos com o bloqueio 58, incluindo SKU/EAN e aplicando a excecao do canal MELI COLETA EXT. | Gold |
 | `diagnosticar_bloqueio_sem_estoque` | `bloqueios_estoque` | Cruza bloqueio, estoque oficial, saldo do CD no Thorpe e reposicoes para explicar a situacao do pedido. | Gold + Silver + Thorpe |
@@ -67,7 +68,7 @@ conceitos e limites mais claros.
 | `frete` | `analisar_frete` |
 | `operacao` | `analisar_operacao` |
 | `vendas` | `analisar_vendas` |
-| `catalogo` | `analisar_catalogo` |
+| `catalogo` | `analisar_catalogo`; em perguntas explícitas de dimensões da embalagem/cubagem, somente `listar_produtos_ativos_com_cubagem` |
 | `pessoas` | `analisar_pessoas` |
 | `bloqueios_estoque` | `consultar_bloqueios_sem_estoque`, `diagnosticar_bloqueio_sem_estoque` |
 | `negocio` | `analisar_vendas`, `analisar_catalogo` |
@@ -80,6 +81,18 @@ conceitos e limites mais claros.
 O registro executavel que define essa relacao fica em
 `agentes/ferramentas.js`. Este documento deve ser atualizado quando uma tool ou
 perfil for adicionado, removido ou renomeado.
+
+### Catálogo logístico de produtos
+
+O tool `listar_produtos_ativos_com_cubagem` consulta o catálogo completo ativo
+(`inativo=false` no Sysemp), sem exigir publicação no site ou disponibilidade
+para venda. As dimensões do produto sem embalagem e da embalagem são mantidas
+separadas, em metros; a cubagem é calculada apenas com três medidas de embalagem
+positivas e válidas. O resultado completo fica em `result_ref`; a resposta mostra
+uma prévia de até 20 produtos e gera o XLSX integral. O limite é de 50 mil linhas;
+acima disso a operação falha em vez de exportar um subconjunto como se fosse
+completo. Para validar em staging, habilite `NEXUS_DATASETS_MODE=v1` e
+`NEXUS_ARTIFACTS_MODE=v1`.
 
 ## Datas e horarios
 

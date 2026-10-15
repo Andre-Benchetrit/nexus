@@ -47,19 +47,40 @@ function sugerirConsultaPesquisa(pergunta = '') {
     .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function eConsultaCnpjEmpresarial(pergunta = '') {
+  const texto = normalizarIntencao(pergunta);
+  const cnpjComAlvo = /\bcnpj\b.{0,100}\b(?:da|do|de|para)\s+([a-z0-9]+(?:\s+[a-z0-9]+){0,10})/i.exec(texto);
+  return Boolean(cnpjComAlvo && cnpjComAlvo[1]
+    .split(/\s+/).some((termo) => !ALVOS_CNPJ_GENERICOS.has(termo)));
+}
+
+function contextoCnpjParaFollowup(pergunta = '', contexto = {}) {
+  if (contexto.ultimaProveniencia !== 'web' || !eConsultaCnpjEmpresarial(contexto.ultimaPergunta)) {
+    return false;
+  }
+  const texto = normalizarIntencao(pergunta);
+  const referenciaAnterior = /\b(?:essa informacao|essa resposta|esse dado|esse registro|esse cnpj|isso)\b/.test(texto);
+  const novaBuscaEmSite = PEDIDO_EXPLICITO.test(texto) && /\bsite\b/.test(texto);
+  return referenciaAnterior && novaBuscaEmSite;
+}
+
 function classificarIntencaoPesquisa(pergunta = '', contexto = {}) {
   const texto = normalizarIntencao(pergunta);
   const explicita = PEDIDO_EXPLICITO.test(texto);
-  const continuacao = contexto.ultimaProveniencia === 'web' && CONTINUACAO_WEB.test(texto);
+  const contextoCnpj = contextoCnpjParaFollowup(pergunta, contexto);
+  const continuacao = contexto.ultimaProveniencia === 'web' &&
+    (CONTINUACAO_WEB.test(texto) || contextoCnpj);
   const cnpjComAlvo = /\bcnpj\b.{0,100}\b(?:da|do|de|para)\s+([a-z0-9]+(?:\s+[a-z0-9]+){0,10})/i.exec(texto);
   const registroPublico = Boolean(cnpjComAlvo && cnpjComAlvo[1]
-    .split(/\s+/).some((termo) => !ALVOS_CNPJ_GENERICOS.has(termo)));
+    .split(/\s+/).some((termo) => !ALVOS_CNPJ_GENERICOS.has(termo))) || contextoCnpj;
   const instavel = INFORMACAO_INSTAVEL.test(texto);
   if (!explicita && !continuacao && !registroPublico) {
     return { modo: 'nenhuma', explicita: false, continuacao: false,
       registroPublico: false, instavel, assunto: null };
   }
-  const assunto = extrairAssuntoPesquisa(pergunta);
+  const perguntaComContexto = contextoCnpj
+    ? `${contexto.ultimaPergunta} ${pergunta}` : pergunta;
+  const assunto = extrairAssuntoPesquisa(perguntaComContexto);
   if (!assunto && !continuacao) {
     return { modo: 'esclarecer', explicita, continuacao,
       instavel, assunto: null };
@@ -67,8 +88,10 @@ function classificarIntencaoPesquisa(pergunta = '', contexto = {}) {
   return {
     modo: 'delegada',
     explicita, continuacao, registroPublico, instavel, assunto,
-    consultaSugerida: explicita || continuacao
-      ? sugerirConsultaPesquisa(pergunta) : String(pergunta).trim()
+    consultaSugerida: contextoCnpj
+      ? `${String(contexto.ultimaPergunta).trim()} ${sugerirConsultaPesquisa(pergunta)}`.trim()
+      : explicita || continuacao
+        ? sugerirConsultaPesquisa(pergunta) : String(pergunta).trim()
   };
 }
 

@@ -394,6 +394,9 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
       historicoCurto,
       dependencias.perfilTools || 'automatico'
     );
+  const perguntaParaTools = roteamentoLegado.origem === 'continuacao_contextual' && ultimaPergunta
+    ? `${ultimaPergunta} ${perguntaNormalizada}`
+    : perguntaParaRoteamento;
   const modoRoteador = dependencias.tools ? 'legacy' : resolverModoRoteador(dependencias);
   const decisaoLegada = dependencias.tools
     ? null
@@ -544,7 +547,10 @@ async function executarAgenteInterno(pergunta, dependencias = {}) {
         : item);
     }
   } else {
-    ferramentas = obterFerramentasDoPerfil(perfilInicial, dependencias);
+    ferramentas = obterFerramentasDoPerfil(perfilInicial, {
+      ...dependencias,
+      perguntaRoteamento: perguntaParaTools
+    });
   }
   const modoEscalonamento = resolverModoEscalonamento(
     dependencias.semanticEscalationMode

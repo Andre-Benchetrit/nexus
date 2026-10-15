@@ -148,7 +148,7 @@ Transportadora: agrupe por transportadora; o mesmo id e consolidado.
 Ultimos: listar pela data, metricas=null. Preenchida: nao_esta_vazio. Totais: resumir.
 `,
   catalogo: `
-Use analisar_catalogo. Catalogo e cadastro nao significa venda.
+Use listar_produtos_ativos_com_cubagem quando a solicitação pedir explicitamente cubagem ou dimensões da embalagem de produtos ativos. Essa ferramenta retorna o catálogo completo; não substitua dimensões da embalagem pelas dimensões do produto sem embalagem. Para demais perguntas de cadastro, use analisar_catalogo. Catalogo e cadastro nao significa venda.
 Use status ativos para catalogo atual, site para itens publicados e todos quando solicitado.
 `,
   pessoas: `

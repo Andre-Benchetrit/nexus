@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const notaSaida = require('../exportadores/postgres/entidades/nota_saida');
 const notaSaidaItens = require('../exportadores/postgres/entidades/nota_saida_itens');
 const cliente = require('../exportadores/postgres/entidades/cliente');
+const produto = require('../exportadores/postgres/entidades/produto');
 const { criarCaminhosExportacao } = require('../exportadores/core/caminhos');
 const {
   montarConsultaPostgres,
@@ -69,6 +70,20 @@ test('mantém um único cursor como padrão para outras entidades', () => {
 
 test('impede incremental sem intervalo de datas', () => {
   assert.throws(() => montarConsultaPostgres(notaSaida), /inicio deve estar/);
+});
+
+test('produto permite snapshot completo sem janela e preserva o incremental normal', () => {
+  const snapshot = montarConsultaPostgres(produto, { snapshotCompleto: true });
+  assert.equal(snapshot, 'SELECT * FROM "pg_db"."sysemp"."produto"');
+  assert.match(montarConsultaPostgres(produto, {
+    inicio: '2026-07-01', fim: '2026-07-02'
+  }), /WHERE .*"dt_alteracao" >= DATE '2026-07-01'.*"dt_cadastro" >= DATE '2026-07-01'/);
+  assert.deepEqual(
+    ['peso_bruto', 'peso_liquido', 'altura', 'largura', 'comprimento',
+      'embalagem_altura', 'embalagem_largura', 'embalagem_comprimento']
+      .filter((campo) => !produto.consulta.colunasPadrao.includes(campo)),
+    []
+  );
 });
 
 test('cria caminho particionado e uma execução única', () => {

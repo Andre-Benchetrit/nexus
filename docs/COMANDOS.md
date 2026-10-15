@@ -63,6 +63,9 @@ npm run exportar -- nota_saida_itens --inicio 2026-07-16 --fim 2026-07-17
 # Exportar clientes novos ou alterados em uma janela
 npm run exportar -- cliente --inicio 2026-07-20 --fim 2026-07-21
 
+# Reconstituir integralmente o cadastro de produtos (sem janela de datas)
+npm run exportar -- produto --snapshot-completo
+
 # Estoque atual: snapshot completo; a analise usa id_empresa 10
 npm run exportar -- produto_inventario --forcar
 
@@ -78,6 +81,10 @@ prefira janelas mensais ou diarias em vez de uma unica consulta de varios anos.
 
 `cliente`, `produto` e `nota_saida` consideram tanto `dt_alteracao` quanto
 `dt_cadastro`. Isso captura registros novos cuja data de alteracao ainda e nula.
+O snapshot completo pontual de `produto` nao exige datas; depois dele, as cargas
+recorrentes continuam incrementais com as janelas usuais.
+As dimensões Sysemp do produto e da embalagem são medidas em metros; os pesos
+bruto e líquido permanecem na unidade de origem.
 
 ## Consulta direta ao Bronze
 

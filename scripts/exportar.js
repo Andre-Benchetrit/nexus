@@ -12,6 +12,7 @@ function lerArgumentos(argumentos) {
     listar: argumentos.includes('--listar'),
     dryRun: argumentos.includes('--dry-run'),
     forcar: argumentos.includes('--forcar'),
+    snapshotCompleto: argumentos.includes('--snapshot-completo'),
     inicio: valorDepoisDe('--inicio'),
     fim: valorDepoisDe('--fim')
   };
@@ -29,11 +30,20 @@ async function main() {
     throw new Error('Informe a entidade. Exemplo: npm run exportar -- nota_saida');
   }
 
+  if (opcoes.snapshotCompleto && opcoes.nome !== 'produto') {
+    throw new Error('--snapshot-completo está disponível somente para produto.');
+  }
+
+  if (opcoes.snapshotCompleto && (opcoes.inicio || opcoes.fim)) {
+    throw new Error('--snapshot-completo não pode ser combinado com --inicio ou --fim.');
+  }
+
   const entidade = obterEntidade(opcoes.nome);
   const exportar = obterAdaptadorFonte(entidade.fonte);
   const resultado = await exportar(entidade, {
     dryRun: opcoes.dryRun,
     forcar: opcoes.forcar,
+    snapshotCompleto: opcoes.snapshotCompleto,
     inicio: opcoes.inicio,
     fim: opcoes.fim
   });

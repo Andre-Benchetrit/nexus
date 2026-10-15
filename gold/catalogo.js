@@ -13,6 +13,7 @@ const kpiEstoqueDiario = require('./modelos/estoque/kpi_estoque_diario');
 const bloqueioSemEstoqueItem = require('./modelos/estoque/bloqueio_sem_estoque_item');
 const bloqueioSemEstoquePedido = require('./modelos/estoque/bloqueio_sem_estoque_pedido');
 const painelExecutivoDiario = require('./modelos/executivo/painel_executivo_diario');
+const catalogoProdutoLogistico = require('./modelos/catalogo/catalogo_produto_logistico');
 
 const objetos = {
   kpi_vendas_diario: kpiVendasDiario,
@@ -29,7 +30,8 @@ const objetos = {
   kpi_estoque_diario: kpiEstoqueDiario,
   bloqueio_sem_estoque_item: bloqueioSemEstoqueItem,
   bloqueio_sem_estoque_pedido: bloqueioSemEstoquePedido,
-  painel_executivo_diario: painelExecutivoDiario
+  painel_executivo_diario: painelExecutivoDiario,
+  catalogo_produto_logistico: catalogoProdutoLogistico
 };
 
 function obterObjeto(nome) {
