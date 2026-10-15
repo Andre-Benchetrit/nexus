@@ -2280,7 +2280,8 @@ async function executarAssistente(pergunta, dependencias = {}) {
       ...historicoSelecionado,
       { role: 'user', content: mensagemAutenticada }
     ]);
-    const pesquisaAntecipada = pesquisaMistaSolicitada;
+    const pesquisaAntecipada = pesquisaMistaSolicitada ||
+      modoFonte === 'automatico' && decisaoWeb.registroPublico === true;
     if (modoWeb === 'v1' && intencaoWeb && pesquisaAntecipada) {
       try {
         const queryPublica = politica.obrigatoria
@@ -2467,8 +2468,10 @@ async function executarAssistente(pergunta, dependencias = {}) {
             mensagens: normalizarHistoricoVisivel([...mensagens, {
               role: 'user',
               content: `Reformule a intencao abaixo como uma consulta curta e eficaz para mecanismo de busca. ` +
-                `Nao copie a pergunta literalmente, nao inclua nomes de pessoas, CPF, CNPJ, emails, ` +
-                `identificadores internos ou dados da empresa. Execute pesquisar_web e depois responda com ` +
+                `Nao inclua nomes de pessoas, CPF, numeros de documentos pessoais, emails, segredos ` +
+                `ou identificadores internos. Nomes de empresas e termos como CNPJ podem ser incluidos ` +
+                `quando necessarios para localizar registros empresariais publicos. ` +
+                `Execute pesquisar_web e depois responda com ` +
                 `uma sintese curta baseada no conteudo retornado, citando as URLs.\n\n` +
                 `<PUBLIC_SEARCH_OBJECTIVE>\n${objetivoPesquisa}\n</PUBLIC_SEARCH_OBJECTIVE>`
             }]),

@@ -5,6 +5,11 @@ const CONSULTA_SENSIVEL = /(?:postgres(?:ql)?:\/\/|api[_ -]?key|senha|password|s
 const PEDIDO_EXPLICITO = /\b(pesquis(?:e|ar)|busque? (?:na|a )?internet|procure? (?:na|a )?web|fontes? (?:na|da )?internet|consulte? (?:a|na) web)\b/i;
 const CONTINUACAO_WEB = /\b(?:mais fontes|outras fontes|continue (?:a|essa) pesquisa|aprofunde (?:a|essa) pesquisa|pesquise novamente|busque novamente|procure novamente|tente (?:pesquisar|buscar) novamente|sobre (?:isso|esse assunto)|e quanto a|e sobre)\b/i;
 const INFORMACAO_INSTAVEL = /\b(hoje|agora|atual|atualmente|recente|ultim[oa]s?|noticia|preco|cotacao|legislacao|lei|regulamento|versao|lancamento|agenda|previsao|presidente|ceo)\b/i;
+const ALVOS_CNPJ_GENERICOS = new Set([
+  'a', 'as', 'da', 'das', 'de', 'do', 'dos', 'empresa', 'empresas', 'cliente',
+  'clientes', 'fornecedor', 'fornecedores', 'minha', 'minhas', 'meu', 'meus',
+  'nossa', 'nossas', 'nosso', 'nossos', 'o', 'os', 'para'
+]);
 const TERMOS_GENERICOS = new Set([
   'a', 'as', 'algo', 'alguma', 'coisa', 'com', 'como', 'da', 'das', 'de', 'do', 'dos',
   'e', 'em', 'esta', 'estao', 'eu', 'internet', 'mais', 'me', 'mim', 'na', 'nas', 'nexus',
@@ -46,10 +51,13 @@ function classificarIntencaoPesquisa(pergunta = '', contexto = {}) {
   const texto = normalizarIntencao(pergunta);
   const explicita = PEDIDO_EXPLICITO.test(texto);
   const continuacao = contexto.ultimaProveniencia === 'web' && CONTINUACAO_WEB.test(texto);
+  const cnpjComAlvo = /\bcnpj\b.{0,100}\b(?:da|do|de|para)\s+([a-z0-9]+(?:\s+[a-z0-9]+){0,10})/i.exec(texto);
+  const registroPublico = Boolean(cnpjComAlvo && cnpjComAlvo[1]
+    .split(/\s+/).some((termo) => !ALVOS_CNPJ_GENERICOS.has(termo)));
   const instavel = INFORMACAO_INSTAVEL.test(texto);
-  if (!explicita && !continuacao) {
+  if (!explicita && !continuacao && !registroPublico) {
     return { modo: 'nenhuma', explicita: false, continuacao: false,
-      instavel, assunto: null };
+      registroPublico: false, instavel, assunto: null };
   }
   const assunto = extrairAssuntoPesquisa(pergunta);
   if (!assunto && !continuacao) {
@@ -58,7 +66,7 @@ function classificarIntencaoPesquisa(pergunta = '', contexto = {}) {
   }
   return {
     modo: 'delegada',
-    explicita, continuacao, instavel, assunto,
+    explicita, continuacao, registroPublico, instavel, assunto,
     consultaSugerida: explicita || continuacao
       ? sugerirConsultaPesquisa(pergunta) : String(pergunta).trim()
   };
@@ -214,13 +222,16 @@ function validarAderenciaConsulta(query, assunto) {
 function fonteRelevante(fonte, query, minimo = Number(process.env.NEXUS_WEB_MIN_SCORE || 0.2), requiredTerms = [], requiredEvidenceGroups = []) {
   const termos = termosDeEntidade(query);
   const corpus = normalizarIntencao(`${fonte.titulo} ${fonte.dominio} ${fonte.trecho} ${fonte.conteudo || ''}`);
+  const consultaCnpj = /\bcnpj\b/i.test(normalizarIntencao(query));
+  const evidenciaCnpj = /\bcnpj\b|\bcadastro nacional (?:da )?pessoa juridica\b|\b\d{14}\b|\b\d{2}[.\s]?\d{3}[.\s]?\d{3}[/.\s]?\d{4}[-\s]?\d{2}\b/i.test(corpus);
   const correspondeEntidade = !termos.length || termos.some((termo) => corpus.includes(termo));
   const correspondeObrigatorios = requiredTerms.every((termo) =>
     corpus.includes(normalizarIntencao(termo).replace(/[^a-z0-9]+/g, ' ').trim()));
   const possuiEvidenciaExigida = requiredEvidenceGroups.every((grupo) =>
     grupo.some((termo) => corpus.includes(normalizarIntencao(termo))));
   const scoreAceitavel = fonte.score == null || fonte.score >= minimo;
-  return correspondeEntidade && correspondeObrigatorios && possuiEvidenciaExigida && scoreAceitavel;
+  return correspondeEntidade && (!consultaCnpj || evidenciaCnpj) &&
+    correspondeObrigatorios && possuiEvidenciaExigida && scoreAceitavel;
 }
 
 function normalizarResultadoTavily(resposta = {}, spec = {}) {

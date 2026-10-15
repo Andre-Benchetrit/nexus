@@ -82,6 +82,34 @@ test('traduz ranking de marca para campos de negocio', async () => {
   assert.equal(falso.fechado, true);
 });
 
+test('ranqueia pedidos individuais pelo valor total da semana', async () => {
+  const falso = leitorFalso();
+  falso.leitor.agregar = async (nome, opcoes) => {
+    falso.chamadas.push(['agregar', nome, opcoes]);
+    return { dados: [{ grupo_1: 10, grupo_2: 445566, grupo_3: '261015P9J07RCG', calculo_1: 298.90 }],
+      ultimaConstrucao: 'agora' };
+  };
+  const saida = JSON.parse(await executarAnalisarVendas(argumentos({
+    nivel: 'pedido', agrupar_por: 'marketplace_pedido', metricas: ['valor'],
+    ordenar_por: 'valor', limite: 1, data_inicial: '2026-10-12', data_final: '2026-10-15',
+    filtros: [{ campo: 'marketplace_pedido', operador: 'nao_esta_vazio', valor: null }]
+  }), { criarLeitor: () => falso.leitor }));
+  const opcoes = falso.chamadas[0][2];
+  assert.deepEqual(opcoes.agrupamentos, [
+    { campo: 'id_empresa', granularidade: 'valor' },
+    { campo: 'id_pedido_vda_importado', granularidade: 'valor' },
+    { campo: 'marketplace_pedido', granularidade: 'valor' }
+  ]);
+  assert.equal(opcoes.calculos[0].operacao, 'somar');
+  assert.equal(opcoes.calculos[0].campo, 'valor_pedido');
+  assert.deepEqual(opcoes.ordenacao, { tipo: 'calculo', indice: 0, direcao: 'desc' });
+  assert.deepEqual(opcoes.filtros.marketplace_pedido,
+    { operador: 'nao_esta_vazio', valor: null });
+  assert.deepEqual(saida.dados, [{ id_empresa: 10, id_pedido_vda_importado: 445566,
+    marketplace_pedido: '261015P9J07RCG', valor_total_pedidos: 298.9 }]);
+  assert.deepEqual(saida.periodo, { inicio: '2026-10-12', fim: '2026-10-15' });
+});
+
 test('ranking de produto retorna id, descricao e SKU da mesma chave', async () => {
   const falso = leitorFalso();
   falso.leitor.agregar = async (nome, opcoes) => {

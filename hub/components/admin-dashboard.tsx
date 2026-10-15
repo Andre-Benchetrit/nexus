@@ -1,8 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Component, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Department, NexusProfile, nexusFetch } from "@/lib/types";
+import { createKnowledgeImportController, DEFAULT_MAX_FILE_BYTES } from "@/lib/knowledge-import.cjs";
 import { NexusLogo } from "./nexus-logo";
 
 type Principal = {
@@ -101,6 +103,97 @@ function money(value: unknown, currency: "USD" | "BRL") {
     minimumFractionDigits: currency === "USD" ? 4 : 2 }).format(Number(value));
 }
 
+class KnowledgeImportBoundary extends Component<{
+  children: ReactNode;
+  onClose: () => void;
+}, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[admin] Falha ao renderizar formulário de importação de conhecimento", error, info);
+  }
+
+  render() {
+    if (this.state.failed) {
+      return <div className="knowledge-import-fallback glass-panel" role="alert">
+        <p>Não foi possível abrir o formulário de importação. O painel continua disponível.</p>
+        <button type="button" className="secondary-button" onClick={this.props.onClose}>Fechar importação</button>
+      </div>;
+    }
+    return this.props.children;
+  }
+}
+
+function KnowledgeImportForm({
+  canGlobalKnowledge, departments, defaultDepartmentId, scope, onScopeChange, onUpload, onSuccess
+}: {
+  canGlobalKnowledge: boolean;
+  departments: Array<{ id: string; nome: string }>;
+  defaultDepartmentId: string;
+  scope: string;
+  onScopeChange: (scope: string) => void;
+  onUpload: (form: HTMLFormElement) => Promise<void>;
+  onSuccess: () => void;
+}) {
+  const [importState, setImportState] = useState({ fileName: "", error: null as string | null, pending: false });
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const controllerRef = useRef<ReturnType<typeof createKnowledgeImportController> | null>(null);
+  if (!controllerRef.current) {
+    const configuredLimit = Number(process.env.NEXT_PUBLIC_NEXUS_KNOWLEDGE_MAX_BYTES || DEFAULT_MAX_FILE_BYTES);
+    controllerRef.current = createKnowledgeImportController(setImportState,
+      Number.isFinite(configuredLimit) && configuredLimit > 0 ? configuredLimit : DEFAULT_MAX_FILE_BYTES);
+  }
+  const controller = controllerRef.current;
+
+  useEffect(() => {
+    const input = fileInputRef.current;
+    if (!input) return;
+    const handleCancel = () => controller.cancel(input);
+    input.addEventListener("cancel", handleCancel);
+    return () => input.removeEventListener("cancel", handleCancel);
+  }, [controller]);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void controller.submit(fileInputRef.current, event.currentTarget, onUpload, onSuccess);
+  }
+
+  return <form className="knowledge-import glass-panel" onSubmit={submit}>
+    <div><p className="eyebrow">ONEDRIVE / LEGADO</p><h2>Importar para revisão</h2>
+      <p>PDF, DOCX ou DOTX. A versão atual publicada permanece ativa durante a revisão.</p></div>
+    <div className="knowledge-file-picker">
+      <input ref={fileInputRef} className="knowledge-file-input" id="knowledge-import-file"
+        name="file" type="file" accept=".pdf,.docx,.dotx" aria-label="Arquivo para importar"
+        onChange={(event) => { controller.select(event.currentTarget.files?.[0] || null, event.currentTarget); }} />
+      <button type="button" className="knowledge-file-select" disabled={importState.pending}
+        onClick={() => {
+          const input = fileInputRef.current;
+          if (!input) return;
+          controller.cancel(input);
+          input.click();
+        }}>Selecionar arquivo</button>
+      <strong title={importState.fileName || undefined}>
+        {importState.fileName || "Nenhum arquivo selecionado"}
+      </strong>
+    </div>
+    {importState.error && <div className="error-banner knowledge-import-error" role="alert">{importState.error}</div>}
+    <label>Tipo<select name="tipo"><option value="procedimento">Procedimento</option>
+      <option value="politica">Política</option><option value="manual">Manual</option></select></label>
+    <label>Escopo<select name="escopo" value={scope} onChange={(event) => onScopeChange(event.target.value)}>
+      <option value="setor">Setor</option>{canGlobalKnowledge && <option value="global">Global</option>}
+    </select></label>
+    <label>Setor<select name="departmentId" defaultValue={defaultDepartmentId} disabled={scope === "global"}>
+      {departments.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}
+    </select></label>
+    <button className="secondary-button" disabled={importState.pending}>
+      {importState.pending ? "Processando…" : "Importar documento"}</button>
+  </form>;
+}
+
 export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   const router = useRouter();
   const isAdmin = profile.permissoes.includes("governanca.administrar");
@@ -128,7 +221,6 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
   const [knowledgeImportOpen, setKnowledgeImportOpen] = useState(false);
   const [knowledgeCreateScope, setKnowledgeCreateScope] = useState("setor");
   const [knowledgeImportScope, setKnowledgeImportScope] = useState("setor");
-  const [knowledgeFileName, setKnowledgeFileName] = useState("");
   const [knowledgeDestination, setKnowledgeDestination] = useState({ scope: "setor", departmentId: "" });
   const [knowledgeReviewReasons, setKnowledgeReviewReasons] = useState<Record<string, string>>({});
   const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
@@ -291,18 +383,6 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
       }) });
       element.reset();
       setKnowledgeCreateOpen(false);
-    });
-  }
-
-  async function importKnowledge(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const element = event.currentTarget;
-    const data = new FormData(element);
-    await runAction("import-knowledge", async () => {
-      await nexusFetch("admin/knowledge/import", { method: "POST", body: data });
-      element.reset();
-      setKnowledgeFileName("");
-      setKnowledgeImportOpen(false);
     });
   }
 
@@ -665,22 +745,22 @@ export function AdminDashboard({ profile }: { profile: NexusProfile }) {
               {pendingAction === "create-knowledge" ? "Criando…" : "Criar rascunho"}</button>
           </form>}
           {knowledgeImportOpen &&
-          <form className="knowledge-import glass-panel" onSubmit={importKnowledge}>
-            <div><p className="eyebrow">ONEDRIVE / LEGADO</p><h2>Importar para revisão</h2>
-              <p>PDF, DOCX ou DOTX. A versão atual publicada permanece ativa durante a revisão.</p></div>
-            <label className="knowledge-file-picker"><input name="file" type="file" accept=".pdf,.docx,.dotx" required
-              onChange={(event) => setKnowledgeFileName(event.target.files?.[0]?.name || "")} />
-              <span>Selecionar arquivo</span><strong>{knowledgeFileName || "Nenhum arquivo selecionado"}</strong></label>
-            <label>Tipo<select name="tipo"><option value="procedimento">Procedimento</option>
-              <option value="politica">Política</option><option value="manual">Manual</option></select></label>
-            <label>Escopo<select name="escopo" value={knowledgeImportScope} onChange={(event) => setKnowledgeImportScope(event.target.value)}><option value="setor">Setor</option>
-              {canGlobalKnowledge && <option value="global">Global</option>}</select></label>
-            <label>Setor<select name="departmentId" defaultValue={knowledgeSectorId === "global" ? knowledgeDepartments[0]?.id : knowledgeSectorId}
-              disabled={knowledgeImportScope === "global"}>{knowledgeDepartments.map((item) =>
-              <option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>
-            <button className="secondary-button" disabled={Boolean(pendingAction)}>
-              {pendingAction === "import-knowledge" ? "Processando…" : "Importar documento"}</button>
-          </form>}
+          <KnowledgeImportBoundary onClose={() => setKnowledgeImportOpen(false)}>
+            <KnowledgeImportForm canGlobalKnowledge={canGlobalKnowledge} departments={knowledgeDepartments}
+              defaultDepartmentId={knowledgeSectorId === "global" ? knowledgeDepartments[0]?.id || "" : knowledgeSectorId}
+              scope={knowledgeImportScope} onScopeChange={setKnowledgeImportScope}
+              onUpload={async (form) => {
+                setPendingAction("import-knowledge");
+                setError(null);
+                try {
+                  await nexusFetch("admin/knowledge/import", { method: "POST", body: new FormData(form) });
+                  await load();
+                } finally {
+                  setPendingAction(null);
+                }
+              }}
+              onSuccess={() => setKnowledgeImportOpen(false)} />
+          </KnowledgeImportBoundary>}
         </div>}
       </section>}
 
